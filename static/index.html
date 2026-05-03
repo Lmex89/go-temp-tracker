@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sensor Temperature</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #e2e8f0; padding: 20px; }
+h1 { margin-bottom: 12px; font-size: 1.5rem; color: #38bdf8; }
+.controls { margin-bottom: 16px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.controls label { font-size: 0.875rem; color: #94a3b8; }
+.controls select { padding: 6px 12px; border: 1px solid #334155; border-radius: 6px; background: #1e293b; color: #e2e8f0; font-size: 0.875rem; }
+.controls span { font-size: 0.875rem; color: #94a3b8; }
+.controls .current-temp { color: #4ade80; font-weight: 600; }
+.chart-container { background: #1e293b; border-radius: 12px; padding: 20px; border: 1px solid #334155; }
+</style>
+</head>
+<body>
+<h1>Sensor Temperature Monitor</h1>
+<div class="controls">
+  <label for="range">Range:</label>
+  <select id="range">
+    <option value="1">Last hour</option>
+    <option value="6" selected>Last 6 hours</option>
+    <option value="24">Last 24 hours</option>
+  </select>
+  <span>| Current: <span id="current-temp" class="current-temp">--</span></span>
+  <span>Updated: <span id="updated-at">--</span></span>
+</div>
+<div class="chart-container">
+  <canvas id="temp-chart"></canvas>
+</div>
+
+<script>
+const ctx = document.getElementById("temp-chart").getContext("2d");
+const chart = new Chart(ctx, {
+  type: "line",
+  data: { labels: [], datasets: [] },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: { legend: { labels: { color: "#94a3b8" } } },
+    scales: {
+      x: { ticks: { color: "#64748b", maxTicksLimit: 10 }, grid: { color: "#1e293b" } },
+      y: { title: { display: true, text: "Temperature (°C)", color: "#94a3b8" }, ticks: { color: "#64748b" }, grid: { color: "#334155" } },
+    },
+  },
+});
+chart.canvas.parentElement.style.height = "400px";
+
+const colors = ["#38bdf8", "#4ade80", "#f472b6", "#fbbf24", "#a78bfa"];
+
+function fetchData(hours) {
+  fetch(`/api/temps?hours=${hours}`)
+    .then(r => r.json())
+    .then(data => {
+      const sensors = [...new Set(data.map(d => d.sensor))];
+      const datasets = sensors.map((sensor, i) => {
+        const points = data.filter(d => d.sensor === sensor);
+        return {
+          label: sensor,
+          data: points.map(p => ({ x: p.created_at, y: p.temp_c })),
+          borderColor: colors[i % colors.length],
+          backgroundColor: colors[i % colors.length] + "33",
+          fill: false,
+          tension: 0.3,
+          pointRadius: 2,
+        };
+      });
+      chart.data = { datasets };
+      chart.update();
+    });
+}
+
+function fetchCurrent() {
+  fetch("/api/current")
+    .then(r => r.json())
+    .then(data => {
+      if (data.length > 0) {
+        const temps = data.map(d => `${d.sensor}: ${d.temp_c.toFixed(1)}°C`).join(", ");
+        document.getElementById("current-temp").textContent = temps;
+        document.getElementById("updated-at").textContent = data[0].created_at;
+      }
+    });
+}
+
+const rangeEl = document.getElementById("range");
+rangeEl.addEventListener("change", () => {
+  fetchData(parseInt(rangeEl.value));
+});
+
+fetchData(6);
+fetchCurrent();
+setInterval(() => fetchCurrent(), 10000);
+setInterval(() => fetchData(parseInt(rangeEl.value)), 30000);
+</script>
+</body>
+</html>

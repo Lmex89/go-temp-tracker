@@ -1,0 +1,20 @@
+nohup: no se tendrá en cuenta la entrada
+[2026-05-02 20:45:45.621] [INFO] Starting Sensor Temperature Tracker
+[2026-05-02 20:45:45.621] [INFO] Initializing SQLite database (temps.db)
+[2026-05-02 20:45:45.622] [INFO] Database schema ready
+[2026-05-02 20:45:45.622] [INFO] Polling loop started (interval=30s, retain=720h)
+[2026-05-02 20:45:45.623] [INFO] HTTP server listening on :9091
+[2026-05-02 20:45:45.623] [INFO] Open http://localhost:9091 in your browser
+[2026-05-02 20:45:45.631] [INFO] Recorded 2 temperature reading(s)
+[2026-05-02 20:45:49.764] [INFO] Queried 52 reading(s) from last 6 hour(s)
+[2026-05-02 20:45:50.836] [INFO] Queried 52 reading(s) from last 6 hour(s)
+[2026-05-02 20:46:15.646] [INFO] Recorded 2 temperature reading(s)
+[2026-05-02 20:46:21.980] [INFO] Queried 54 reading(s) from last 6 hour(s)
+[2026-05-02 20:46:45.658] [INFO] Recorded 2 temperature reading(s)
+[2026-05-02 20:46:52.449] [INFO] Queried 56 reading(s) from last 6 hour(s)
+[2026-05-02 20:47:15.673] [INFO] Recorded 2 temperature reading(s)
+[2026-05-02 20:47:25.708] [INFO] Queried 58 reading(s) from last 6 hour(s)
+[2026-05-02 20:47:45.704] [INFO] Recorded 2 temperature reading(s)
+[2026-05-02 20:47:51.798] [INFO] Queried 60 reading(s) from last 6 hour(s)
+[2026-05-02 20:48:15.722] [INFO] Recorded 2 temperature reading(s)
+[2026-05-02 20:48:21.799] [INFO] Queried 62 reading(s) from last 6 hour(s)
