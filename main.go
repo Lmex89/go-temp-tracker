@@ -14,7 +14,7 @@ import (
 func main() {
 	port := flag.Int("port", 8080, "HTTP server port")
 	interval := flag.Int("interval", 30, "Polling interval in seconds")
-	retain := flag.Int("retain", 720, "Delete readings older than N hours")
+	retain := flag.Int("retain", 8760, "Delete readings older than N hours (default: 12 months)")
 	flag.Parse()
 
 	Logger.Info("Starting Sensor Temperature Tracker")

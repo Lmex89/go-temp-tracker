@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"fmt"
+	"time"
 )
 
 func initDB() *sql.DB {
@@ -59,6 +60,13 @@ type Reading struct {
 func queryReadings(db *sql.DB, hours int) []Reading {
 	Logger.Debug("Querying readings from last %d hour(s)", hours)
 
+	// Load the America/Merida timezone
+	meridaTZ, err := time.LoadLocation("America/Merida")
+	if err != nil {
+		Logger.Error("Failed to load America/Merida timezone: %v", err)
+		meridaTZ = time.UTC
+	}
+
 	rows, err := db.Query(
 		`SELECT sensor, temp_c, created_at FROM readings
 		 WHERE created_at >= datetime('now', ?)
@@ -82,6 +90,13 @@ func queryReadings(db *sql.DB, hours int) []Reading {
 			Logger.Error("Failed to scan row: %v", err)
 			continue
 		}
+		
+		// Convert UTC timestamp to America/Merida local time
+		if utcTime, err := time.Parse("2006-01-02 15:04:05", r.CreatedAt); err == nil {
+			localTime := utcTime.In(meridaTZ)
+			r.CreatedAt = localTime.Format("2006-01-02 15:04:05")
+		}
+		
 		readings = append(readings, r)
 	}
 
@@ -95,6 +110,13 @@ func queryReadings(db *sql.DB, hours int) []Reading {
 
 func queryLatestPerSensor(db *sql.DB) []Reading {
 	Logger.Debug("Querying latest reading per sensor")
+
+	// Load the America/Merida timezone
+	meridaTZ, err := time.LoadLocation("America/Merida")
+	if err != nil {
+		Logger.Error("Failed to load America/Merida timezone: %v", err)
+		meridaTZ = time.UTC
+	}
 
 	rows, err := db.Query(
 		`SELECT sensor, temp_c, created_at FROM readings
@@ -118,6 +140,13 @@ func queryLatestPerSensor(db *sql.DB) []Reading {
 			Logger.Error("Failed to scan row: %v", err)
 			continue
 		}
+		
+		// Convert UTC timestamp to America/Merida local time
+		if utcTime, err := time.Parse("2006-01-02 15:04:05", r.CreatedAt); err == nil {
+			localTime := utcTime.In(meridaTZ)
+			r.CreatedAt = localTime.Format("2006-01-02 15:04:05")
+		}
+		
 		readings = append(readings, r)
 	}
 
