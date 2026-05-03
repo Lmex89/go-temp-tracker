@@ -6,6 +6,7 @@ import (
 	"time"
 )
 
+// initDB initializes the SQLite database and creates the readings table if it doesn't exist
 func initDB() *sql.DB {
 	Logger.Info("Initializing SQLite database (temps.db)")
 
@@ -39,6 +40,7 @@ func initDB() *sql.DB {
 	return db
 }
 
+// insertReading inserts a temperature reading into the database
 func insertReading(db *sql.DB, sensor string, temp float64) {
 	_, err := db.Exec(
 		"INSERT INTO readings (sensor, temp_c) VALUES (?, ?)",
@@ -51,16 +53,19 @@ func insertReading(db *sql.DB, sensor string, temp float64) {
 	}
 }
 
+// Reading represents a temperature reading from a sensor
 type Reading struct {
 	Sensor    string  `json:"sensor"`
 	TempC     float64 `json:"temp_c"`
 	CreatedAt string  `json:"created_at"`
 }
 
+// queryReadings retrieves temperature readings from the database for the specified number of hours
+// Converts UTC timestamps to America/Merida local time for display
 func queryReadings(db *sql.DB, hours int) []Reading {
 	Logger.Debug("Querying readings from last %d hour(s)", hours)
 
-	// Load the America/Merida timezone
+	// Load the America/Merida timezone for local time conversion
 	meridaTZ, err := time.LoadLocation("America/Merida")
 	if err != nil {
 		Logger.Error("Failed to load America/Merida timezone: %v", err)
@@ -91,7 +96,7 @@ func queryReadings(db *sql.DB, hours int) []Reading {
 			continue
 		}
 		
-		// Convert UTC timestamp to America/Merida local time
+		// Convert UTC timestamp to America/Merida local time for display
 		if utcTime, err := time.Parse("2006-01-02 15:04:05", r.CreatedAt); err == nil {
 			localTime := utcTime.In(meridaTZ)
 			r.CreatedAt = localTime.Format("2006-01-02 15:04:05")
@@ -108,10 +113,12 @@ func queryReadings(db *sql.DB, hours int) []Reading {
 	return readings
 }
 
+// queryLatestPerSensor retrieves the latest temperature reading for each sensor
+// Converts UTC timestamps to America/Merida local time for display
 func queryLatestPerSensor(db *sql.DB) []Reading {
 	Logger.Debug("Querying latest reading per sensor")
 
-	// Load the America/Merida timezone
+	// Load the America/Merida timezone for local time conversion
 	meridaTZ, err := time.LoadLocation("America/Merida")
 	if err != nil {
 		Logger.Error("Failed to load America/Merida timezone: %v", err)
@@ -141,7 +148,7 @@ func queryLatestPerSensor(db *sql.DB) []Reading {
 			continue
 		}
 		
-		// Convert UTC timestamp to America/Merida local time
+		// Convert UTC timestamp to America/Merida local time for display
 		if utcTime, err := time.Parse("2006-01-02 15:04:05", r.CreatedAt); err == nil {
 			localTime := utcTime.In(meridaTZ)
 			r.CreatedAt = localTime.Format("2006-01-02 15:04:05")
@@ -161,6 +168,7 @@ func queryLatestPerSensor(db *sql.DB) []Reading {
 	return readings
 }
 
+// pruneOldReadings removes temperature readings older than the specified number of hours
 func pruneOldReadings(db *sql.DB, hours int) {
 	Logger.Debug("Pruning readings older than %d hour(s)", hours)
 
