@@ -25,6 +25,7 @@ go.work.sum
 # Project runtime files
 temps.db
 tracker.log
+cleanup-and-build.log
 
 # IDE/Editor
 .idea/
