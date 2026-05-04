@@ -37,13 +37,21 @@ h1 { margin-bottom: 12px; font-size: 1.5rem; color: #38bdf8; }
 const ctx = document.getElementById("temp-chart").getContext("2d");
 const chart = new Chart(ctx, {
   type: "line",
-  data: { labels: [], datasets: [] },
+  data: { datasets: [] },
   options: {
     responsive: true,
     maintainAspectRatio: false,
     plugins: { legend: { labels: { color: "#94a3b8" } } },
     scales: {
-      x: { ticks: { color: "#64748b", maxTicksLimit: 10 }, grid: { color: "#1e293b" } },
+      x: {
+        type: "linear",
+        ticks: {
+          color: "#64748b",
+          maxTicksLimit: 12,
+          callback: v => { const d = new Date(v); return `${d.getHours().toString().padStart(2,"0")}:${d.getMinutes().toString().padStart(2,"0")}`; },
+        },
+        grid: { color: "#1e293b" },
+      },
       y: { title: { display: true, text: "Temperature (°C)", color: "#94a3b8" }, ticks: { color: "#64748b" }, grid: { color: "#334155" } },
     },
   },
@@ -61,7 +69,7 @@ function fetchData(hours) {
         const points = data.filter(d => d.sensor === sensor);
         return {
           label: sensor,
-          data: points.map(p => ({ x: p.created_at, y: p.temp_c })),
+          data: points.map(p => ({ x: new Date(p.created_at).getTime(), y: p.temp_c })),
           borderColor: colors[i % colors.length],
           backgroundColor: colors[i % colors.length] + "33",
           fill: false,
