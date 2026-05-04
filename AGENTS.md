@@ -41,6 +41,39 @@ When adding or modifying code, always add comments that:
 
 ---
 
+## Code Style: No Emojis
+
+**Never use emojis in code** — this includes comments, strings, output messages, and variable names.
+
+### Rationale
+
+- Emojis can cause encoding issues across different terminals, editors, and systems
+- They reduce readability in logs, diffs, and code reviews
+- Many build/CI systems may not handle Unicode properly
+- Keep code clean and universally compatible
+
+### Allowed Alternatives
+
+Use plain ASCII instead:
+
+| Instead of | Use |
+|------------|-----|
+| ✅ ✓ | `[OK]`, `[PASS]`, `+` |
+| ❌ ✗ | `[FAIL]`, `[ERROR]`, `-` |
+| ⚠️ | `[WARN]`, `!` |
+| 🚀 | `>>`, `=>` |
+| 🔧 🛠️ | `[BUILD]`, `[SETUP]` |
+| 🧹 | `[CLEAN]`, `[REMOVE]` |
+| 🔍 | `[SEARCH]`, `[FIND]` |
+
+### Enforcement
+
+- **Review all code for emojis before committing**
+- If emojis are found, replace with ASCII equivalents
+- This applies to all files: Go code, shell scripts, HTML, CSS, etc.
+
+---
+
 ## Essential Commands
 
 - **Build**: `go build -o temp-tracker .`
