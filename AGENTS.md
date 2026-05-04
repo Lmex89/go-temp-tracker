@@ -123,6 +123,22 @@ The web dashboard (`static/index.html`) loads user preferences from `static/conf
 | `zoom` | `wheelEnabled` | boolean | `true` | Enable mouse wheel zoom |
 | `zoom` | `dragEnabled` | boolean | `true` | Enable drag-to-zoom |
 | `zoom` | `pinchEnabled` | boolean | `true` | Enable pinch zoom (touch) |
+| `sensorFilter` | `enabled` | boolean | `false` | Enable sensor filtering |
+| `sensorFilter` | `includePatterns` | array | `[]` | Show only sensors matching these patterns |
+
+### Sensor Filtering
+
+Filter which sensors appear on the chart and in the current temps display:
+
+| Pattern | Matches | Example Sensors Shown |
+|---------|---------|----------------------|
+| `["Core"]` | CPU core temps only | `coretemp/Core 0`, `coretemp/Core 1` |
+| `["Package"]` | Package temperature only | `coretemp/Package id 0` |
+| `["Core", "Package"]` | Cores + Package | Both cores and package temp |
+| `["coretemp"]` | All coretemp sensors | All Intel/AMD CPU sensors |
+| `["acpitz"]` | ACPI thermal zone | `acpitz/temp1_input` |
+
+Patterns are **case-sensitive partial matches**. A sensor is shown if its name contains ANY of the patterns (OR logic).
 
 ### Example: Change Default Range and Colors
 

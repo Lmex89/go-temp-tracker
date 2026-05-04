@@ -75,7 +75,8 @@ const defaultConfig = {
   colors: { palette: ["#38bdf8", "#4ade80", "#f472b6", "#fbbf24", "#a78bfa"] },
   chart: { lineTension: 0.3, pointRadius: 2, fillArea: false, yAxisMin: null, yAxisMax: null, showGridLines: true, maxTicksLimit: 12 },
   display: { decimalPlaces: 1, showLastUpdated: true, timeFormat24h: true },
-  zoom: { wheelEnabled: true, dragEnabled: true, pinchEnabled: true }
+  zoom: { wheelEnabled: true, dragEnabled: true, pinchEnabled: true },
+  sensorFilter: { enabled: false, includePatterns: [] }
 };
 
 // Global config variable - populated by loadConfig()
@@ -99,6 +100,28 @@ async function loadConfig() {
     console.warn('[Config] Error loading config, using defaults:', error);
     return defaultConfig;
   }
+}
+
+// filterSensors applies includePatterns from config to filter sensor names
+// Returns true if sensor should be included, false otherwise
+// If filtering is disabled, all sensors pass through
+function shouldIncludeSensor(sensorName) {
+  // If filter is disabled, show all sensors
+  if (!config.sensorFilter || !config.sensorFilter.enabled) {
+    return true;
+  }
+  
+  // Get patterns from config (default to empty array)
+  const patterns = config.sensorFilter.includePatterns || [];
+  
+  // If no patterns specified but filter is enabled, show nothing
+  if (patterns.length === 0) {
+    return false;
+  }
+  
+  // Sensor passes if it matches ANY of the patterns (OR logic)
+  // Patterns are case-sensitive partial matches
+  return patterns.some(pattern => sensorName.includes(pattern));
 }
 
 // =============================================================================
@@ -263,7 +286,14 @@ function loadRange() {
     })
     .then(data => {
       console.log("[loadRange] received", data.length, "readings");
-      const sensors = [...new Set(data.map(d => d.sensor))];
+      // Get unique sensors and apply filter if enabled
+      const allSensors = [...new Set(data.map(d => d.sensor))];
+      const sensors = allSensors.filter(shouldIncludeSensor);
+      
+      if (config.sensorFilter && config.sensorFilter.enabled) {
+        console.log(`[loadRange] Filter active: ${allSensors.length} sensors -> ${sensors.length} sensors`);
+      }
+      
       const datasets = sensors.map((sensor, i) => {
         const points = data.filter(d => d.sensor === sensor);
         return {
@@ -296,13 +326,19 @@ function fetchCurrent() {
   fetch("/api/current")
     .then(r => r.json())
     .then(data => {
-      if (data.length > 0) {
+      // Apply sensor filter to current temps as well
+      const filteredData = data.filter(d => shouldIncludeSensor(d.sensor));
+      
+      if (filteredData.length > 0) {
         // Format: "sensor1: 45.0°C, sensor2: 52.3°C"
-        const temps = data.map(d => `${d.sensor}: ${d.temp_c.toFixed(config.display.decimalPlaces)}°C`).join(", ");
+        const temps = filteredData.map(d => `${d.sensor}: ${d.temp_c.toFixed(config.display.decimalPlaces)}°C`).join(", ");
         document.getElementById("current-temp").textContent = temps;
         if (config.display.showLastUpdated) {
-          document.getElementById("updated-at").textContent = data[0].created_at;
+          document.getElementById("updated-at").textContent = filteredData[0].created_at;
         }
+      } else if (data.length > 0) {
+        // Filter removed all sensors - show message
+        document.getElementById("current-temp").textContent = "No sensors match filter";
       }
     });
 }
