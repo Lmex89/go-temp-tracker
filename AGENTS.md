@@ -3,7 +3,7 @@
 ## Essential Commands
 
 - **Build**: `go build -o temp-tracker .`
-- **Run**: `./temp-tracker` (defaults: port 8080, interval 30s, retain 720h)
+- **Run**: `./temp-tracker` (defaults: port 8080, interval 30s, retain 8760h)
 - **Custom run**: `./temp-tracker -port 9090 -interval 60 -retain 48`
 - **Debug logging**: `LOG_LEVEL=DEBUG ./temp-tracker`
 
@@ -11,12 +11,13 @@
 
 - **Linux-only**: Requires `/sys/class/thermal/thermal_zone*` sensors
 - **Runtime artifacts**: `temps.db` (SQLite) is created automatically
-- **Entrypoint**: `main.go` handles polling and HTTP server
+- **Entrypoint**: `main.go` wires up SensorReader, Store, and Poller, then starts the HTTP server
 - **Dashboard**: Served from `static/index.html`
-- **Logging**: Uses `logger.go` with leveled logging (DEBUG/INFO/WARN/ERROR), controlled by `LOG_LEVEL` env var
+- **Logging**: Uses `logger.go` with leveled logging (DEBUG/INFO/WARN/ERROR/FATAL), controlled by `LOG_LEVEL` env var
 - **API endpoints**:
   - `GET /api/temps?hours=N` — Historical readings (default 1h)
   - `GET /api/current` — Latest reading per sensor
   - `GET /` — Serves web dashboard
-- **Data flow**: `sensor.go` → `db.go` → `handler.go`
-- **Files**: `logger.go`, `main.go`, `sensor.go`, `db.go`, `handler.go`, `static/index.html`
+- **Data flow**: `sensor.go` (SensorReader) → `poller.go` (Poller) → `db.go` (Store) → `handler.go`
+- **Time conversion**: `timeutil.go` provides TimeConverter (America/Merida zone)
+- **Files**: `logger.go`, `main.go`, `sensor.go`, `poller.go`, `db.go`, `timeutil.go`, `handler.go`, `static/index.html`

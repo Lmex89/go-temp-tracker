@@ -27,7 +27,7 @@ go build -o temp-tracker .
 ## Usage
 
 ```bash
-# Run with defaults (port 8080, interval 30s, retain 720h / ~30 days)
+# Run with defaults (port 8080, interval 30s, retain 8760h / ~12 months)
 ./temp-tracker
 
 # Custom configuration
@@ -94,7 +94,7 @@ tmux new -s temp-tracker
 |-------------|---------|----------------------------------------|
 | `-port`     | `8080`  | HTTP server port                       |
 | `-interval` | `30`    | Sensor polling interval in seconds     |
-| `-retain`   | `720`   | Delete readings older than N hours (~30 days) |
+| `-retain`   | `8760`  | Delete readings older than N hours (~12 months) |
 
 ## Environment variables
 
@@ -140,10 +140,12 @@ Serves the web dashboard (`static/index.html`).
 
 ```
 sensors-temp/
-├── logger.go       Leveled logger (DEBUG/INFO/WARN/ERROR)
-├── main.go         Entry point, flags, HTTP server, poll loop
-├── sensor.go       Reads CPU temp from /sys/class/thermal/
-├── db.go           SQLite schema, insert, query, prune
+├── logger.go       Leveled logger (DEBUG/INFO/WARN/ERROR/FATAL)
+├── main.go         Entry point — wires SensorReader, Store, Poller, HTTP server
+├── sensor.go       SensorReader interface + LinuxThermalSensor (reads /sys/class/thermal/)
+├── poller.go       Poller struct — periodic read + insert + prune loop
+├── db.go           Store interface + SQLiteStore (schema, insert, query, prune)
+├── timeutil.go     TimeConverter interface + MeridaTimeConverter (UTC → America/Merida)
 ├── handler.go      REST API endpoints
 ├── static/
 │   └── index.html  Chart.js web dashboard
@@ -162,6 +164,7 @@ sensors-temp/
 | INFO  | Normal operational messages (startup, ticks)     |
 | WARN  | Non-critical issues (missing sensors, bad params)|
 | ERROR | Failures that don't halt the application          |
+| FATAL | Unrecoverable errors (calls os.Exit(1))          |
 
 ## Dashboard
 

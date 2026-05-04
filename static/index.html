@@ -4,36 +4,59 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Sensor Temperature</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.2.0/dist/chartjs-plugin-zoom.min.js"></script>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #e2e8f0; padding: 20px; }
 h1 { margin-bottom: 12px; font-size: 1.5rem; color: #38bdf8; }
 .controls { margin-bottom: 16px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .controls label { font-size: 0.875rem; color: #94a3b8; }
-.controls select { padding: 6px 12px; border: 1px solid #334155; border-radius: 6px; background: #1e293b; color: #e2e8f0; font-size: 0.875rem; }
+.controls select, .controls input { padding: 6px 12px; border: 1px solid #334155; border-radius: 6px; background: #1e293b; color: #e2e8f0; font-size: 0.875rem; }
+.controls button { padding: 6px 14px; border: none; border-radius: 6px; background: #38bdf8; color: #0f172a; font-size: 0.875rem; cursor: pointer; font-weight: 600; }
+.controls button:hover { background: #7dd3fc; }
 .controls span { font-size: 0.875rem; color: #94a3b8; }
 .controls .current-temp { color: #4ade80; font-weight: 600; }
+.controls .sep { color: #334155; }
 .chart-container { background: #1e293b; border-radius: 12px; padding: 20px; border: 1px solid #334155; }
+.zoom-hint { font-size: 0.75rem; color: #64748b; text-align: center; margin-top: 6px; }
 </style>
 </head>
 <body>
 <h1>Sensor Temperature Monitor</h1>
 <div class="controls">
-  <label for="range">Range:</label>
+  <label for="range">Quick range:</label>
   <select id="range">
     <option value="1">Last hour</option>
+    <option value="3">Last 3 hours</option>
     <option value="6" selected>Last 6 hours</option>
+    <option value="12">Last 12 hours</option>
     <option value="24">Last 24 hours</option>
+    <option value="48">Last 48 hours</option>
   </select>
-  <span>| Current: <span id="current-temp" class="current-temp">--</span></span>
+  <span class="sep">|</span>
+  <label for="hours-input">Custom hours:</label>
+  <input type="number" id="hours-input" min="1" value="" placeholder="e.g. 8" style="width:70px">
+  <button id="apply-hours">Apply</button>
+  <span class="sep">|</span>
+  <label for="from-dt">From:</label>
+  <input type="datetime-local" id="from-dt">
+  <label for="to-dt">To:</label>
+  <input type="datetime-local" id="to-dt">
+  <button id="apply-dates">Filter</button>
+  <span class="sep">|</span>
+  <span>Current: <span id="current-temp" class="current-temp">--</span></span>
   <span>Updated: <span id="updated-at">--</span></span>
+  <button id="reset-zoom" style="margin-left:auto">Reset zoom</button>
 </div>
 <div class="chart-container">
   <canvas id="temp-chart"></canvas>
 </div>
+<div class="zoom-hint">Scroll to zoom · Drag to pan</div>
 
 <script>
+Chart.register(chartjsZoom);
+
 const ctx = document.getElementById("temp-chart").getContext("2d");
 const chart = new Chart(ctx, {
   type: "line",
@@ -41,14 +64,28 @@ const chart = new Chart(ctx, {
   options: {
     responsive: true,
     maintainAspectRatio: false,
-    plugins: { legend: { labels: { color: "#94a3b8" } } },
+    plugins: {
+      legend: { labels: { color: "#94a3b8" } },
+      zoom: {
+        pan: { enabled: true, mode: "x" },
+        zoom: {
+          wheel: { enabled: true },
+          pinch: { enabled: true },
+          drag: { enabled: false },
+          mode: "x",
+        },
+      },
+    },
     scales: {
       x: {
         type: "linear",
         ticks: {
           color: "#64748b",
           maxTicksLimit: 12,
-          callback: v => { const d = new Date(v); return `${d.getHours().toString().padStart(2,"0")}:${d.getMinutes().toString().padStart(2,"0")}`; },
+          callback: v => {
+            const d = new Date(v);
+            return `${d.getMonth()+1}/${d.getDate()} ${d.getHours().toString().padStart(2,"0")}:${d.getMinutes().toString().padStart(2,"0")}`;
+          },
         },
         grid: { color: "#1e293b" },
       },
@@ -78,6 +115,7 @@ function fetchData(hours) {
         };
       });
       chart.data = { datasets };
+      chart.resetZoom();
       chart.update();
     });
 }
@@ -94,9 +132,55 @@ function fetchCurrent() {
     });
 }
 
+function fetchRange(fromISO, toISO) {
+  const fromMs = new Date(fromISO).getTime();
+  const toMs = new Date(toISO).getTime();
+  const diffHours = (toMs - fromMs) / 3600000;
+  if (diffHours <= 0) return;
+  fetch(`/api/temps?hours=${Math.ceil(diffHours)}`)
+    .then(r => r.json())
+    .then(data => {
+      const filtered = data.filter(d => {
+        const t = new Date(d.created_at).getTime();
+        return t >= fromMs && t <= toMs;
+      });
+      const sensors = [...new Set(filtered.map(d => d.sensor))];
+      const datasets = sensors.map((sensor, i) => {
+        const points = filtered.filter(d => d.sensor === sensor);
+        return {
+          label: sensor,
+          data: points.map(p => ({ x: new Date(p.created_at).getTime(), y: p.temp_c })),
+          borderColor: colors[i % colors.length],
+          backgroundColor: colors[i % colors.length] + "33",
+          fill: false,
+          tension: 0.3,
+          pointRadius: 2,
+        };
+      });
+      chart.data = { datasets };
+      chart.resetZoom();
+      chart.update();
+    });
+}
+
 const rangeEl = document.getElementById("range");
 rangeEl.addEventListener("change", () => {
   fetchData(parseInt(rangeEl.value));
+});
+
+document.getElementById("apply-hours").addEventListener("click", () => {
+  const h = parseInt(document.getElementById("hours-input").value);
+  if (h > 0) fetchData(h);
+});
+
+document.getElementById("apply-dates").addEventListener("click", () => {
+  const from = document.getElementById("from-dt").value;
+  const to = document.getElementById("to-dt").value;
+  if (from && to) fetchRange(from, to);
+});
+
+document.getElementById("reset-zoom").addEventListener("click", () => {
+  chart.resetZoom();
 });
 
 fetchData(6);
