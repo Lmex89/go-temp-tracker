@@ -94,4 +94,58 @@ Use plain ASCII instead:
   - `GET /` — Serves web dashboard
 - **Data flow**: `sensor.go` (SensorReader) → `poller.go` (Poller) → `db.go` (Store) → `handler.go`
 - **Time conversion**: `timeutil.go` provides TimeConverter (America/Merida zone)
-- **Files**: `logger.go`, `main.go`, `sensor.go`, `poller.go`, `db.go`, `timeutil.go`, `handler.go`, `static/index.html`
+- **Files**: `logger.go`, `main.go`, `sensor.go`, `poller.go`, `db.go`, `timeutil.go`, `handler.go`, `static/index.html`, `static/config.json`
+
+---
+
+## Dashboard Configuration
+
+The web dashboard (`static/index.html`) loads user preferences from `static/config.json`. Edit this file to customize default chart behavior without modifying code.
+
+### Configuration Options
+
+| Section | Option | Type | Default | Description |
+|---------|--------|------|---------|-------------|
+| `defaultTimeRange` | `value` | string | `"6h"` | Initial time range. Options: `"5m"`, `"3h"`, `"6h"`, `"12h"` |
+| `refreshIntervals` | `currentTempMs` | number | `10000` | How often to refresh current temps (milliseconds) |
+| `refreshIntervals` | `chartDataMs` | number | `30000` | How often to refresh chart data (milliseconds) |
+| `colors` | `palette` | array | `["#38bdf8", "#4ade80", ...]` | Hex colors for sensor lines (cycles if more sensors) |
+| `chart` | `lineTension` | number | `0.3` | Curve smoothness (0=straight lines, 1=very curved) |
+| `chart` | `pointRadius` | number | `2` | Size of data points on lines |
+| `chart` | `fillArea` | boolean | `false` | Fill area under lines |
+| `chart` | `yAxisMin` | number/null | `null` | Fix Y-axis minimum (null=auto) |
+| `chart` | `yAxisMax` | number/null | `null` | Fix Y-axis maximum (null=auto) |
+| `chart` | `showGridLines` | boolean | `true` | Show Y-axis grid lines |
+| `chart` | `maxTicksLimit` | number | `12` | Maximum X-axis labels to show |
+| `display` | `decimalPlaces` | number | `1` | Temperature decimal precision |
+| `display` | `showLastUpdated` | boolean | `true` | Show "Updated:" timestamp |
+| `display` | `timeFormat24h` | boolean | `true` | Use 24-hour time format |
+| `zoom` | `wheelEnabled` | boolean | `true` | Enable mouse wheel zoom |
+| `zoom` | `dragEnabled` | boolean | `true` | Enable drag-to-zoom |
+| `zoom` | `pinchEnabled` | boolean | `true` | Enable pinch zoom (touch) |
+
+### Example: Change Default Range and Colors
+
+```json
+{
+  "defaultTimeRange": { "value": "12h" },
+  "colors": {
+    "palette": ["#ff6b6b", "#4ecdc4", "#45b7d1", "#96ceb4", "#ffeaa7"]
+  },
+  "chart": {
+    "lineTension": 0.5,
+    "fillArea": true
+  }
+}
+```
+
+### How It Works
+
+1. **Config Loading**: Dashboard fetches `/config.json` on page load
+2. **Fallback**: If config.json is missing/invalid, uses built-in defaults
+3. **Application**: Values applied to Chart.js initialization and refresh timers
+4. **No Server Restart**: Changes take effect on next browser refresh
+
+### Fallback Behavior
+
+If `config.json` fails to load (404, parse error, etc.), the dashboard uses hardcoded defaults identical to the shipped `config.json`. This ensures the dashboard always works even if the config file is deleted.

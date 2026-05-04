@@ -1,0 +1,53 @@
+{
+  "_comment": "Temperature Monitor Dashboard Configuration - Edit this file to customize your chart defaults",
+  
+  "defaultTimeRange": {
+    "_comment": "Default time range to show when page loads. Options: '5m', '3h', '6h', '12h'",
+    "value": "6h"
+  },
+  
+  "refreshIntervals": {
+    "_comment": "How often to refresh data (in milliseconds)",
+    "currentTempMs": 10000,
+    "chartDataMs": 30000
+  },
+  
+  "colors": {
+    "_comment": "Chart line colors in hex format. Each sensor gets the next color, cycling back to start",
+    "palette": [
+      "#38bdf8",
+      "#4ade80", 
+      "#f472b6",
+      "#fbbf24",
+      "#a78bfa",
+      "#fb7185",
+      "#22d3ee",
+      "#a3e635"
+    ]
+  },
+  
+  "chart": {
+    "_comment": "Chart appearance settings",
+    "lineTension": 0.3,
+    "pointRadius": 2,
+    "fillArea": false,
+    "yAxisMin": null,
+    "yAxisMax": null,
+    "showGridLines": true,
+    "maxTicksLimit": 12
+  },
+  
+  "display": {
+    "_comment": "Temperature display preferences",
+    "decimalPlaces": 1,
+    "showLastUpdated": true,
+    "timeFormat24h": true
+  },
+  
+  "zoom": {
+    "_comment": "Zoom and pan behavior",
+    "wheelEnabled": true,
+    "dragEnabled": true,
+    "pinchEnabled": true
+  }
+}

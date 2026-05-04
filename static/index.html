@@ -62,48 +62,105 @@ h1 { margin-bottom: 10px; font-size: 1.5rem; color: #38bdf8; }
 </div>
 
 <script>
+// =============================================================================
+// CONFIGURATION LOADING
+// =============================================================================
+// Load user preferences from config.json, falling back to defaults if unavailable
+// This is like Python's json.load() with try/except for defaults
+
+// Default configuration - used if config.json fails to load or is missing
+const defaultConfig = {
+  defaultTimeRange: { value: "6h" },
+  refreshIntervals: { currentTempMs: 10000, chartDataMs: 30000 },
+  colors: { palette: ["#38bdf8", "#4ade80", "#f472b6", "#fbbf24", "#a78bfa"] },
+  chart: { lineTension: 0.3, pointRadius: 2, fillArea: false, yAxisMin: null, yAxisMax: null, showGridLines: true, maxTicksLimit: 12 },
+  display: { decimalPlaces: 1, showLastUpdated: true, timeFormat24h: true },
+  zoom: { wheelEnabled: true, dragEnabled: true, pinchEnabled: true }
+};
+
+// Global config variable - populated by loadConfig()
+let config = defaultConfig;
+
+// loadConfig fetches config.json and merges with defaults
+// Returns a Promise that resolves when config is loaded
+async function loadConfig() {
+  try {
+    const response = await fetch('/config.json');
+    if (!response.ok) {
+      console.warn('[Config] Could not load config.json, using defaults');
+      return defaultConfig;
+    }
+    const userConfig = await response.json();
+    // Deep merge user config with defaults (shallow merge is sufficient for our flat structure)
+    config = { ...defaultConfig, ...userConfig };
+    console.log('[Config] Loaded user preferences:', config);
+    return config;
+  } catch (error) {
+    console.warn('[Config] Error loading config, using defaults:', error);
+    return defaultConfig;
+  }
+}
+
+// =============================================================================
+// CHART INITIALIZATION
+// =============================================================================
+
 // Get the 2D drawing context from the canvas element
 const ctx = document.getElementById("temp-chart").getContext("2d");
 
-// Initialize a Chart.js line chart with an empty dataset (populated by fetchData)
-const chart = new Chart(ctx, {
-  type: "line",
-  data: { datasets: [] },
-  options: {
-    responsive: true,
-    maintainAspectRatio: false,
-    interaction: { mode: "nearest", intersect: false },
-    plugins: {
-      legend: { labels: { color: "#94a3b8" } },
-      zoom: {
-        pan: { enabled: true, mode: "x" },
-        zoom: {
-          wheel: { enabled: true },
-          pinch: { enabled: true },
-          drag: { enabled: true, backgroundColor: "rgba(56, 189, 248, 0.12)", borderColor: "rgba(56, 189, 248, 0.6)", borderWidth: 1 },
-          mode: "x",
-        },
-      },
-    },
-    scales: {
-      x: {
-        type: "linear",  // X-axis = milliseconds since epoch (numeric, not categorical)
-        ticks: {
-          color: "#64748b",
-          maxTicksLimit: 12,
-          // Format the tick value (epoch ms) into HH:MM time string
-          callback: v => { const d = new Date(v); return `${d.getHours().toString().padStart(2,"0")}:${d.getMinutes().toString().padStart(2,"0")}`; },
-        },
-        grid: { color: "#1e293b" },
-      },
-      y: { title: { display: true, text: "Temperature (°C)", color: "#94a3b8" }, ticks: { color: "#64748b" }, grid: { color: "#334155" } },
-    },
-  },
-});
-chart.canvas.parentElement.style.height = "400px";
+// Chart instance - created after config is loaded
+let chart = null;
 
-// Color palette for up to 5 sensor lines (cycles if more sensors exist)
-const colors = ["#38bdf8", "#4ade80", "#f472b6", "#fbbf24", "#a78bfa"];
+// Initialize chart with config values
+function initChart() {
+  chart = new Chart(ctx, {
+    type: "line",
+    data: { datasets: [] },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: "nearest", intersect: false },
+      plugins: {
+        legend: { labels: { color: "#94a3b8" } },
+        zoom: {
+          pan: { enabled: true, mode: "x" },
+          zoom: {
+            wheel: { enabled: config.zoom.wheelEnabled },
+            pinch: { enabled: config.zoom.pinchEnabled },
+            drag: { enabled: config.zoom.dragEnabled, backgroundColor: "rgba(56, 189, 248, 0.12)", borderColor: "rgba(56, 189, 248, 0.6)", borderWidth: 1 },
+            mode: "x",
+          },
+        },
+      },
+      scales: {
+        x: {
+          type: "linear",  // X-axis = milliseconds since epoch (numeric, not categorical)
+          ticks: {
+            color: "#64748b",
+            maxTicksLimit: config.chart.maxTicksLimit,
+            // Format the tick value (epoch ms) into HH:MM time string
+            callback: v => { const d = new Date(v); return `${d.getHours().toString().padStart(2,"0")}:${d.getMinutes().toString().padStart(2,"0")}`; },
+          },
+          grid: { color: "#1e293b" },
+        },
+        y: { 
+          title: { display: true, text: "Temperature (°C)", color: "#94a3b8" }, 
+          ticks: { color: "#64748b" }, 
+          grid: { color: "#334155", display: config.chart.showGridLines },
+          min: config.chart.yAxisMin,
+          max: config.chart.yAxisMax,
+        },
+      },
+    },
+  });
+  chart.canvas.parentElement.style.height = "400px";
+}
+
+// Color palette for sensor lines - uses config.colors.palette
+// Cycles through colors if more sensors than colors available
+const colors = config.colors.palette;
+
+// Time range presets - map button values to duration and label
 const rangePresets = {
   "5m": { label: "5 minutes", durationMs: 5 * 60 * 1000 },
   "3h": { label: "3 hours", durationMs: 3 * 60 * 60 * 1000 },
@@ -111,13 +168,15 @@ const rangePresets = {
   "12h": { label: "12 hours", durationMs: 12 * 60 * 60 * 1000 },
 };
 
+// Application state - default range from config
 const state = {
   mode: "preset",
-  preset: "6h",
+  preset: config.defaultTimeRange.value,
   from: null,
   to: null,
 };
 
+// DOM element references
 const presetButtons = [...document.querySelectorAll(".preset-btn")];
 const fromInput = document.getElementById("range-from");
 const toInput = document.getElementById("range-to");
@@ -126,6 +185,7 @@ const applyRangeButton = document.getElementById("apply-range");
 const resetZoomButton = document.getElementById("reset-zoom");
 const rangeError = document.getElementById("range-error");
 
+// formatLocalInput converts Date to datetime-local input format (YYYY-MM-DDTHH:MM)
 function formatLocalInput(date) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -135,6 +195,8 @@ function formatLocalInput(date) {
   return `${year}-${month}-${day}T${hours}:${minutes}`;
 }
 
+// currentRangeBounds returns {from, to, label} based on current state
+// For presets, calculates from current time backwards
 function currentRangeBounds() {
   if (state.mode === "custom") {
     return { from: fromInput.value, to: toInput.value, label: "custom range" };
@@ -150,19 +212,23 @@ function currentRangeBounds() {
   };
 }
 
+// syncInputs updates the datetime input fields with current range
 function syncInputs(bounds) {
   fromInput.value = bounds.from || "";
   toInput.value = bounds.to || "";
 }
 
+// setActivePresetButton highlights the selected preset button
 function setActivePresetButton(presetKey) {
   presetButtons.forEach(btn => btn.classList.toggle("active", btn.dataset.range === presetKey));
 }
 
+// setRangeLabel updates the UI label showing current range
 function setRangeLabel(label) {
   activeRangeLabel.textContent = label;
 }
 
+// apiUrlForCurrentRange constructs the API endpoint URL with time parameters
 function apiUrlForCurrentRange() {
   const bounds = currentRangeBounds();
   if (!bounds.from || !bounds.to) {
@@ -171,6 +237,8 @@ function apiUrlForCurrentRange() {
   return `/api/temps?from=${encodeURIComponent(new Date(bounds.from).toISOString())}&to=${encodeURIComponent(new Date(bounds.to).toISOString())}`;
 }
 
+// loadRange fetches temperature data from API and updates the chart
+// Each unique sensor gets its own colored line dataset
 function loadRange() {
   const url = apiUrlForCurrentRange();
   if (!url) {
@@ -203,9 +271,9 @@ function loadRange() {
           data: points.map(p => ({ x: new Date(p.created_at).getTime(), y: p.temp_c })),
           borderColor: colors[i % colors.length],
           backgroundColor: colors[i % colors.length] + "33",
-          fill: false,
-          tension: 0.3,
-          pointRadius: 2,
+          fill: config.chart.fillArea,
+          tension: config.chart.lineTension,
+          pointRadius: config.chart.pointRadius,
         };
       });
       chart.data.datasets = datasets;
@@ -222,22 +290,24 @@ function loadRange() {
     });
 }
 
-// fetchData queries the /api/temps endpoint and rebuilds the chart datasets
-// Each unique sensor gets its own line (dataset) with its time-series points
-// fetchCurrent gets the latest temp per sensor and displays it in the control bar
+// fetchCurrent gets the latest temperature reading per sensor
+// Displays formatted temps in the control bar
 function fetchCurrent() {
   fetch("/api/current")
     .then(r => r.json())
     .then(data => {
       if (data.length > 0) {
         // Format: "sensor1: 45.0°C, sensor2: 52.3°C"
-        const temps = data.map(d => `${d.sensor}: ${d.temp_c.toFixed(1)}°C`).join(", ");
+        const temps = data.map(d => `${d.sensor}: ${d.temp_c.toFixed(config.display.decimalPlaces)}°C`).join(", ");
         document.getElementById("current-temp").textContent = temps;
-        document.getElementById("updated-at").textContent = data[0].created_at;
+        if (config.display.showLastUpdated) {
+          document.getElementById("updated-at").textContent = data[0].created_at;
+        }
       }
     });
 }
 
+// setPresetRange switches to a preset time range and reloads data
 function setPresetRange(rangeKey) {
   state.mode = "preset";
   state.preset = rangeKey;
@@ -247,10 +317,12 @@ function setPresetRange(rangeKey) {
   loadRange();
 }
 
+// Event listeners for preset buttons
 presetButtons.forEach(btn => {
   btn.addEventListener("click", () => setPresetRange(btn.dataset.range));
 });
 
+// Event listener for custom range apply button
 applyRangeButton.addEventListener("click", () => {
   if (!fromInput.value || !toInput.value) {
     return;
@@ -262,17 +334,48 @@ applyRangeButton.addEventListener("click", () => {
   loadRange();
 });
 
+// Event listener for reset zoom button
 resetZoomButton.addEventListener("click", () => {
   if (chart.resetZoom) {
     chart.resetZoom();
   }
 });
 
-// Initial data load and periodic refresh:
-setPresetRange("6h");                               // Load last 6 hours on page load
-fetchCurrent();                                      // Load current temps immediately
-setInterval(() => fetchCurrent(), 10000);             // Refresh current temps every 10s
-setInterval(() => loadRange(), 30000);                // Refresh chart every 30s
+// =============================================================================
+// INITIALIZATION
+// =============================================================================
+// Load config, then initialize chart and start data updates
+
+async function initialize() {
+  // Load user configuration from config.json
+  await loadConfig();
+  
+  // Initialize chart with config values
+  initChart();
+  
+  // Update colors reference to use loaded config
+  colors.length = 0;
+  colors.push(...config.colors.palette);
+  
+  // Set initial state from config
+  state.preset = config.defaultTimeRange.value;
+  
+  // Set initial button state
+  setActivePresetButton(state.preset);
+  
+  // Load initial data
+  loadRange();
+  fetchCurrent();
+  
+  // Set up periodic refresh using config intervals
+  setInterval(() => fetchCurrent(), config.refreshIntervals.currentTempMs);
+  setInterval(() => loadRange(), config.refreshIntervals.chartDataMs);
+  
+  console.log('[Init] Dashboard initialized with config:', config);
+}
+
+// Start everything when page loads
+initialize();
 </script>
 </body>
 </html>
