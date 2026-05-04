@@ -99,8 +99,9 @@ function log
     end
     
     # Print to console
-    # echo -e enables escape sequences (colors)
-    echo -e "${color}[$level_name]${COLOR_RESET} $message"
+    # In Fish, we use printf instead of echo -e for better control over formatting
+    # $variable interpolation inside quotes works differently than Bash
+    printf "%s[%s]%s %s\n" "$color" "$level_name" "$COLOR_RESET" "$message"
 end
 
 # Log script start
