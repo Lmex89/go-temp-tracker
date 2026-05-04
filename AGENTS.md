@@ -94,7 +94,7 @@ Use plain ASCII instead:
   - `GET /` — Serves web dashboard
 - **Data flow**: `sensor.go` (SensorReader) → `poller.go` (Poller) → `db.go` (Store) → `handler.go`
 - **Time conversion**: `timeutil.go` provides TimeConverter (America/Merida zone)
-- **Files**: `logger.go`, `main.go`, `sensor.go`, `poller.go`, `db.go`, `timeutil.go`, `handler.go`, `static/index.html`, `static/config.json`
+- **Files**: `logger.go`, `main.go`, `sensor.go`, `poller.go`, `db.go`, `timeutil.go`, `handler.go`, `static/index.html`, `static/config.json`, `static/config.default.json`
 
 ---
 
@@ -139,6 +139,22 @@ Filter which sensors appear on the chart and in the current temps display:
 | `["acpitz"]` | ACPI thermal zone | `acpitz/temp1_input` |
 
 Patterns are **case-sensitive partial matches**. A sensor is shown if its name contains ANY of the patterns (OR logic).
+
+### Configuration Files
+
+Two configuration files are provided:
+
+| File | Purpose | Sensors Shown |
+|------|---------|---------------|
+| `config.json` | **Active configuration** - Edit this to customize | Core temps only (filtered) |
+| `config.default.json` | **Reference defaults** - Shows all options with defaults | All sensors (no filtering) |
+
+**To restore defaults**: Copy `config.default.json` to `config.json`:
+```bash
+cp static/config.default.json static/config.json
+```
+
+**Current active config** (`config.json`) has filtering enabled to show only CPU cores by default for a cleaner view. The default config shows all available sensors.
 
 ### Example: Change Default Range and Colors
 
