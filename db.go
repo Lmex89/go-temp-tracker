@@ -3,11 +3,33 @@ package main
 import (
 	"database/sql"
 	"fmt"
-	"time"
 )
 
-// initDB initializes the SQLite database and creates the readings table if it doesn't exist
-func initDB() *sql.DB {
+// Reading represents a temperature reading from a sensor
+type Reading struct {
+	Sensor    string  `json:"sensor"`
+	TempC     float64 `json:"temp_c"`
+	CreatedAt string  `json:"created_at"`
+}
+
+type Store interface {
+	InitDB() *sql.DB
+	Insert(db *sql.DB, sensor string, temp float64)
+	Query(db *sql.DB, hours int) []Reading
+	QueryLatestPerSensor(db *sql.DB) []Reading
+	Prune(db *sql.DB, hours int)
+}
+
+type SQLiteStore struct {
+	converter TimeConverter
+}
+
+func NewSQLiteStore() *SQLiteStore {
+	return &SQLiteStore{converter: NewMeridaTimeConverter()}
+}
+
+// InitDB initializes the SQLite database and creates the readings table if it doesn't exist
+func (s *SQLiteStore) InitDB() *sql.DB {
 	Logger.Info("Initializing SQLite database (temps.db)")
 
 	db, err := sql.Open("sqlite", "temps.db")
@@ -40,8 +62,8 @@ func initDB() *sql.DB {
 	return db
 }
 
-// insertReading inserts a temperature reading into the database
-func insertReading(db *sql.DB, sensor string, temp float64) {
+// Insert inserts a temperature reading into the database
+func (s *SQLiteStore) Insert(db *sql.DB, sensor string, temp float64) {
 	_, err := db.Exec(
 		"INSERT INTO readings (sensor, temp_c) VALUES (?, ?)",
 		sensor, temp,
@@ -53,24 +75,10 @@ func insertReading(db *sql.DB, sensor string, temp float64) {
 	}
 }
 
-// Reading represents a temperature reading from a sensor
-type Reading struct {
-	Sensor    string  `json:"sensor"`
-	TempC     float64 `json:"temp_c"`
-	CreatedAt string  `json:"created_at"`
-}
-
-// queryReadings retrieves temperature readings from the database for the specified number of hours
+// Query retrieves temperature readings from the database for the specified number of hours
 // Converts UTC timestamps to America/Merida local time for display
-func queryReadings(db *sql.DB, hours int) []Reading {
+func (s *SQLiteStore) Query(db *sql.DB, hours int) []Reading {
 	Logger.Debug("Querying readings from last %d hour(s)", hours)
-
-	// Load the America/Merida timezone for local time conversion
-	meridaTZ, err := time.LoadLocation("America/Merida")
-	if err != nil {
-		Logger.Error("Failed to load America/Merida timezone: %v", err)
-		meridaTZ = time.UTC
-	}
 
 	rows, err := db.Query(
 		`SELECT sensor, temp_c, created_at FROM readings
@@ -95,13 +103,7 @@ func queryReadings(db *sql.DB, hours int) []Reading {
 			Logger.Error("Failed to scan row: %v", err)
 			continue
 		}
-		
-		// Convert UTC timestamp to America/Merida local time for display
-		if utcTime, err := time.Parse("2006-01-02 15:04:05", r.CreatedAt); err == nil {
-			localTime := utcTime.In(meridaTZ)
-			r.CreatedAt = localTime.Format("2006-01-02 15:04:05")
-		}
-		
+		r.CreatedAt = s.converter.ToLocal(r.CreatedAt)
 		readings = append(readings, r)
 	}
 
@@ -113,17 +115,10 @@ func queryReadings(db *sql.DB, hours int) []Reading {
 	return readings
 }
 
-// queryLatestPerSensor retrieves the latest temperature reading for each sensor
+// QueryLatestPerSensor retrieves the latest temperature reading for each sensor
 // Converts UTC timestamps to America/Merida local time for display
-func queryLatestPerSensor(db *sql.DB) []Reading {
+func (s *SQLiteStore) QueryLatestPerSensor(db *sql.DB) []Reading {
 	Logger.Debug("Querying latest reading per sensor")
-
-	// Load the America/Merida timezone for local time conversion
-	meridaTZ, err := time.LoadLocation("America/Merida")
-	if err != nil {
-		Logger.Error("Failed to load America/Merida timezone: %v", err)
-		meridaTZ = time.UTC
-	}
 
 	rows, err := db.Query(
 		`SELECT sensor, temp_c, created_at FROM readings
@@ -147,13 +142,7 @@ func queryLatestPerSensor(db *sql.DB) []Reading {
 			Logger.Error("Failed to scan row: %v", err)
 			continue
 		}
-		
-		// Convert UTC timestamp to America/Merida local time for display
-		if utcTime, err := time.Parse("2006-01-02 15:04:05", r.CreatedAt); err == nil {
-			localTime := utcTime.In(meridaTZ)
-			r.CreatedAt = localTime.Format("2006-01-02 15:04:05")
-		}
-		
+		r.CreatedAt = s.converter.ToLocal(r.CreatedAt)
 		readings = append(readings, r)
 	}
 
@@ -168,8 +157,8 @@ func queryLatestPerSensor(db *sql.DB) []Reading {
 	return readings
 }
 
-// pruneOldReadings removes temperature readings older than the specified number of hours
-func pruneOldReadings(db *sql.DB, hours int) {
+// Prune removes temperature readings older than the specified number of hours
+func (s *SQLiteStore) Prune(db *sql.DB, hours int) {
 	Logger.Debug("Pruning readings older than %d hour(s)", hours)
 
 	result, err := db.Exec(

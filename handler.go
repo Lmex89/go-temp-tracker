@@ -7,7 +7,7 @@ import (
 	"strconv"
 )
 
-func handleTemps(db *sql.DB) http.HandlerFunc {
+func handleTemps(store Store, db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		hours := 1
 		if h := r.URL.Query().Get("hours"); h != "" {
@@ -20,7 +20,7 @@ func handleTemps(db *sql.DB) http.HandlerFunc {
 
 		Logger.Debug("GET /api/temps?hours=%d from %s", hours, r.RemoteAddr)
 
-		readings := queryReadings(db, hours)
+		readings := store.Query(db, hours)
 
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(readings); err != nil {
@@ -31,11 +31,11 @@ func handleTemps(db *sql.DB) http.HandlerFunc {
 	}
 }
 
-func handleCurrent(db *sql.DB) http.HandlerFunc {
+func handleCurrent(store Store, db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		Logger.Debug("GET /api/current from %s", r.RemoteAddr)
 
-		readings := queryLatestPerSensor(db)
+		readings := store.QueryLatestPerSensor(db)
 
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(readings); err != nil {

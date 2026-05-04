@@ -1,12 +1,9 @@
 package main
 
 import (
-	"database/sql"
 	"flag"
 	"fmt"
 	"net/http"
-	"os"
-	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -20,7 +17,9 @@ func main() {
 	Logger.Info("Starting Sensor Temperature Tracker")
 	Logger.Debug("Config: port=%d, interval=%ds, retain=%dh", *port, *interval, *retain)
 
-	db := initDB()
+	sensor := NewLinuxThermalSensor()
+	store := NewSQLiteStore()
+	db := store.InitDB()
 	defer func() {
 		if err := db.Close(); err != nil {
 			Logger.Error("Failed to close database: %v", err)
@@ -29,11 +28,12 @@ func main() {
 		}
 	}()
 
-	go pollLoop(db, *interval, *retain)
+	poller := NewPoller(sensor, store, db)
+	go poller.Run(*interval, *retain)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/temps", handleTemps(db))
-	mux.HandleFunc("/api/current", handleCurrent(db))
+	mux.HandleFunc("/api/temps", handleTemps(store, db))
+	mux.HandleFunc("/api/current", handleCurrent(store, db))
 	mux.Handle("/", http.FileServer(http.Dir("static")))
 
 	addr := fmt.Sprintf(":%d", *port)
@@ -42,34 +42,5 @@ func main() {
 
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		Logger.Fatal("HTTP server error: %v", err)
-	}
-}
-
-func (l *LeveledLogger) Fatal(format string, args ...interface{}) {
-	l.log(ERROR, format, args...)
-	os.Exit(1)
-}
-
-func pollLoop(db *sql.DB, intervalSec, retainHours int) {
-	Logger.Info("Polling loop started (interval=%ds, retain=%dh)", intervalSec, retainHours)
-
-	for {
-		Logger.Debug("Reading CPU temperatures...")
-		temps := readCPUTemps()
-
-		if len(temps) == 0 {
-			Logger.Warn("No temperature sensors found")
-		}
-
-		for sensor, temp := range temps {
-			Logger.Debug("Recording %s: %.2f°C", sensor, temp)
-			insertReading(db, sensor, temp)
-		}
-
-		Logger.Info("Recorded %d temperature reading(s)", len(temps))
-		pruneOldReadings(db, retainHours)
-
-		Logger.Debug("Sleeping for %d seconds...", intervalSec)
-		time.Sleep(time.Duration(intervalSec) * time.Second)
 	}
 }

@@ -63,3 +63,7 @@ func (l *LeveledLogger) Debug(format string, args ...interface{}) { l.log(DEBUG,
 func (l *LeveledLogger) Info(format string, args ...interface{})  { l.log(INFO, format, args...) }
 func (l *LeveledLogger) Warn(format string, args ...interface{})  { l.log(WARN, format, args...) }
 func (l *LeveledLogger) Error(format string, args ...interface{}) { l.log(ERROR, format, args...) }
+func (l *LeveledLogger) Fatal(format string, args ...interface{}) {
+	l.log(ERROR, format, args...)
+	os.Exit(1)
+}

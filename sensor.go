@@ -7,7 +7,17 @@ import (
 	"strings"
 )
 
-func readCPUTemps() map[string]float64 {
+type SensorReader interface {
+	Read() map[string]float64
+}
+
+type LinuxThermalSensor struct{}
+
+func NewLinuxThermalSensor() *LinuxThermalSensor {
+	return &LinuxThermalSensor{}
+}
+
+func (s *LinuxThermalSensor) Read() map[string]float64 {
 	temps := make(map[string]float64)
 
 	zones, err := filepath.Glob("/sys/class/thermal/thermal_zone*")
