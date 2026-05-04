@@ -23,6 +23,7 @@ type Store interface {
 	InitDB() *sql.DB
 	Insert(db *sql.DB, sensor string, temp float64)
 	Query(db *sql.DB, hours int) []Reading
+	QueryByRange(db *sql.DB, from, to string) []Reading
 	QueryLatestPerSensor(db *sql.DB) []Reading
 	Prune(db *sql.DB, hours int)
 }
@@ -138,6 +139,46 @@ func (s *SQLiteStore) Query(db *sql.DB, hours int) []Reading {
 	}
 
 	Logger.Info("Queried %d reading(s) from last %d hour(s)", len(readings), hours)
+	return readings
+}
+
+// QueryByRange retrieves temperature readings between two UTC timestamps.
+// from and to should be timestamps in "YYYY-MM-DD HH:MM:SS" format.
+func (s *SQLiteStore) QueryByRange(db *sql.DB, from, to string) []Reading {
+	Logger.Debug("Querying readings from %s to %s", from, to)
+
+	rows, err := db.Query(
+		`SELECT sensor, temp_c, created_at FROM readings
+		 WHERE created_at >= ? AND created_at <= ?
+		 ORDER BY created_at ASC`,
+		from, to,
+	)
+	if err != nil {
+		Logger.Error("Query by range failed: %v", err)
+		return nil
+	}
+	defer func() {
+		if err := rows.Close(); err != nil {
+			Logger.Error("Failed to close rows: %v", err)
+		}
+	}()
+
+	var readings []Reading
+	for rows.Next() {
+		var r Reading
+		if err := rows.Scan(&r.Sensor, &r.TempC, &r.CreatedAt); err != nil {
+			Logger.Error("Failed to scan row: %v", err)
+			continue
+		}
+		r.CreatedAt = s.converter.ToLocal(r.CreatedAt)
+		readings = append(readings, r)
+	}
+
+	if err := rows.Err(); err != nil {
+		Logger.Error("Row iteration error: %v", err)
+	}
+
+	Logger.Info("Queried %d reading(s) from %s to %s", len(readings), from, to)
 	return readings
 }
 
