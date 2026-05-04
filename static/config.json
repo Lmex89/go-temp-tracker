@@ -2,7 +2,7 @@
   "_comment": "Temperature Monitor Dashboard Configuration - Edit this file to customize your chart defaults",
   
   "defaultTimeRange": {
-    "_comment": "Default time range to show when page loads. Options: '5m', '3h', '6h', '12h'",
+    "_comment": "Default time range to show when page loads. Options: '5m', '1h', '3h', '6h', '12h', '24h'",
     "value": "6h"
   },
   
@@ -55,7 +55,7 @@
     "_comment": "Filter which sensors to display. Set enabled=true to filter, false to show all",
     "enabled": true,
     "_comment2": "includePatterns: array of strings/regex patterns. Sensor name must match at least one pattern",
-    "includePatterns": ["Core"],
+    "includePatterns": ["Core", "acpitz"],
     "_comment3": "Example: ['Core'] shows only CPU cores, ['Package'] shows package temp, ['Core', 'Package'] shows both",
     "_comment4": "Patterns are case-sensitive partial matches - 'Core' matches 'coretemp/Core 0'"
   }

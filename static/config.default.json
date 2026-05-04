@@ -4,7 +4,7 @@
   "_comment3": "Or use as reference when customizing config.json",
   
   "defaultTimeRange": {
-    "_comment": "Initial time range when page loads",
+    "_comment": "Initial time range when page loads. Options: '5m', '1h', '3h', '6h', '12h', '24h'",
     "value": "6h"
   },
   
@@ -54,8 +54,10 @@
   },
   
   "sensorFilter": {
-    "_comment": "Filter which sensors to display (DISABLED - shows all sensors)",
+    "_comment": "Filter which sensors to display. Set enabled=true to filter, false to show all",
     "enabled": false,
-    "includePatterns": []
+    "_comment2": "includePatterns: array of strings/regex patterns. Sensor name must match at least one pattern",
+    "includePatterns": [],
+    "_comment3": "Example: ['Core'] shows only CPU cores, ['acpitz'] shows ACPI thermal zone, ['Core', 'acpitz'] shows both"
   }
 }

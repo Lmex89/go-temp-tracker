@@ -39,9 +39,11 @@ h1 { margin-bottom: 10px; font-size: 1.5rem; color: #38bdf8; }
   <div class="controls">
     <span>Zoom:</span>
     <button type="button" class="preset-btn active" data-range="5m">5 min</button>
+    <button type="button" class="preset-btn" data-range="1h">1 hour</button>
     <button type="button" class="preset-btn" data-range="3h">3 hours</button>
     <button type="button" class="preset-btn" data-range="6h">6 hours</button>
     <button type="button" class="preset-btn" data-range="12h">12 hours</button>
+    <button type="button" class="preset-btn" data-range="24h">24 hours</button>
     <button type="button" id="reset-zoom">Reset chart</button>
     <span class="status">Showing <strong id="active-range-label">6 hours</strong></span>
   </div>
@@ -69,6 +71,8 @@ h1 { margin-bottom: 10px; font-size: 1.5rem; color: #38bdf8; }
 // This is like Python's json.load() with try/except for defaults
 
 // Default configuration - used if config.json fails to load or is missing
+// These are fallback defaults when the config.json file is not available
+// rangePresets above must include any defaultTimeRange.value used here
 const defaultConfig = {
   defaultTimeRange: { value: "6h" },
   refreshIntervals: { currentTempMs: 10000, chartDataMs: 30000 },
@@ -184,11 +188,14 @@ function initChart() {
 const colors = config.colors.palette;
 
 // Time range presets - map button values to duration and label
+// Configurable time ranges for the chart filter (similar to time range pickers in monitoring dashboards)
 const rangePresets = {
   "5m": { label: "5 minutes", durationMs: 5 * 60 * 1000 },
+  "1h": { label: "1 hour", durationMs: 1 * 60 * 60 * 1000 },
   "3h": { label: "3 hours", durationMs: 3 * 60 * 60 * 1000 },
   "6h": { label: "6 hours", durationMs: 6 * 60 * 60 * 1000 },
   "12h": { label: "12 hours", durationMs: 12 * 60 * 60 * 1000 },
+  "24h": { label: "24 hours", durationMs: 24 * 60 * 60 * 1000 },
 };
 
 // Application state - default range from config
