@@ -53,7 +53,7 @@
   
   "sensorFilter": {
     "_comment": "Filter which sensors to display. Set enabled=true to filter, false to show all",
-    "enabled": false,
+    "enabled": true,
     "_comment2": "includePatterns: array of strings/regex patterns. Sensor name must match at least one pattern",
     "includePatterns": ["Core"],
     "_comment3": "Example: ['Core'] shows only CPU cores, ['Package'] shows package temp, ['Core', 'Package'] shows both",
