@@ -12,19 +12,23 @@
 # not $(cmd) or `cmd`.
 
 # Set defaults
-set -l LOG_LEVEL (string upper (echo $LOG_LEVEL | string trim))
-set -l LOG_FILE "cleanup-and-build.log"
+# In Fish, 'set -g' creates global variables visible to all functions (like Python's global keyword)
+# 'set -l' creates local variables only visible in current scope (unlike Python, functions can't see outer locals)
+set -g LOG_LEVEL (string upper (echo $LOG_LEVEL | string trim))
+set -g LOG_FILE "cleanup-and-build.log"
 test -z "$LOG_LEVEL"; and set LOG_LEVEL "INFO"
 
 # Log level numeric values (like Python's logging.DEBUG = 10, logging.INFO = 20, etc.)
-set -l DEBUG_LEVEL 10
-set -l INFO_LEVEL 20
-set -l WARN_LEVEL 30
-set -l ERROR_LEVEL 40
-set -l FATAL_LEVEL 50
+# These must be global so the log() function can access them
+set -g DEBUG_LEVEL 10
+set -g INFO_LEVEL 20
+set -g WARN_LEVEL 30
+set -g ERROR_LEVEL 40
+set -g FATAL_LEVEL 50
 
 # Map level name to numeric value
-set -l CURRENT_LEVEL $INFO_LEVEL
+# In Fish, functions can't access outer scope 'local' variables - must use 'global'
+set -g CURRENT_LEVEL $INFO_LEVEL
 switch "$LOG_LEVEL"
     case "DEBUG"
         set CURRENT_LEVEL $DEBUG_LEVEL
@@ -39,12 +43,13 @@ switch "$LOG_LEVEL"
 end
 
 # Colors for console output (like Python's colorama or rich library)
-set -l COLOR_DEBUG '\033[0;36m'  # Cyan
-set -l COLOR_INFO '\033[0;32m'   # Green
-set -l COLOR_WARN '\033[1;33m'   # Yellow
-set -l COLOR_ERROR '\033[0;31m'  # Red
-set -l COLOR_FATAL '\033[1;31m'  # Bold Red
-set -l COLOR_RESET '\033[0m'     # No Color
+# Must be global so the log() function can use them
+set -g COLOR_DEBUG '\033[0;36m'  # Cyan
+set -g COLOR_INFO '\033[0;32m'   # Green
+set -g COLOR_WARN '\033[1;33m'   # Yellow
+set -g COLOR_ERROR '\033[0;31m'  # Red
+set -g COLOR_FATAL '\033[1;31m'  # Bold Red
+set -g COLOR_RESET '\033[0m'     # No Color
 
 # Function to log messages with timestamp and level
 # Like Python's logging.debug(), logging.info(), etc.
@@ -99,9 +104,9 @@ function log
     end
     
     # Print to console
-    # In Fish, we use printf instead of echo -e for better control over formatting
-    # $variable interpolation inside quotes works differently than Bash
-    printf "%s[%s]%s %s\n" "$color" "$level_name" "$COLOR_RESET" "$message"
+    # In Fish, printf %b interprets backslash escapes (like \033 for colors)
+    # This is like Python's print() with ANSI color codes
+    printf "%b[%s]%b %s\n" "$color" "$level_name" "$COLOR_RESET" "$message"
 end
 
 # Log script start
