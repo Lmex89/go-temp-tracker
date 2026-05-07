@@ -3,16 +3,14 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Sensor Temperature</title>
-<!-- Chart.js library for rendering the time-series temperature chart -->
+<title>System Monitor</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.2.0/dist/chartjs-plugin-zoom.min.js"></script>
 <style>
-/* Dark theme styling — similar to a terminal dashboard aesthetic */
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: radial-gradient(circle at top, #111c36, #0f172a 65%); color: #e2e8f0; padding: 20px; }
-h1 { margin-bottom: 10px; font-size: 1.5rem; color: #38bdf8; }
-.subtitle { margin-bottom: 18px; color: #94a3b8; font-size: 0.92rem; }
+h1 { margin-bottom: 6px; font-size: 1.5rem; color: #38bdf8; }
+.subtitle { margin-bottom: 16px; color: #94a3b8; font-size: 0.92rem; }
 .panel { background: rgba(15, 23, 42, 0.72); border: 1px solid #334155; border-radius: 14px; padding: 14px; margin-bottom: 16px; backdrop-filter: blur(6px); }
 .controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .controls + .controls { margin-top: 10px; }
@@ -28,13 +26,28 @@ h1 { margin-bottom: 10px; font-size: 1.5rem; color: #38bdf8; }
 .status { color: #cbd5e1; font-size: 0.875rem; }
 .status strong { color: #38bdf8; }
 .error { color: #fca5a5; font-size: 0.875rem; }
-.chart-container { height: 420px; background: #1e293b; border-radius: 12px; padding: 20px; border: 1px solid #334155; }
-.chart-actions { margin-top: 12px; display: flex; justify-content: flex-end; }
+
+/* Gauge row */
+.gauge-row { display: flex; gap: 16px; flex-wrap: wrap; justify-content: center; }
+.gauge-wrapper { position: relative; width: 140px; height: 100px; }
+.gauge-canvas { width: 140px; height: 100px; }
+.gauge-center { position: absolute; top: 58px; left: 50%; transform: translateX(-50%); text-align: center; pointer-events: none; }
+.gauge-value { display: block; font-size: 1.2rem; font-weight: 700; color: #e2e8f0; line-height: 1.2; }
+.gauge-label { display: block; font-size: 0.7rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; }
+.gauge-sub { display: block; font-size: 0.65rem; color: #64748b; margin-top: 1px; }
+
+/* Chart sections */
+.section-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; padding: 0 4px; }
+.section-header h2 { font-size: 1rem; color: #94a3b8; font-weight: 500; }
+.section-header .current-label { font-size: 0.82rem; color: #4ade80; }
+.chart-container { height: 320px; background: #1e293b; border-radius: 12px; padding: 16px; border: 1px solid #334155; }
+.chart-container + .chart-container { margin-top: 16px; }
 </style>
 </head>
 <body>
-<h1>Sensor Temperature Monitor</h1>
-<div class="subtitle">Preset zoom buttons use backend date ranges. You can also drag, wheel zoom, or query a custom time window.</div>
+<h1>System Monitor</h1>
+<div class="subtitle">Real-time system metrics: temperature, CPU, memory, swap, and load averages.</div>
+
 <div class="panel">
   <div class="controls">
     <span>Zoom:</span>
@@ -53,26 +66,48 @@ h1 { margin-bottom: 10px; font-size: 1.5rem; color: #38bdf8; }
     <label for="range-to">To</label>
     <input id="range-to" type="datetime-local">
     <button type="button" id="apply-range">Apply range</button>
-    <span>| Current: <span id="current-temp" class="current-temp">--</span></span>
-    <span>Updated: <span id="updated-at">--</span></span>
     <span id="range-error" class="error"></span>
   </div>
 </div>
-<!-- Canvas where Chart.js renders the temperature-over-time line chart -->
-<div class="chart-container">
-  <canvas id="temp-chart"></canvas>
+
+<!-- Gauges row -->
+<div class="panel">
+  <div class="gauge-row">
+    <div class="gauge-wrapper">
+      <canvas id="gauge-cpu" class="gauge-canvas"></canvas>
+      <div class="gauge-center"><span class="gauge-value">--</span><span class="gauge-label">CPU</span></div>
+    </div>
+    <div class="gauge-wrapper">
+      <canvas id="gauge-ram" class="gauge-canvas"></canvas>
+      <div class="gauge-center"><span class="gauge-value">--</span><span class="gauge-label">RAM</span></div>
+    </div>
+    <div class="gauge-wrapper">
+      <canvas id="gauge-swap" class="gauge-canvas"></canvas>
+      <div class="gauge-center"><span class="gauge-value">--</span><span class="gauge-label">SWAP</span></div>
+    </div>
+  </div>
 </div>
+
+<!-- Temperature chart -->
+<div class="section-header"><h2>Temperature</h2><span class="current-label" id="temp-current">Current: --</span></div>
+<div class="chart-container"><canvas id="temp-chart"></canvas></div>
+
+<!-- CPU chart -->
+<div class="section-header" style="margin-top:20px"><h2>CPU Usage</h2><span class="current-label" id="cpu-current">Current: --</span></div>
+<div class="chart-container"><canvas id="chart-cpu"></canvas></div>
+
+<!-- Memory chart -->
+<div class="section-header" style="margin-top:20px"><h2>Memory Usage</h2><span class="current-label" id="mem-current">Current: --</span></div>
+<div class="chart-container"><canvas id="chart-memory"></canvas></div>
+
+<!-- Load chart -->
+<div class="section-header" style="margin-top:20px"><h2>System Load</h2><span class="current-label" id="load-current">Current: --</span></div>
+<div class="chart-container"><canvas id="chart-load"></canvas></div>
 
 <script>
 // =============================================================================
-// CONFIGURATION LOADING
+// DEFAULTS & CONFIG
 // =============================================================================
-// Load user preferences from config.json, falling back to defaults if unavailable
-// This is like Python's json.load() with try/except for defaults
-
-// Default configuration - used if config.json fails to load or is missing
-// These are fallback defaults when the config.json file is not available
-// rangePresets above must include any defaultTimeRange.value used here
 const defaultConfig = {
   defaultTimeRange: { value: "6h" },
   refreshIntervals: { currentTempMs: 10000, chartDataMs: 30000 },
@@ -80,133 +115,121 @@ const defaultConfig = {
   chart: { lineTension: 0.3, pointRadius: 2, fillArea: false, yAxisMin: null, yAxisMax: null, showGridLines: true, maxTicksLimit: 12 },
   display: { decimalPlaces: 1, showLastUpdated: true, timeFormat24h: true },
   zoom: { wheelEnabled: true, dragEnabled: true, pinchEnabled: true },
-  sensorFilter: { enabled: false, includePatterns: [] }
+  sensorFilter: { enabled: false, includePatterns: [] },
+  gauge: { cpuMax: 100, ramMax: 100, swapMax: 100 },
+  gaugeRefreshMs: { cpu: 5000, ram: 10000, swap: 60000 },
 };
 
-// Global config variable - populated by loadConfig()
 let config = defaultConfig;
 
-// loadConfig fetches config.json and merges with defaults
-// Returns a Promise that resolves when config is loaded
 async function loadConfig() {
   try {
     const response = await fetch('/config.json');
-    if (!response.ok) {
-      console.warn('[Config] Could not load config.json, using defaults');
-      return defaultConfig;
-    }
+    if (!response.ok) { console.warn('[Config] using defaults'); return defaultConfig; }
     const userConfig = await response.json();
-    // Deep merge user config with defaults (shallow merge is sufficient for our flat structure)
     config = { ...defaultConfig, ...userConfig };
-    console.log('[Config] Loaded user preferences:', config);
+    console.log('[Config] loaded:', config);
     return config;
-  } catch (error) {
-    console.warn('[Config] Error loading config, using defaults:', error);
+  } catch (e) {
+    console.warn('[Config] error, using defaults:', e);
     return defaultConfig;
   }
 }
 
-// filterSensors applies includePatterns from config to filter sensor names
-// Returns true if sensor should be included, false otherwise
-// If filtering is disabled, all sensors pass through
 function shouldIncludeSensor(sensorName) {
-  // If filter is disabled, show all sensors
-  if (!config.sensorFilter || !config.sensorFilter.enabled) {
-    return true;
-  }
-  
-  // Get patterns from config (default to empty array)
+  if (!config.sensorFilter || !config.sensorFilter.enabled) return true;
   const patterns = config.sensorFilter.includePatterns || [];
-  
-  // If no patterns specified but filter is enabled, show nothing
-  if (patterns.length === 0) {
-    return false;
-  }
-  
-  // Sensor passes if it matches ANY of the patterns (OR logic)
-  // Patterns are case-sensitive partial matches
-  return patterns.some(pattern => sensorName.includes(pattern));
+  if (patterns.length === 0) return false;
+  return patterns.some(p => sensorName.includes(p));
+}
+
+function formatBytes(bytes) {
+  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
+  let i = 0, val = bytes;
+  while (val >= 1024 && i < units.length - 1) { val /= 1024; i++; }
+  return val.toFixed(1) + ' ' + units[i];
 }
 
 // =============================================================================
-// CHART INITIALIZATION
+// GAUGES
 // =============================================================================
+const gauges = {};
 
-// Get the 2D drawing context from the canvas element
-const ctx = document.getElementById("temp-chart").getContext("2d");
+function createGauge(id, maxVal, unit) {
+  const ctx = document.getElementById(id).getContext('2d');
+  const chart = new Chart(ctx, {
+    type: 'doughnut',
+    data: { datasets: [{ data: [0, 100], backgroundColor: ['#4ade80', '#0f172a'], borderWidth: 0 }] },
+    options: {
+      circumference: 180, rotation: 270, cutout: '80%',
+      responsive: true, maintainAspectRatio: true,
+      plugins: { tooltip: { enabled: false }, legend: { display: false } },
+    },
+  });
+  gauges[id] = { chart, maxVal, unit };
+}
 
-// Chart instance - created after config is loaded
-let chart = null;
+function updateGauge(id, value) {
+  const g = gauges[id];
+  if (!g) return;
+  const pct = Math.min((value / g.maxVal) * 100, 100);
+  const color = pct > 85 ? '#ef4444' : pct > 60 ? '#fbbf24' : '#4ade80';
+  g.chart.data.datasets[0].data = [pct, 100 - pct];
+  g.chart.data.datasets[0].backgroundColor = [color, '#0f172a'];
+  g.chart.update();
+  const overlay = document.getElementById(id).parentElement.querySelector('.gauge-value');
+  if (overlay) overlay.textContent = value.toFixed(1) + g.unit;
+}
 
-// Initialize chart with config values
-function initChart() {
-  chart = new Chart(ctx, {
-    type: "line",
+// =============================================================================
+// CHARTS
+// =============================================================================
+const metricCharts = {};
+
+function createMetricChart(id, yLabel, unitSuffix) {
+  const ctx = document.getElementById(id).getContext('2d');
+  const chart = new Chart(ctx, {
+    type: 'line',
     data: { datasets: [] },
     options: {
-      responsive: true,
-      maintainAspectRatio: false,
+      responsive: true, maintainAspectRatio: false,
       interaction: { mode: "nearest", intersect: false },
       plugins: {
-        legend: { labels: { color: "#94a3b8" } },
+        legend: { labels: { color: "#94a3b8", boxWidth: 12, padding: 8, font: { size: 10 } } },
         tooltip: {
-          // Tooltip background and border styling - dark theme to match dashboard
-          backgroundColor: "rgba(15, 23, 42, 0.95)",
-          titleColor: "#38bdf8",
-          bodyColor: "#e2e8f0",
-          borderColor: "#334155",
-          borderWidth: 1,
-          padding: 12,
-          cornerRadius: 8,
-          displayColors: true,
-          // Custom callbacks to format tooltip content
+          backgroundColor: "rgba(15, 23, 42, 0.95)", titleColor: "#38bdf8",
+          bodyColor: "#e2e8f0", borderColor: "#334155", borderWidth: 1,
+          padding: 10, cornerRadius: 8, displayColors: true,
           callbacks: {
-            // title callback: shows the formatted date/time
-            title: function(context) {
-              const timestamp = context[0].parsed.x;
-              const date = new Date(timestamp);
-              // Format: "YYYY-MM-DD HH:MM:SS" - like Python's datetime.strftime
-              const year = date.getFullYear();
-              const month = String(date.getMonth() + 1).padStart(2, "0");
-              const day = String(date.getDate()).padStart(2, "0");
-              const hours = String(date.getHours()).padStart(2, "0");
-              const minutes = String(date.getMinutes()).padStart(2, "0");
-              const seconds = String(date.getSeconds()).padStart(2, "0");
-              return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+            title: function(ctx) {
+              const d = new Date(ctx[0].parsed.x);
+              return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}:${String(d.getSeconds()).padStart(2,"0")}`;
             },
-            // label callback: shows sensor name and temperature value
-            label: function(context) {
-              const sensorName = context.dataset.label;
-              const temp = context.parsed.y.toFixed(config.display.decimalPlaces);
-              // Return array for multi-line tooltip: [sensor name, temperature]
-              return [`Origin: ${sensorName}`, `Value: ${temp}°C`];
-            }
-          }
+            label: function(ctx) {
+              const val = ctx.parsed.y.toFixed(config.display.decimalPlaces);
+              return [`Origin: ${ctx.dataset.label}`, `Value: ${val}${unitSuffix}`];
+            },
+          },
         },
         zoom: {
           pan: { enabled: true, mode: "x" },
           zoom: {
             wheel: { enabled: config.zoom.wheelEnabled },
             pinch: { enabled: config.zoom.pinchEnabled },
-            drag: { enabled: config.zoom.dragEnabled, backgroundColor: "rgba(56, 189, 248, 0.12)", borderColor: "rgba(56, 189, 248, 0.6)", borderWidth: 1 },
+            drag: { enabled: config.zoom.dragEnabled, backgroundColor: "rgba(56,189,248,0.12)", borderColor: "rgba(56,189,248,0.6)", borderWidth: 1 },
             mode: "x",
           },
         },
       },
       scales: {
         x: {
-          type: "linear",  // X-axis = milliseconds since epoch (numeric, not categorical)
-          ticks: {
-            color: "#64748b",
-            maxTicksLimit: config.chart.maxTicksLimit,
-            // Format the tick value (epoch ms) into HH:MM time string
-            callback: v => { const d = new Date(v); return `${d.getHours().toString().padStart(2,"0")}:${d.getMinutes().toString().padStart(2,"0")}`; },
-          },
+          type: "linear",
+          ticks: { color: "#64748b", maxTicksLimit: config.chart.maxTicksLimit, callback: v => { const d=new Date(v); return `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`; } },
           grid: { color: "#1e293b" },
         },
-        y: { 
-          title: { display: true, text: "Temperature (°C)", color: "#94a3b8" }, 
-          ticks: { color: "#64748b" }, 
+        y: {
+          title: { display: true, text: yLabel, color: "#94a3b8" },
+          ticks: { color: "#64748b" },
           grid: { color: "#334155", display: config.chart.showGridLines },
           min: config.chart.yAxisMin,
           max: config.chart.yAxisMax,
@@ -214,33 +237,51 @@ function initChart() {
       },
     },
   });
-  chart.canvas.parentElement.style.height = "400px";
+  chart.canvas.parentElement.style.height = "300px";
+  metricCharts[id] = { chart, unitSuffix };
 }
 
-// Color palette for sensor lines - uses config.colors.palette
-// Cycles through colors if more sensors than colors available
-const colors = config.colors.palette;
+function loadMetricData(chartId, apiUrl) {
+  fetch(apiUrl)
+    .then(r => { if (!r.ok) throw new Error(r.statusText); return r.json(); })
+    .then(data => {
+      const mc = metricCharts[chartId];
+      if (!mc) return;
+      const palette = config.colors.palette;
+      const allSensors = [...new Set(data.map(d => d.sensor))];
+      const datasets = allSensors.map((sensor, i) => {
+        const points = data.filter(d => d.sensor === sensor);
+        return {
+          label: sensor,
+          data: points.map(p => ({ x: new Date(p.created_at).getTime(), y: p.temp_c })),
+          borderColor: palette[i % palette.length],
+          backgroundColor: palette[i % palette.length] + "33",
+          fill: config.chart.fillArea || false,
+          tension: config.chart.lineTension,
+          pointRadius: config.chart.pointRadius,
+        };
+      });
+      mc.chart.data.datasets = datasets;
+      if (mc.chart.resetZoom) mc.chart.resetZoom();
+      mc.chart.update();
+    })
+    .catch(err => console.error(`[${chartId}] fetch error:`, err));
+}
 
-// Time range presets - map button values to duration and label
-// Configurable time ranges for the chart filter (similar to time range pickers in monitoring dashboards)
+// =============================================================================
+// TIME RANGE
+// =============================================================================
 const rangePresets = {
-  "5m": { label: "5 minutes", durationMs: 5 * 60 * 1000 },
-  "1h": { label: "1 hour", durationMs: 1 * 60 * 60 * 1000 },
-  "3h": { label: "3 hours", durationMs: 3 * 60 * 60 * 1000 },
-  "6h": { label: "6 hours", durationMs: 6 * 60 * 60 * 1000 },
-  "12h": { label: "12 hours", durationMs: 12 * 60 * 60 * 1000 },
-  "24h": { label: "24 hours", durationMs: 24 * 60 * 60 * 1000 },
+  "5m": { label: "5 minutes", durationMs: 5*60*1000 },
+  "1h": { label: "1 hour", durationMs: 60*60*1000 },
+  "3h": { label: "3 hours", durationMs: 3*60*60*1000 },
+  "6h": { label: "6 hours", durationMs: 6*60*60*1000 },
+  "12h": { label: "12 hours", durationMs: 12*60*60*1000 },
+  "24h": { label: "24 hours", durationMs: 24*60*60*1000 },
 };
 
-// Application state - default range from config
-const state = {
-  mode: "preset",
-  preset: config.defaultTimeRange.value,
-  from: null,
-  to: null,
-};
+const state = { mode: "preset", preset: config.defaultTimeRange.value, from: null, to: null };
 
-// DOM element references
 const presetButtons = [...document.querySelectorAll(".preset-btn")];
 const fromInput = document.getElementById("range-from");
 const toInput = document.getElementById("range-to");
@@ -249,209 +290,173 @@ const applyRangeButton = document.getElementById("apply-range");
 const resetZoomButton = document.getElementById("reset-zoom");
 const rangeError = document.getElementById("range-error");
 
-// formatLocalInput converts Date to datetime-local input format (YYYY-MM-DDTHH:MM)
 function formatLocalInput(date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  const hours = String(date.getHours()).padStart(2, "0");
-  const minutes = String(date.getMinutes()).padStart(2, "0");
-  return `${year}-${month}-${day}T${hours}:${minutes}`;
+  return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,"0")}-${String(date.getDate()).padStart(2,"0")}T${String(date.getHours()).padStart(2,"0")}:${String(date.getMinutes()).padStart(2,"0")}`;
 }
 
-// currentRangeBounds returns {from, to, label} based on current state
-// For presets, calculates from current time backwards
 function currentRangeBounds() {
-  if (state.mode === "custom") {
-    return { from: fromInput.value, to: toInput.value, label: "custom range" };
-  }
-
+  if (state.mode === "custom") return { from: fromInput.value, to: toInput.value, label: "custom range" };
   const preset = rangePresets[state.preset];
   const to = new Date();
   const from = new Date(to.getTime() - preset.durationMs);
-  return {
-    from: formatLocalInput(from),
-    to: formatLocalInput(to),
-    label: preset.label,
-  };
+  return { from: formatLocalInput(from), to: formatLocalInput(to), label: preset.label };
 }
 
-// syncInputs updates the datetime input fields with current range
-function syncInputs(bounds) {
-  fromInput.value = bounds.from || "";
-  toInput.value = bounds.to || "";
-}
+function syncInputs(bounds) { fromInput.value = bounds.from || ""; toInput.value = bounds.to || ""; }
+function setActivePresetButton(key) { presetButtons.forEach(b => b.classList.toggle("active", b.dataset.range === key)); }
+function setRangeLabel(label) { activeRangeLabel.textContent = label; }
 
-// setActivePresetButton highlights the selected preset button
-function setActivePresetButton(presetKey) {
-  presetButtons.forEach(btn => btn.classList.toggle("active", btn.dataset.range === presetKey));
-}
-
-// setRangeLabel updates the UI label showing current range
-function setRangeLabel(label) {
-  activeRangeLabel.textContent = label;
-}
-
-// apiUrlForCurrentRange constructs the API endpoint URL with time parameters
-function apiUrlForCurrentRange() {
+function apiUrlForMetric(metricEndpoint) {
   const bounds = currentRangeBounds();
-  if (!bounds.from || !bounds.to) {
-    return null;
-  }
-  return `/api/temps?from=${encodeURIComponent(new Date(bounds.from).toISOString())}&to=${encodeURIComponent(new Date(bounds.to).toISOString())}`;
+  if (!bounds.from || !bounds.to) return null;
+  return `/api/${metricEndpoint}?from=${encodeURIComponent(new Date(bounds.from).toISOString())}&to=${encodeURIComponent(new Date(bounds.to).toISOString())}`;
 }
 
-// loadRange fetches temperature data from API and updates the chart
-// Each unique sensor gets its own colored line dataset
-function loadRange() {
-  const url = apiUrlForCurrentRange();
-  if (!url) {
-    return;
-  }
-
+function loadAllCharts() {
   const bounds = currentRangeBounds();
   setRangeLabel(bounds.label);
   syncInputs(bounds);
   rangeError.textContent = "";
 
-  console.log("[loadRange] fetching:", url);
-
-  fetch(url)
-    .then(async r => {
-      if (!r.ok) {
-        const text = await r.text();
-        console.error("[loadRange] HTTP error:", r.status, text);
-        throw new Error(text);
-      }
-      return r.json();
-    })
-    .then(data => {
-      console.log("[loadRange] received", data.length, "readings");
-      // Get unique sensors and apply filter if enabled
-      const allSensors = [...new Set(data.map(d => d.sensor))];
-      const sensors = allSensors.filter(shouldIncludeSensor);
-      
-      if (config.sensorFilter && config.sensorFilter.enabled) {
-        console.log(`[loadRange] Filter active: ${allSensors.length} sensors -> ${sensors.length} sensors`);
-      }
-      
-      const datasets = sensors.map((sensor, i) => {
-        const points = data.filter(d => d.sensor === sensor);
-        return {
-          label: sensor,
-          data: points.map(p => ({ x: new Date(p.created_at).getTime(), y: p.temp_c })),
-          borderColor: colors[i % colors.length],
-          backgroundColor: colors[i % colors.length] + "33",
-          fill: config.chart.fillArea,
-          tension: config.chart.lineTension,
-          pointRadius: config.chart.pointRadius,
-        };
-      });
-      chart.data.datasets = datasets;
-      if (chart.resetZoom) {
-        chart.resetZoom();
-      }
-      chart.update();
-    })
-    .catch(err => {
-      console.error("[loadRange] failed:", err);
-      chart.data.datasets = [];
-      chart.update();
-      rangeError.textContent = err.message || "Failed to load range";
-    });
+  const charts = [
+    { id: 'temp-chart', ep: 'temps' },
+    { id: 'chart-cpu', ep: 'cpu' },
+    { id: 'chart-memory', ep: 'memory' },
+    { id: 'chart-load', ep: 'load' },
+  ];
+  charts.forEach(c => {
+    const url = apiUrlForMetric(c.ep);
+    if (url) loadMetricData(c.id, url);
+  });
 }
 
-// fetchCurrent gets the latest temperature reading per sensor
-// Displays formatted temps in the control bar
-function fetchCurrent() {
-  fetch("/api/current")
+// =============================================================================
+// CURRENT VALUES (gauges + labels)
+// =============================================================================
+function fetchGaugeCPUFetch() {
+  fetch('/api/current/cpu')
     .then(r => r.json())
     .then(data => {
-      // Apply sensor filter to current temps as well
-      const filteredData = data.filter(d => shouldIncludeSensor(d.sensor));
-      
-      if (filteredData.length > 0) {
-        // Format: "sensor1: 45.0°C, sensor2: 52.3°C"
-        const temps = filteredData.map(d => `${d.sensor}: ${d.temp_c.toFixed(config.display.decimalPlaces)}°C`).join(", ");
-        document.getElementById("current-temp").textContent = temps;
-        if (config.display.showLastUpdated) {
-          document.getElementById("updated-at").textContent = filteredData[0].created_at;
-        }
-      } else if (data.length > 0) {
-        // Filter removed all sensors - show message
-        document.getElementById("current-temp").textContent = "No sensors match filter";
+      const total = data.find(d => d.sensor === 'cpu/total');
+      if (total) updateGauge('gauge-cpu', total.temp_c);
+      const label = document.getElementById('cpu-current');
+      if (label && total) label.textContent = `Current: ${total.temp_c.toFixed(1)}%`;
+    })
+    .catch(() => {});
+}
+
+function fetchGaugeRAM() {
+  fetch('/api/current/memory')
+    .then(r => r.json())
+    .then(data => {
+      const pct = data.find(d => d.sensor === 'memory/used_percent');
+      const used = data.find(d => d.sensor === 'memory/used_bytes');
+      const total = data.find(d => d.sensor === 'memory/total_bytes');
+      if (pct) updateGauge('gauge-ram', pct.temp_c);
+      const label = document.getElementById('mem-current');
+      if (label && used && total) label.textContent = `Current: ${formatBytes(used.temp_c)} / ${formatBytes(total.temp_c)} (${pct.temp_c.toFixed(1)}%)`;
+    })
+    .catch(() => {});
+}
+
+function fetchGaugeSwap() {
+  fetch('/api/current/swap')
+    .then(r => r.json())
+    .then(data => {
+      const pct = data.find(d => d.sensor === 'swap/used_percent');
+      if (pct) updateGauge('gauge-swap', pct.temp_c);
+    })
+    .catch(() => {});
+}
+
+function fetchCurrentLoad() {
+  fetch('/api/current/load')
+    .then(r => r.json())
+    .then(data => {
+      const l1 = data.find(d => d.sensor === 'load/1min');
+      const l5 = data.find(d => d.sensor === 'load/5min');
+      const l15 = data.find(d => d.sensor === 'load/15min');
+      const label = document.getElementById('load-current');
+      if (label && l1 && l5 && l15) {
+        label.textContent = `1m: ${l1.temp_c.toFixed(2)}  5m: ${l5.temp_c.toFixed(2)}  15m: ${l15.temp_c.toFixed(2)}`;
       }
-    });
+    })
+    .catch(() => {});
 }
 
-// setPresetRange switches to a preset time range and reloads data
+function fetchCurrentTemp() {
+  fetch('/api/current')
+    .then(r => r.json())
+    .then(data => {
+      const filtered = data.filter(d => shouldIncludeSensor(d.sensor));
+      const label = document.getElementById('temp-current');
+      if (filtered.length > 0) {
+        label.textContent = 'Current: ' + filtered.map(d => `${d.sensor}: ${d.temp_c.toFixed(config.display.decimalPlaces)}°C`).join(', ');
+      }
+    })
+    .catch(() => {});
+}
+
+// =============================================================================
+// EVENT HANDLERS
+// =============================================================================
 function setPresetRange(rangeKey) {
-  state.mode = "preset";
-  state.preset = rangeKey;
-  state.from = null;
-  state.to = null;
+  state.mode = "preset"; state.preset = rangeKey; state.from = null; state.to = null;
   setActivePresetButton(rangeKey);
-  loadRange();
+  loadAllCharts();
 }
 
-// Event listeners for preset buttons
-presetButtons.forEach(btn => {
-  btn.addEventListener("click", () => setPresetRange(btn.dataset.range));
-});
+presetButtons.forEach(btn => { btn.addEventListener("click", () => setPresetRange(btn.dataset.range)); });
 
-// Event listener for custom range apply button
 applyRangeButton.addEventListener("click", () => {
-  if (!fromInput.value || !toInput.value) {
-    return;
-  }
-  state.mode = "custom";
-  state.from = fromInput.value;
-  state.to = toInput.value;
+  if (!fromInput.value || !toInput.value) return;
+  state.mode = "custom"; state.from = fromInput.value; state.to = toInput.value;
   setActivePresetButton("");
-  loadRange();
+  loadAllCharts();
 });
 
-// Event listener for reset zoom button
 resetZoomButton.addEventListener("click", () => {
-  if (chart.resetZoom) {
-    chart.resetZoom();
-  }
+  Object.values(metricCharts).forEach(mc => { if (mc.chart.resetZoom) mc.chart.resetZoom(); });
 });
 
 // =============================================================================
 // INITIALIZATION
 // =============================================================================
-// Load config, then initialize chart and start data updates
-
 async function initialize() {
-  // Load user configuration from config.json
   await loadConfig();
-  
-  // Initialize chart with config values
-  initChart();
-  
-  // Update colors reference to use loaded config
-  colors.length = 0;
-  colors.push(...config.colors.palette);
-  
-  // Set initial state from config
   state.preset = config.defaultTimeRange.value;
-  
-  // Set initial button state
-  setActivePresetButton(state.preset);
-  
-  // Load initial data
-  loadRange();
-  fetchCurrent();
-  
-  // Set up periodic refresh using config intervals
-  setInterval(() => fetchCurrent(), config.refreshIntervals.currentTempMs);
-  setInterval(() => loadRange(), config.refreshIntervals.chartDataMs);
-  
-  console.log('[Init] Dashboard initialized with config:', config);
-}
 
-// Start everything when page loads
+  // Create gauges
+  createGauge('gauge-cpu', 100, '%');
+  createGauge('gauge-ram', 100, '%');
+  createGauge('gauge-swap', 100, '%');
+
+  // Create metric charts
+  createMetricChart('temp-chart', 'Temperature (°C)', '°C');
+  createMetricChart('chart-cpu', 'CPU Usage (%)', '%');
+  createMetricChart('chart-memory', 'Memory Usage (%)', '%');
+  createMetricChart('chart-load', 'Load Average', '');
+
+  setActivePresetButton(state.preset);
+  loadAllCharts();
+  fetchCurrentTemp();
+  fetchGaugeCPUFetch();
+  fetchGaugeRAM();
+  fetchGaugeSwap();
+  fetchCurrentLoad();
+
+  // Periodic gauge refresh at their own intervals
+  setInterval(fetchGaugeCPUFetch, config.gaugeRefreshMs?.cpu || 5000);
+  setInterval(fetchGaugeRAM, config.gaugeRefreshMs?.ram || 10000);
+  setInterval(fetchGaugeSwap, config.gaugeRefreshMs?.swap || 60000);
+  setInterval(fetchCurrentLoad, 10000);
+  setInterval(fetchCurrentTemp, config.refreshIntervals.currentTempMs);
+
+  // Periodic chart data refresh
+  setInterval(loadAllCharts, config.refreshIntervals.chartDataMs);
+
+  console.log('[Init] Dashboard initialized');
+}
 initialize();
 </script>
 </body>

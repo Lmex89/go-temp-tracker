@@ -58,13 +58,13 @@ Use plain ASCII instead:
 
 | Instead of | Use |
 |------------|-----|
-| ✅ ✓ | `[OK]`, `[PASS]`, `+` |
-| ❌ ✗ | `[FAIL]`, `[ERROR]`, `-` |
-| ⚠️ | `[WARN]`, `!` |
-| 🚀 | `>>`, `=>` |
-| 🔧 🛠️ | `[BUILD]`, `[SETUP]` |
-| 🧹 | `[CLEAN]`, `[REMOVE]` |
-| 🔍 | `[SEARCH]`, `[FIND]` |
+| [OK] | `[OK]`, `[PASS]`, `+` |
+| [X] | `[FAIL]`, `[ERROR]`, `-` |
+| (warn) | `[WARN]`, `!` |
+| >> | `>>`, `=>` |
+| [tool] | `[BUILD]`, `[SETUP]` |
+| [broom] | `[CLEAN]`, `[REMOVE]` |
+| [search] | `[SEARCH]`, `[FIND]` |
 
 ### Enforcement
 
@@ -81,23 +81,106 @@ Use plain ASCII instead:
 - **Custom run**: `./temp-tracker -port 9090 -interval 60 -retain 48`
 - **Debug logging**: `LOG_LEVEL=DEBUG ./temp-tracker`
 
+## CRITICAL: Never Delete temps.db
+
+**`temps.db` must never be deleted or truncated.** It contains historical metric data across ALL metric types (temperature, CPU, memory, swap, load). The application auto-migrates the schema on startup via `ALTER TABLE ADD COLUMN` — **no manual intervention or file deletion is ever needed.**
+
+- Schema migration is idempotent — runs automatically, safe to restart
+- Deleting `temps.db` destroys ALL historical data irreversibly
+- The DB is SQLite, stored in the project root directory
+
 ## Key Notes
 
-- **Linux-only**: Requires `/sys/class/thermal/thermal_zone*` sensors
-- **Runtime artifacts**: `temps.db` (SQLite) is created automatically
-- **Entrypoint**: `main.go` wires up SensorReader, Store, and Poller, then starts the HTTP server
+- **Linux-only**: Requires `/sys/class/thermal/thermal_zone*` sensors (temperature) + `/proc` (CPU/memory via gopsutil)
+- **Runtime artifacts**: `temps.db` (SQLite) is created automatically — **NEVER DELETE**
+- **Entrypoint**: `main.go` wires up temperature sensors + system metrics, DB store, polling goroutines, and HTTP server
 - **Dashboard**: Served from `static/index.html`
-  - Interactive Chart.js line graph with hover tooltips (value, date, sensor origin)
+  - Gauges row at top (semicircular doughnut charts for CPU, RAM, Swap)
+  - Multiple Chart.js line graphs stacked vertically (Temperature, CPU, Memory, Load)
   - Zoom/pan controls (drag, wheel, pinch)
   - Configurable time ranges and refresh intervals via `config.json`
 - **Logging**: Uses `logger.go` with leveled logging (DEBUG/INFO/WARN/ERROR/FATAL), controlled by `LOG_LEVEL` env var
-- **API endpoints**:
-  - `GET /api/temps?hours=N` — Historical readings (default 1h)
-  - `GET /api/current` — Latest reading per sensor
-  - `GET /` — Serves web dashboard
-- **Data flow**: `sensor.go` (SensorReader) → `poller.go` (Poller) → `db.go` (Store) → `handler.go`
-- **Time conversion**: `timeutil.go` provides TimeConverter (America/Merida zone)
-- **Files**: `logger.go`, `main.go`, `sensor.go`, `poller.go`, `db.go`, `timeutil.go`, `handler.go`, `static/index.html`, `static/config.json`, `static/config.default.json`
+
+## Architecture
+
+### Data Flow
+
+```
+Temperature sensors (/sys/class/thermal)   System metrics (gopsutil v3)
+         |                                      |
+   sensor.go (SensorReader)               metrics.go (SystemMetrics)
+         |                                      |
+    +----+------+-------------------+-------+---+
+    |           |                   |       |
+  poller.go  RunMetricPoller()     ...    ...
+    |           |                   |       |
+    +-----+-----+-------+---------+       |
+          |             |                 |
+       db.go (SQLiteStore — unified readings table)
+          |
+     handler.go (HTTP API)
+          |
+    static/index.html (Chart.js dashboard)
+```
+
+### API Endpoints
+
+| Endpoint | Return Type | Purpose |
+|----------|-------------|---------|
+| `GET /api/temps?hours=N` | `[]Reading` | Historical temperature (backward compat) |
+| `GET /api/current` | `[]Reading` | Latest temperature per sensor (backward compat) |
+| `GET /api/cpu?hours=N` | `[]Reading` | Historical CPU per-core % |
+| `GET /api/memory?hours=N` | `[]Reading` | Historical memory usage % |
+| `GET /api/swap?hours=N` | `[]Reading` | Historical swap usage % |
+| `GET /api/load?hours=N` | `[]Reading` | Historical load averages (1m, 5m, 15m) |
+| `GET /api/current/cpu` | `[]Reading` | Latest CPU readings |
+| `GET /api/current/memory` | `[]Reading` | Latest memory readings |
+| `GET /api/current/swap` | `[]Reading` | Latest swap readings |
+| `GET /api/current/load` | `[]Reading` | Latest load readings |
+| `GET /` | HTML | Dashboard |
+
+All metric endpoints support `?hours=N` (relative) or `?from=ISO&to=ISO` (absolute range).
+
+### Polling Intervals
+
+| Metric | Interval | Retention | Source |
+|--------|----------|-----------|--------|
+| Temperature | 30s | 8760h (1 year) | sensor.go (hwmon/thermal zones) |
+| CPU | 5s | 24h | metrics.go (gopsutil cpu.Percent) |
+| Memory | 10s | 24h | metrics.go (gopsutil mem.VirtualMemory) |
+| Swap | 60s | 168h (7 days) | metrics.go (gopsutil mem.SwapMemory) |
+| Load | 10s | 24h | metrics.go (gopsutil load.Avg) |
+
+### Response Format (all endpoints)
+
+Reading struct is unified across all metric types:
+```json
+{
+  "sensor": "cpu/Core 0",
+  "temp_c": 45.2,
+  "metric_type": "cpu",
+  "unit": "%",
+  "created_at": "2026-05-07 14:30:00"
+}
+```
+
+The `temp_c` field name is historic (kept for backward compatibility). It stores the value for any metric type.
+
+### Files
+
+| File | Purpose |
+|------|---------|
+| `logger.go` | Leveled logging (DEBUG/INFO/WARN/ERROR/FATAL) |
+| `main.go` | Entry point — wires everything |
+| `sensor.go` | Temperature sensor reader (hwmon + thermal zones) |
+| `metrics.go` | System metrics reader (CPU, mem, swap, load) via gopsutil v3 |
+| `poller.go` | Polling loops — one goroutine per metric type |
+| `db.go` | SQLite store with schema migration |
+| `handler.go` | HTTP API handlers |
+| `timeutil.go` | Timezone conversion (America/Merida) |
+| `static/index.html` | Dashboard with gauges + line charts |
+| `static/config.json` | Active dashboard configuration |
+| `static/config.default.json` | Reference defaults |
 
 ---
 
@@ -109,78 +192,64 @@ The web dashboard (`static/index.html`) loads user preferences from `static/conf
 
 | Section | Option | Type | Default | Description |
 |---------|--------|------|---------|-------------|
-| `defaultTimeRange` | `value` | string | `"6h"` | Initial time range. Options: `"5m"`, `"3h"`, `"6h"`, `"12h"` |
-| `refreshIntervals` | `currentTempMs` | number | `10000` | How often to refresh current temps (milliseconds) |
-| `refreshIntervals` | `chartDataMs` | number | `30000` | How often to refresh chart data (milliseconds) |
-| `colors` | `palette` | array | `["#38bdf8", "#4ade80", ...]` | Hex colors for sensor lines (cycles if more sensors) |
-| `chart` | `lineTension` | number | `0.3` | Curve smoothness (0=straight lines, 1=very curved) |
-| `chart` | `pointRadius` | number | `2` | Size of data points on lines |
+| `defaultTimeRange` | `value` | string | `"6h"` | Initial time range: `"5m"`, `"3h"`, `"6h"`, `"12h"` |
+| `refreshIntervals` | `currentTempMs` | number | `10000` | Temperature current refresh (ms) |
+| `refreshIntervals` | `chartDataMs` | number | `30000` | All chart data refresh (ms) |
+| `colors` | `palette` | array | `["#38bdf8", ...]` | Hex colors for sensor lines |
+| `chart` | `lineTension` | number | `0.3` | Curve smoothness (0=straight, 1=very curved) |
+| `chart` | `pointRadius` | number | `2` | Data point size on lines |
 | `chart` | `fillArea` | boolean | `false` | Fill area under lines |
-| `chart` | `yAxisMin` | number/null | `null` | Fix Y-axis minimum (null=auto) |
-| `chart` | `yAxisMax` | number/null | `null` | Fix Y-axis maximum (null=auto) |
-| `chart` | `showGridLines` | boolean | `true` | Show Y-axis grid lines |
-| `chart` | `maxTicksLimit` | number | `12` | Maximum X-axis labels to show |
-| `display` | `decimalPlaces` | number | `1` | Temperature decimal precision |
-| `display` | `showLastUpdated` | boolean | `true` | Show "Updated:" timestamp |
-| `display` | `timeFormat24h` | boolean | `true` | Use 24-hour time format |
-| `zoom` | `wheelEnabled` | boolean | `true` | Enable mouse wheel zoom |
-| `zoom` | `dragEnabled` | boolean | `true` | Enable drag-to-zoom |
-| `zoom` | `pinchEnabled` | boolean | `true` | Enable pinch zoom (touch) |
-| `sensorFilter` | `enabled` | boolean | `false` | Enable sensor filtering |
-| `sensorFilter` | `includePatterns` | array | `[]` | Show only sensors matching these patterns |
+| `chart` | `yAxisMin/Max` | number/null | `null` | Fix Y-axis (null=auto) |
+| `chart` | `showGridLines` | boolean | `true` | Y-axis grid lines |
+| `chart` | `maxTicksLimit` | number | `12` | Max X-axis labels |
+| `display` | `decimalPlaces` | number | `1` | Value decimal precision |
+| `display` | `showLastUpdated` | boolean | `true` | Show timestamp |
+| `display` | `timeFormat24h` | boolean | `true` | 24h time format |
+| `zoom` | `wheelEnabled` | boolean | `true` | Mouse wheel zoom |
+| `zoom` | `dragEnabled` | boolean | `true` | Drag-to-zoom |
+| `zoom` | `pinchEnabled` | boolean | `true` | Pinch zoom (touch) |
+| `gauge` | `cpuMax` | number | `100` | CPU gauge max value |
+| `gauge` | `ramMax` | number | `100` | RAM gauge max value |
+| `gauge` | `swapMax` | number | `100` | Swap gauge max value |
+| `gaugeRefreshMs` | `cpu` | number | `5000` | CPU gauge refresh (ms) |
+| `gaugeRefreshMs` | `ram` | number | `10000` | RAM gauge refresh (ms) |
+| `gaugeRefreshMs` | `swap` | number | `60000` | Swap gauge refresh (ms) |
+| `sensorFilter` | `enabled` | boolean | `false` | Enable temp sensor filtering |
+| `sensorFilter` | `includePatterns` | array | `[]` | Show only matching sensors |
 
 ### Sensor Filtering
 
-Filter which sensors appear on the chart and in the current temps display:
-
-| Pattern | Matches | Example Sensors Shown |
-|---------|---------|----------------------|
-| `["Core"]` | CPU core temps only | `coretemp/Core 0`, `coretemp/Core 1` |
-| `["Package"]` | Package temperature only | `coretemp/Package id 0` |
-| `["Core", "Package"]` | Cores + Package | Both cores and package temp |
-| `["coretemp"]` | All coretemp sensors | All Intel/AMD CPU sensors |
-| `["acpitz"]` | ACPI thermal zone | `acpitz/temp1_input` |
-
-Patterns are **case-sensitive partial matches**. A sensor is shown if its name contains ANY of the patterns (OR logic).
+Filter which temperature sensors appear on the chart (temperature panel only). System metric charts (CPU, memory, etc.) are not affected by this filter.
 
 ### Configuration Files
 
-Two configuration files are provided:
-
-| File | Purpose | Sensors Shown |
-|------|---------|---------------|
-| `config.json` | **Active configuration** - Edit this to customize | Core temps only (filtered) |
-| `config.default.json` | **Reference defaults** - Shows all options with defaults | All sensors (no filtering) |
+| File | Purpose |
+|------|---------|
+| `config.json` | **Active configuration** — Edit this to customize |
+| `config.default.json` | **Reference defaults** |
 
 **To restore defaults**: Copy `config.default.json` to `config.json`:
 ```bash
 cp static/config.default.json static/config.json
 ```
 
-**Current active config** (`config.json`) has filtering enabled to show only CPU cores by default for a cleaner view. The default config shows all available sensors.
-
-### Example: Change Default Range and Colors
-
-```json
-{
-  "defaultTimeRange": { "value": "12h" },
-  "colors": {
-    "palette": ["#ff6b6b", "#4ecdc4", "#45b7d1", "#96ceb4", "#ffeaa7"]
-  },
-  "chart": {
-    "lineTension": 0.5,
-    "fillArea": true
-  }
-}
-```
-
-### How It Works
-
-1. **Config Loading**: Dashboard fetches `/config.json` on page load
-2. **Fallback**: If config.json is missing/invalid, uses built-in defaults
-3. **Application**: Values applied to Chart.js initialization and refresh timers
-4. **No Server Restart**: Changes take effect on next browser refresh
-
 ### Fallback Behavior
 
-If `config.json` fails to load (404, parse error, etc.), the dashboard uses hardcoded defaults identical to the shipped `config.json`. This ensures the dashboard always works even if the config file is deleted.
+If `config.json` fails to load (404, parse error, etc.), the dashboard uses hardcoded defaults identical to the shipped `config.json`.
+
+## Database Schema
+
+Single unified table `readings` with auto-migration:
+
+```sql
+CREATE TABLE readings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sensor TEXT NOT NULL,
+    temp_c REAL NOT NULL,
+    metric_type TEXT NOT NULL DEFAULT 'temperature',
+    unit TEXT NOT NULL DEFAULT 'C',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+```
+
+Migration runs automatically on startup — no manual schema changes needed.

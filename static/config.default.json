@@ -1,35 +1,24 @@
 {
   "_comment": "DEFAULT CONFIGURATION - All sensors visible, no filtering",
   "_comment2": "Copy this file to config.json to restore defaults",
-  "_comment3": "Or use as reference when customizing config.json",
-  
+
   "defaultTimeRange": {
-    "_comment": "Initial time range when page loads. Options: '5m', '1h', '3h', '6h', '12h', '24h'",
     "value": "6h"
   },
-  
+
   "refreshIntervals": {
-    "_comment": "Data refresh frequency in milliseconds",
     "currentTempMs": 10000,
     "chartDataMs": 30000
   },
-  
+
   "colors": {
-    "_comment": "Chart line colors (hex format). Cycles through if more sensors than colors",
     "palette": [
-      "#38bdf8",
-      "#4ade80",
-      "#f472b6",
-      "#fbbf24",
-      "#a78bfa",
-      "#fb7185",
-      "#22d3ee",
-      "#a3e635"
+      "#38bdf8", "#4ade80", "#f472b6", "#fbbf24",
+      "#a78bfa", "#fb7185", "#22d3ee", "#a3e635"
     ]
   },
-  
+
   "chart": {
-    "_comment": "Chart.js appearance settings",
     "lineTension": 0.3,
     "pointRadius": 2,
     "fillArea": false,
@@ -38,26 +27,33 @@
     "showGridLines": true,
     "maxTicksLimit": 12
   },
-  
+
   "display": {
-    "_comment": "Temperature display preferences",
     "decimalPlaces": 1,
     "showLastUpdated": true,
     "timeFormat24h": true
   },
-  
+
   "zoom": {
-    "_comment": "Zoom and pan behavior (wheel, drag, pinch)",
     "wheelEnabled": true,
     "dragEnabled": true,
     "pinchEnabled": true
   },
-  
+
+  "gauge": {
+    "cpuMax": 100,
+    "ramMax": 100,
+    "swapMax": 100
+  },
+
+  "gaugeRefreshMs": {
+    "cpu": 5000,
+    "ram": 10000,
+    "swap": 60000
+  },
+
   "sensorFilter": {
-    "_comment": "Filter which sensors to display. Set enabled=true to filter, false to show all",
     "enabled": false,
-    "_comment2": "includePatterns: array of strings/regex patterns. Sensor name must match at least one pattern",
-    "includePatterns": [],
-    "_comment3": "Example: ['Core'] shows only CPU cores, ['acpitz'] shows ACPI thermal zone, ['Core', 'acpitz'] shows both"
+    "includePatterns": []
   }
 }

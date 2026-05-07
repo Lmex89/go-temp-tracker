@@ -1,33 +1,25 @@
 {
-  "_comment": "Temperature Monitor Dashboard Configuration - Edit this file to customize your chart defaults",
-  
+  "_comment": "System Monitor Dashboard Configuration - Edit this file to customize defaults",
+  "_comment_gauge": "gaugeRefreshMs controls how often each gauge refreshes (in milliseconds)",
+  "_comment_thresholds": "Gauge colors: green < 60%, yellow 60-85%, red > 85% (hardcoded in frontend)",
+
   "defaultTimeRange": {
-    "_comment": "Default time range to show when page loads. Options: '5m', '1h', '3h', '6h', '12h', '24h'",
     "value": "6h"
   },
-  
+
   "refreshIntervals": {
-    "_comment": "How often to refresh data (in milliseconds)",
     "currentTempMs": 10000,
     "chartDataMs": 30000
   },
-  
+
   "colors": {
-    "_comment": "Chart line colors in hex format. Each sensor gets the next color, cycling back to start",
     "palette": [
-      "#38bdf8",
-      "#4ade80", 
-      "#f472b6",
-      "#fbbf24",
-      "#a78bfa",
-      "#fb7185",
-      "#22d3ee",
-      "#a3e635"
+      "#38bdf8", "#4ade80", "#f472b6", "#fbbf24",
+      "#a78bfa", "#fb7185", "#22d3ee", "#a3e635"
     ]
   },
-  
+
   "chart": {
-    "_comment": "Chart appearance settings",
     "lineTension": 0.3,
     "pointRadius": 2,
     "fillArea": false,
@@ -36,27 +28,35 @@
     "showGridLines": true,
     "maxTicksLimit": 12
   },
-  
+
   "display": {
-    "_comment": "Temperature display preferences",
     "decimalPlaces": 1,
     "showLastUpdated": true,
     "timeFormat24h": true
   },
-  
+
   "zoom": {
-    "_comment": "Zoom and pan behavior",
     "wheelEnabled": true,
     "dragEnabled": true,
     "pinchEnabled": true
   },
-  
+
+  "gauge": {
+    "_comment": "Gauge max values (for percentage-based gauges, leave at 100)",
+    "cpuMax": 100,
+    "ramMax": 100,
+    "swapMax": 100
+  },
+
+  "gaugeRefreshMs": {
+    "_comment": "Gauge auto-refresh intervals in milliseconds",
+    "cpu": 5000,
+    "ram": 10000,
+    "swap": 60000
+  },
+
   "sensorFilter": {
-    "_comment": "Filter which sensors to display. Set enabled=true to filter, false to show all",
     "enabled": true,
-    "_comment2": "includePatterns: array of strings/regex patterns. Sensor name must match at least one pattern",
-    "includePatterns": ["Core", "acpitz"],
-    "_comment3": "Example: ['Core'] shows only CPU cores, ['Package'] shows package temp, ['Core', 'Package'] shows both",
-    "_comment4": "Patterns are case-sensitive partial matches - 'Core' matches 'coretemp/Core 0'"
+    "includePatterns": ["Core", "acpitz"]
   }
 }
