@@ -85,6 +85,10 @@ h1 { margin-bottom: 6px; font-size: 1.5rem; color: #38bdf8; }
       <canvas id="gauge-swap" class="gauge-canvas"></canvas>
       <div class="gauge-center"><span class="gauge-value">--</span><span class="gauge-label">SWAP</span></div>
     </div>
+    <div class="gauge-wrapper">
+      <canvas id="gauge-disk" class="gauge-canvas"></canvas>
+      <div class="gauge-center"><span class="gauge-value">--</span><span class="gauge-label">DISK /</span></div>
+    </div>
   </div>
 </div>
 
@@ -116,8 +120,8 @@ const defaultConfig = {
   display: { decimalPlaces: 1, showLastUpdated: true, timeFormat24h: true },
   zoom: { wheelEnabled: true, dragEnabled: true, pinchEnabled: true },
   sensorFilter: { enabled: false, includePatterns: [] },
-  gauge: { cpuMax: 100, ramMax: 100, swapMax: 100 },
-  gaugeRefreshMs: { cpu: 5000, ram: 10000, swap: 60000 },
+  gauge: { cpuMax: 100, ramMax: 100, swapMax: 100, diskMax: 100 },
+  gaugeRefreshMs: { cpu: 5000, ram: 10000, swap: 60000, disk: 60000 },
 };
 
 let config = defaultConfig;
@@ -369,6 +373,16 @@ function fetchGaugeSwap() {
     .catch(() => {});
 }
 
+function fetchGaugeDisk() {
+  fetch('/api/current/disk')
+    .then(r => r.json())
+    .then(data => {
+      const root = data.find(d => d.sensor === 'disk//');
+      if (root) updateGauge('gauge-disk', root.temp_c);
+    })
+    .catch(() => {});
+}
+
 function fetchCurrentLoad() {
   fetch('/api/current/load')
     .then(r => r.json())
@@ -430,6 +444,7 @@ async function initialize() {
   createGauge('gauge-cpu', 100, '%');
   createGauge('gauge-ram', 100, '%');
   createGauge('gauge-swap', 100, '%');
+  createGauge('gauge-disk', 100, '%');
 
   // Create metric charts
   createMetricChart('temp-chart', 'Temperature (°C)', '°C');
@@ -443,12 +458,14 @@ async function initialize() {
   fetchGaugeCPUFetch();
   fetchGaugeRAM();
   fetchGaugeSwap();
+  fetchGaugeDisk();
   fetchCurrentLoad();
 
   // Periodic gauge refresh at their own intervals
   setInterval(fetchGaugeCPUFetch, config.gaugeRefreshMs?.cpu || 5000);
   setInterval(fetchGaugeRAM, config.gaugeRefreshMs?.ram || 10000);
   setInterval(fetchGaugeSwap, config.gaugeRefreshMs?.swap || 60000);
+  setInterval(fetchGaugeDisk, config.gaugeRefreshMs?.disk || 60000);
   setInterval(fetchCurrentLoad, 10000);
   setInterval(fetchCurrentTemp, config.refreshIntervals.currentTempMs);
 

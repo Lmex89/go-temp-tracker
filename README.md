@@ -5,8 +5,8 @@ A lightweight Go application that monitors CPU temperatures, system metrics (CPU
 ## Features
 
 - **Temperature sensors**: Reads from all available `/sys/class/thermal/thermal_zone*` and `/sys/class/hwmon/hwmon*` sensors
-- **System metrics**: CPU usage per core, RAM usage, swap usage, and load averages via gopsutil v3
-- **Gauges**: Semicircular visual indicators for CPU, RAM, and Swap at a glance
+- **System metrics**: CPU usage per core, RAM usage, swap usage, disk usage, and load averages via gopsutil v3
+- **Gauges**: Semicircular visual indicators for CPU, RAM, Swap, and Disk at a glance
 - **Historical data**: Stored in local SQLite database (`temps.db`)
 - **Auto-pruning**: Configurable retention per metric type (temperature 1y, CPU 24h, memory 24h, etc.)
 - **REST API**: Query historical data by metric type with relative hours or absolute date range
@@ -131,6 +131,7 @@ All endpoints support `?hours=N` (relative) or `?from=ISO&to=ISO` (absolute rang
 | `GET /api/current/cpu` | Latest CPU readings |
 | `GET /api/current/memory` | Latest memory readings |
 | `GET /api/current/swap` | Latest swap readings |
+| `GET /api/current/disk` | Latest disk readings (root partition) |
 | `GET /api/current/load` | Latest load readings |
 
 ### Response format
@@ -163,6 +164,7 @@ Serves the web dashboard (`static/index.html`).
 | CPU | 5s | 24h | gopsutil cpu.Percent |
 | Memory | 10s | 24h | gopsutil mem.VirtualMemory |
 | Swap | 60s | 168h (7 days) | gopsutil mem.SwapMemory |
+| Disk | 60s | 168h (7 days) | gopsutil disk.Usage (gauge only) |
 | Load | 10s | 24h | gopsutil load.Avg |
 
 ## Project structure
@@ -204,7 +206,7 @@ The web dashboard (`static/index.html`) uses Chart.js loaded from CDN.
 
 ### Gauge row
 
-Semicircular doughnut gauges show current values for CPU, RAM, and Swap. Color thresholds:
+Semicircular doughnut gauges show current values for CPU, RAM, Swap, and Disk. Color thresholds:
 - Green (< 60%)
 - Yellow (60-85%)
 - Red (> 85%)

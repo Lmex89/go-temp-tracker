@@ -45,14 +45,16 @@
     "_comment": "Gauge max values (for percentage-based gauges, leave at 100)",
     "cpuMax": 100,
     "ramMax": 100,
-    "swapMax": 100
+    "swapMax": 100,
+    "diskMax": 100
   },
 
   "gaugeRefreshMs": {
     "_comment": "Gauge auto-refresh intervals in milliseconds",
     "cpu": 5000,
     "ram": 10000,
-    "swap": 60000
+    "swap": 60000,
+    "disk": 60000
   },
 
   "sensorFilter": {

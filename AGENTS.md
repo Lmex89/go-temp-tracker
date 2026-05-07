@@ -83,7 +83,7 @@ Use plain ASCII instead:
 
 ## CRITICAL: Never Delete temps.db
 
-**`temps.db` must never be deleted or truncated.** It contains historical metric data across ALL metric types (temperature, CPU, memory, swap, load). The application auto-migrates the schema on startup via `ALTER TABLE ADD COLUMN` — **no manual intervention or file deletion is ever needed.**
+**`temps.db` must never be deleted or truncated.** It contains historical metric data across ALL metric types (temperature, CPU, memory, swap, disk, load). The application auto-migrates the schema on startup via `ALTER TABLE ADD COLUMN` — **no manual intervention or file deletion is ever needed.**
 
 - Schema migration is idempotent — runs automatically, safe to restart
 - Deleting `temps.db` destroys ALL historical data irreversibly
@@ -95,7 +95,7 @@ Use plain ASCII instead:
 - **Runtime artifacts**: `temps.db` (SQLite) is created automatically — **NEVER DELETE**
 - **Entrypoint**: `main.go` wires up temperature sensors + system metrics, DB store, polling goroutines, and HTTP server
 - **Dashboard**: Served from `static/index.html`
-  - Gauges row at top (semicircular doughnut charts for CPU, RAM, Swap)
+  - Gauges row at top (semicircular doughnut charts for CPU, RAM, Swap, Disk)
   - Multiple Chart.js line graphs stacked vertically (Temperature, CPU, Memory, Load)
   - Zoom/pan controls (drag, wheel, pinch)
   - Configurable time ranges and refresh intervals via `config.json`
@@ -136,6 +136,7 @@ Temperature sensors (/sys/class/thermal)   System metrics (gopsutil v3)
 | `GET /api/current/cpu` | `[]Reading` | Latest CPU readings |
 | `GET /api/current/memory` | `[]Reading` | Latest memory readings |
 | `GET /api/current/swap` | `[]Reading` | Latest swap readings |
+| `GET /api/current/disk` | `[]Reading` | Latest disk readings (gauge only) |
 | `GET /api/current/load` | `[]Reading` | Latest load readings |
 | `GET /` | HTML | Dashboard |
 
@@ -149,6 +150,7 @@ All metric endpoints support `?hours=N` (relative) or `?from=ISO&to=ISO` (absolu
 | CPU | 5s | 24h | metrics.go (gopsutil cpu.Percent) |
 | Memory | 10s | 24h | metrics.go (gopsutil mem.VirtualMemory) |
 | Swap | 60s | 168h (7 days) | metrics.go (gopsutil mem.SwapMemory) |
+| Disk | 60s | 168h (7 days) | metrics.go (gopsutil disk.Usage) - gauge only |
 | Load | 10s | 24h | metrics.go (gopsutil load.Avg) |
 
 ### Response Format (all endpoints)
@@ -211,9 +213,11 @@ The web dashboard (`static/index.html`) loads user preferences from `static/conf
 | `gauge` | `cpuMax` | number | `100` | CPU gauge max value |
 | `gauge` | `ramMax` | number | `100` | RAM gauge max value |
 | `gauge` | `swapMax` | number | `100` | Swap gauge max value |
+| `gauge` | `diskMax` | number | `100` | Disk gauge max value (gauge only) |
 | `gaugeRefreshMs` | `cpu` | number | `5000` | CPU gauge refresh (ms) |
 | `gaugeRefreshMs` | `ram` | number | `10000` | RAM gauge refresh (ms) |
 | `gaugeRefreshMs` | `swap` | number | `60000` | Swap gauge refresh (ms) |
+| `gaugeRefreshMs` | `disk` | number | `60000` | Disk gauge refresh (ms) |
 | `sensorFilter` | `enabled` | boolean | `false` | Enable temp sensor filtering |
 | `sensorFilter` | `includePatterns` | array | `[]` | Show only matching sensors |
 

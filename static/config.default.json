@@ -43,13 +43,15 @@
   "gauge": {
     "cpuMax": 100,
     "ramMax": 100,
-    "swapMax": 100
+    "swapMax": 100,
+    "diskMax": 100
   },
 
   "gaugeRefreshMs": {
     "cpu": 5000,
     "ram": 10000,
-    "swap": 60000
+    "swap": 60000,
+    "disk": 60000
   },
 
   "sensorFilter": {
