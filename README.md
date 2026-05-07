@@ -170,4 +170,14 @@ sensors-temp/
 
 The web dashboard (`static/index.html`) uses Chart.js loaded from CDN. It auto-refreshes every 30s and shows a selectable time range (1h, 6h, 24h). Current temperatures update every 10s.
 
+### Interactive Features
+
+- **Hover tooltips**: Hover over any data point to see:
+  - **Date**: Full timestamp (YYYY-MM-DD HH:MM:SS)
+  - **Origin**: Sensor name (e.g., `coretemp/Core 0`)
+  - **Value**: Temperature in Celsius
+- **Zoom controls**: Drag to zoom, mouse wheel zoom, pinch zoom on touch devices
+- **Preset ranges**: Quick buttons for 5m, 1h, 3h, 6h, 12h, 24h views
+- **Custom ranges**: Select specific from/to datetime ranges
+
 ![screenshot](screenshot.png) *Coming soon*

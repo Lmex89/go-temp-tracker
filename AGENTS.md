@@ -87,6 +87,9 @@ Use plain ASCII instead:
 - **Runtime artifacts**: `temps.db` (SQLite) is created automatically
 - **Entrypoint**: `main.go` wires up SensorReader, Store, and Poller, then starts the HTTP server
 - **Dashboard**: Served from `static/index.html`
+  - Interactive Chart.js line graph with hover tooltips (value, date, sensor origin)
+  - Zoom/pan controls (drag, wheel, pinch)
+  - Configurable time ranges and refresh intervals via `config.json`
 - **Logging**: Uses `logger.go` with leveled logging (DEBUG/INFO/WARN/ERROR/FATAL), controlled by `LOG_LEVEL` env var
 - **API endpoints**:
   - `GET /api/temps?hours=N` — Historical readings (default 1h)
