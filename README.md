@@ -174,7 +174,7 @@ sensors-temp/
 ├── logger.go       Leveled logger (DEBUG/INFO/WARN/ERROR/FATAL)
 ├── main.go         Entry point — wires sensors, metrics, store, pollers, HTTP server
 ├── sensor.go       SensorReader + LinuxThermalSensor (reads /sys/class/thermal/ and hwmon)
-├── metrics.go      SystemMetrics (CPU, memory, swap, load via gopsutil v3)
+├── metrics.go      SystemMetrics (CPU, memory, swap, disk, load via gopsutil v3)
 ├── poller.go       Poller + RunMetricPoller — one goroutine per metric type
 ├── db.go           Store + SQLiteStore (schema, migration, insert, query, prune)
 ├── timeutil.go     TimeConverter + MeridaTimeConverter (UTC -> America/Merida)

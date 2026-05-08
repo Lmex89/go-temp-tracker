@@ -91,7 +91,7 @@ Use plain ASCII instead:
 
 ## Key Notes
 
-- **Linux-only**: Requires `/sys/class/thermal/thermal_zone*` sensors (temperature) + `/proc` (CPU/memory via gopsutil)
+- **Linux-only**: Requires `/sys/class/thermal/thermal_zone*` sensors (temperature) + `/proc` (CPU/memory/disk via gopsutil)
 - **Runtime artifacts**: `temps.db` (SQLite) is created automatically — **NEVER DELETE**
 - **Entrypoint**: `main.go` wires up temperature sensors + system metrics, DB store, polling goroutines, and HTTP server
 - **Dashboard**: Served from `static/index.html`
@@ -175,7 +175,7 @@ The `temp_c` field name is historic (kept for backward compatibility). It stores
 | `logger.go` | Leveled logging (DEBUG/INFO/WARN/ERROR/FATAL) |
 | `main.go` | Entry point — wires everything |
 | `sensor.go` | Temperature sensor reader (hwmon + thermal zones) |
-| `metrics.go` | System metrics reader (CPU, mem, swap, load) via gopsutil v3 |
+| `metrics.go` | System metrics reader (CPU, mem, swap, disk, load) via gopsutil v3 |
 | `poller.go` | Polling loops — one goroutine per metric type |
 | `db.go` | SQLite store with schema migration |
 | `handler.go` | HTTP API handlers |
