@@ -95,18 +95,30 @@ tmux new -s temp-tracker
 |-------------|---------|----------------------------------------|
 | `-port`     | `8080`  | HTTP server port                       |
 | `-interval` | `30`    | Temperature polling interval in seconds |
-| `-retain`   | `8760`  | Delete readings older than N hours (~12 months) |
+| `-retain`   | `8760`  | Delete temperature readings older than N hours (~12 months) |
 
 ## Environment variables
 
-| Variable    | Default | Description                                      |
-|-------------|---------|--------------------------------------------------|
-| `LOG_LEVEL` | `INFO`  | Log level: `DEBUG`, `INFO`, `WARN`, or `ERROR`   |
+All polling intervals are overridable via environment variables. See `.env.example` for a complete reference.
 
-Example with debug logging:
+| Variable              | Default | Description                                      |
+|-----------------------|---------|--------------------------------------------------|
+| `LOG_LEVEL`           | `INFO`  | Log level: `DEBUG`, `INFO`, `WARN`, or `ERROR`   |
+| `TEMP_POLL_INTERVAL`  | `30`    | Temperature polling interval in seconds           |
+| `CPU_POLL_INTERVAL`   | `30`    | CPU polling interval in seconds                  |
+| `MEMORY_POLL_INTERVAL`| `10`    | Memory polling interval in seconds               |
+| `SWAP_POLL_INTERVAL`  | `60`    | Swap polling interval in seconds                 |
+| `DISK_POLL_INTERVAL`  | `60`    | Disk polling interval in seconds                 |
+| `LOAD_POLL_INTERVAL`  | `10`    | Load polling interval in seconds                 |
+
+Examples:
 
 ```bash
+# Debug logging
 LOG_LEVEL=DEBUG ./temp-tracker
+
+# Override all intervals from env file
+source .env.example && ./temp-tracker
 ```
 
 ## API endpoints
@@ -161,7 +173,7 @@ Serves the web dashboard (`static/index.html`).
 | Metric | Interval | Retention | Source |
 |--------|----------|-----------|--------|
 | Temperature | 30s | 8760h (1 year) | `/sys/class/thermal` / hwmon |
-| CPU | 5s | 24h | gopsutil cpu.Percent |
+| CPU | 30s | 24h | gopsutil cpu.Percent |
 | Memory | 10s | 24h | gopsutil mem.VirtualMemory |
 | Swap | 60s | 168h (7 days) | gopsutil mem.SwapMemory |
 | Disk | 60s | 168h (7 days) | gopsutil disk.Usage (gauge only) |
@@ -183,6 +195,7 @@ sensors-temp/
 │   ├── index.html           Chart.js dashboard (gauges + line charts)
 │   ├── config.json          Active dashboard configuration
 │   └── config.default.json  Reference defaults
+├── .env.example    Environment variable reference template
 ├── AGENTS.md       IDE agent instructions
 ├── README.md       This file
 ├── go.mod / go.sum Go module files
@@ -230,6 +243,8 @@ Edit `static/config.json` to customize colors, refresh intervals, gauge paramete
 ## CRITICAL: Never delete temps.db
 
 The SQLite database (`temps.db`) contains all historical metric data across every metric type. Schema migration is automatic and idempotent. **Deleting this file destroys ALL historical data irreversibly.**
+
+SQLite runtime artifacts (`temps.db-shm`, `temps.db-wal`) are automatically ignored via `.gitignore` — they also contain live data and must not be deleted.
 
 ## Database schema
 

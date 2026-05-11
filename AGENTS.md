@@ -79,7 +79,9 @@ Use plain ASCII instead:
 - **Build**: `go build -o temp-tracker .`
 - **Run**: `./temp-tracker` (defaults: port 8080, interval 30s, retain 8760h)
 - **Custom run**: `./temp-tracker -port 9090 -interval 60 -retain 48`
+- **Env vars**: See `.env.example` for all overridable polling intervals
 - **Debug logging**: `LOG_LEVEL=DEBUG ./temp-tracker`
+- **Load env file**: `source .env.example && ./temp-tracker` (edit first as needed)
 
 ## CRITICAL: Never Delete temps.db
 
@@ -88,11 +90,12 @@ Use plain ASCII instead:
 - Schema migration is idempotent — runs automatically, safe to restart
 - Deleting `temps.db` destroys ALL historical data irreversibly
 - The DB is SQLite, stored in the project root directory
+- `temps.db-shm` and `temps.db-wal` are SQLite runtime artifacts (shared memory + WAL) — also contain live data, but are properly ignored via `.gitignore` (`*.db-shm`, `*.db-wal`)
 
 ## Key Notes
 
 - **Linux-only**: Requires `/sys/class/thermal/thermal_zone*` sensors (temperature) + `/proc` (CPU/memory/disk via gopsutil)
-- **Runtime artifacts**: `temps.db` (SQLite) is created automatically — **NEVER DELETE**
+- **Runtime artifacts**: `temps.db` (SQLite) is created automatically — **NEVER DELETE**. `temps.db-shm`/`temps.db-wal` are ignored via `.gitignore`.
 - **Entrypoint**: `main.go` wires up temperature sensors + system metrics, DB store, polling goroutines, and HTTP server
 - **Dashboard**: Served from `static/index.html`
   - Gauges row at top (semicircular doughnut charts for CPU, RAM, Swap, Disk)
@@ -147,7 +150,7 @@ All metric endpoints support `?hours=N` (relative) or `?from=ISO&to=ISO` (absolu
 | Metric | Interval | Retention | Source |
 |--------|----------|-----------|--------|
 | Temperature | 30s | 8760h (1 year) | sensor.go (hwmon/thermal zones) |
-| CPU | 5s | 24h | metrics.go (gopsutil cpu.Percent) |
+| CPU | 30s | 24h | metrics.go (gopsutil cpu.Percent) |
 | Memory | 10s | 24h | metrics.go (gopsutil mem.VirtualMemory) |
 | Swap | 60s | 168h (7 days) | metrics.go (gopsutil mem.SwapMemory) |
 | Disk | 60s | 168h (7 days) | metrics.go (gopsutil disk.Usage) - gauge only |
@@ -183,6 +186,7 @@ The `temp_c` field name is historic (kept for backward compatibility). It stores
 | `static/index.html` | Dashboard with gauges + line charts |
 | `static/config.json` | Active dashboard configuration |
 | `static/config.default.json` | Reference defaults |
+| `.env.example` | Environment variable reference template |
 
 ---
 
