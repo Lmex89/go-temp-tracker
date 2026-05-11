@@ -50,8 +50,8 @@
   },
 
   "gaugeRefreshMs": {
-    "_comment": "Gauge auto-refresh intervals in milliseconds",
-    "cpu": 5000,
+    "_comment": "Gauge auto-refresh intervals in milliseconds (should match backend polling intervals * 1000)",
+    "cpu": 30000,
     "ram": 10000,
     "swap": 60000,
     "disk": 60000

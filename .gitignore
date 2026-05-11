@@ -27,6 +27,10 @@ temps.db
 tracker.log
 cleanup-and-build.log
 
+# SQLite runtime artifacts (shared memory + WAL, contain live data)
+*.db-shm
+*.db-wal
+
 # IDE/Editor
 .idea/
 .vscode/

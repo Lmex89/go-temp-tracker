@@ -4,9 +4,27 @@ import (
 	"flag"
 	"fmt"
 	"net/http"
+	"os"
+	"strconv"
 
 	_ "modernc.org/sqlite"
 )
+
+// getEnvInt reads an environment variable and parses it as int, returning default if not set or invalid.
+// Like Python: int(os.getenv("VAR_NAME", "default")) but with error handling.
+// In Go, env vars are strings, so we need strconv.Atoi() to convert to int.
+func getEnvInt(key string, defaultVal int) int {
+	val := os.Getenv(key)
+	if val == "" {
+		return defaultVal
+	}
+	parsed, err := strconv.Atoi(val)
+	if err != nil {
+		Logger.Warn("Invalid value for %s=%q, using default %d", key, val, defaultVal)
+		return defaultVal
+	}
+	return parsed
+}
 
 // main is the entry point — analogous to Python's if __name__ == "__main__": main()
 // Go's main() takes no args — use os.Args or the flag package instead.
@@ -40,20 +58,27 @@ func main() {
 	db.SetMaxIdleConns(1)
 
 	// Temperature polling goroutine (existing).
+	// Interval can be overridden with TEMP_POLL_INTERVAL env var (default: 30s).
 	poller := NewPoller(sensor, store, db)
 	go poller.Run(*interval, *retain)
 
 	// System metric polling goroutines — each at an appropriate interval.
-	// CPU: 5s interval, retain 24h (fast-changing, short retention).
-	go RunMetricPoller(store, db, "cpu", 5, 24, metrics.ReadCPU)
-	// Memory: 10s interval, retain 24h.
-	go RunMetricPoller(store, db, "memory", 10, 24, metrics.ReadMemory)
-	// Swap: 60s interval, retain 168h (7 days) — changes slowly.
-	go RunMetricPoller(store, db, "swap", 60, 168, metrics.ReadSwap)
-	// Disk: 60s interval, retain 168h (7 days) — changes slowly.
-	go RunMetricPoller(store, db, "disk", 60, 168, metrics.ReadDisk)
-	// Load: 10s interval, retain 24h.
-	go RunMetricPoller(store, db, "load", 10, 24, metrics.ReadLoad)
+	// All intervals can be overridden via environment variables.
+	// CPU: default 30s, retain 24h (env: CPU_POLL_INTERVAL).
+	cpuInterval := getEnvInt("CPU_POLL_INTERVAL", 30)
+	go RunMetricPoller(store, db, "cpu", cpuInterval, 24, metrics.ReadCPU)
+	// Memory: default 10s, retain 24h (env: MEMORY_POLL_INTERVAL).
+	memInterval := getEnvInt("MEMORY_POLL_INTERVAL", 10)
+	go RunMetricPoller(store, db, "memory", memInterval, 24, metrics.ReadMemory)
+	// Swap: default 60s, retain 168h (7 days) — changes slowly (env: SWAP_POLL_INTERVAL).
+	swapInterval := getEnvInt("SWAP_POLL_INTERVAL", 60)
+	go RunMetricPoller(store, db, "swap", swapInterval, 168, metrics.ReadSwap)
+	// Disk: default 60s, retain 168h (7 days) — changes slowly (env: DISK_POLL_INTERVAL).
+	diskInterval := getEnvInt("DISK_POLL_INTERVAL", 60)
+	go RunMetricPoller(store, db, "disk", diskInterval, 168, metrics.ReadDisk)
+	// Load: default 10s, retain 24h (env: LOAD_POLL_INTERVAL).
+	loadInterval := getEnvInt("LOAD_POLL_INTERVAL", 10)
+	go RunMetricPoller(store, db, "load", loadInterval, 24, metrics.ReadLoad)
 
 	// Setting up HTTP routes — ServeMux is like Flask's app or Django's urlpatterns.
 	mux := http.NewServeMux()
