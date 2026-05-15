@@ -295,14 +295,14 @@ body::after {
 
 .gauge-row {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
 }
 
 .gauge-frame {
   background: var(--bg-secondary);
   border: 1px solid var(--border-subtle);
-  padding: 16px;
+  padding: 6px;
   position: relative;
   overflow: hidden;
 }
@@ -312,7 +312,7 @@ body::after {
   content: '';
   position: absolute;
   top: 0; left: 0;
-  width: 20px; height: 20px;
+  width: 12px; height: 12px;
   border-top: 2px solid var(--accent-cyan);
   border-left: 2px solid var(--accent-cyan);
 }
@@ -321,7 +321,7 @@ body::after {
   content: '';
   position: absolute;
   bottom: 0; right: 0;
-  width: 20px; height: 20px;
+  width: 12px; height: 12px;
   border-bottom: 2px solid var(--accent-cyan);
   border-right: 2px solid var(--accent-cyan);
 }
@@ -336,8 +336,8 @@ body::after {
 }
 
 .gauge-canvas {
-  width: 140px;
-  height: 100px;
+  width: 68px;
+  height: 48px;
 }
 
 .gauge-data {
@@ -351,7 +351,7 @@ body::after {
 
 .gauge-value {
   font-family: 'Orbitron', sans-serif;
-  font-size: 1.7rem;
+  font-size: 1rem;
   font-weight: 700;
   color: var(--text-primary);
   line-height: 1.1;
@@ -360,10 +360,10 @@ body::after {
 
 .gauge-label {
   font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.85rem;
+  font-size: 0.62rem;
   color: var(--text-secondary);
   text-transform: uppercase;
-  letter-spacing: 2px;
+  letter-spacing: 1.2px;
 }
 
 .gauge-sub {
@@ -469,18 +469,56 @@ body::after {
 .gauge-frame:nth-child(3) { animation-delay: 0.3s; }
 .gauge-frame:nth-child(4) { animation-delay: 0.4s; }
 
-/* Responsive */
+/* Responsive - mobile first */
+@media (min-width: 769px) {
+  .gauge-row { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+  .gauge-frame {
+    padding: 4px 6px;
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .gauge-wrapper {
+    flex-direction: row;
+    justify-content: center;
+    align-items: center;
+    gap: 6px;
+    margin-top: 0;
+    flex-wrap: nowrap;
+  }
+  .gauge-data {
+    align-items: flex-start;
+    margin-top: 0;
+    line-height: 1;
+    min-width: 0;
+  }
+  /* Chart.js writes inline canvas size; !important keeps the gauge inside the card. */
+  .gauge-canvas {
+    width: 50px !important;
+    height: 28px !important;
+    flex: 0 0 50px;
+  }
+  .gauge-value { font-size: 1.05rem; }
+  .gauge-label {
+    font-size: 0.66rem;
+    letter-spacing: 1px;
+    white-space: nowrap;
+  }
+}
+
 @media (max-width: 768px) {
   .container { padding: 12px; }
   .header { flex-direction: column; gap: 12px; }
   .header-left h1 { font-size: 1.4rem; }
-  .gauge-row { grid-template-columns: repeat(2, 1fr); }
   .chart-container { height: 280px; }
   .controls { gap: 6px; }
 }
 
 @media (max-width: 480px) {
-  .gauge-row { grid-template-columns: 1fr; }
+  .gauge-row { gap: 5px; }
+  .gauge-canvas { width: 62px; height: 44px; }
+  .gauge-value { font-size: 0.9rem; }
   .section-header { flex-direction: column; align-items: flex-start; gap: 6px; }
 }
 </style>
