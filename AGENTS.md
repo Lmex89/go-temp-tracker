@@ -99,6 +99,7 @@ Use plain ASCII instead:
 - **Entrypoint**: `main.go` wires up temperature sensors + system metrics, DB store, polling goroutines, and HTTP server
 - **Dashboard**: Served from `static/index.html`
   - Gauges row at top (semicircular doughnut charts for CPU, RAM, Swap, Disk)
+  - Gauge cards use compact mobile-first sizing, with constrained desktop canvas sizing to avoid overflow
   - Multiple Chart.js line graphs stacked vertically (Temperature, CPU, Memory, Load)
   - Zoom/pan controls (drag, wheel, pinch)
   - Configurable time ranges and refresh intervals via `config.json`
@@ -149,12 +150,12 @@ All metric endpoints support `?hours=N` (relative) or `?from=ISO&to=ISO` (absolu
 
 | Metric | Interval | Retention | Source |
 |--------|----------|-----------|--------|
-| Temperature | 30s | 8760h (1 year) | sensor.go (hwmon/thermal zones) |
-| CPU | 30s | 24h | metrics.go (gopsutil cpu.Percent) |
-| Memory | 10s | 24h | metrics.go (gopsutil mem.VirtualMemory) |
+| Temperature | 60s | 8760h (1 year) | sensor.go (hwmon/thermal zones) |
+| CPU | 60s | 24h | metrics.go (gopsutil cpu.Percent) |
+| Memory | 60s | 24h | metrics.go (gopsutil mem.VirtualMemory) |
 | Swap | 60s | 168h (7 days) | metrics.go (gopsutil mem.SwapMemory) |
 | Disk | 60s | 168h (7 days) | metrics.go (gopsutil disk.Usage) - gauge only |
-| Load | 10s | 24h | metrics.go (gopsutil load.Avg) |
+| Load | 60s | 24h | metrics.go (gopsutil load.Avg) |
 
 ### Response Format (all endpoints)
 
@@ -199,8 +200,8 @@ The web dashboard (`static/index.html`) loads user preferences from `static/conf
 | Section | Option | Type | Default | Description |
 |---------|--------|------|---------|-------------|
 | `defaultTimeRange` | `value` | string | `"6h"` | Initial time range: `"5m"`, `"3h"`, `"6h"`, `"12h"` |
-| `refreshIntervals` | `currentTempMs` | number | `10000` | Temperature current refresh (ms) |
-| `refreshIntervals` | `chartDataMs` | number | `30000` | All chart data refresh (ms) |
+| `refreshIntervals` | `currentTempMs` | number | `60000` | Temperature current refresh (ms) |
+| `refreshIntervals` | `chartDataMs` | number | `60000` | All chart data refresh (ms) |
 | `colors` | `palette` | array | `["#38bdf8", ...]` | Hex colors for sensor lines |
 | `chart` | `lineTension` | number | `0.3` | Curve smoothness (0=straight, 1=very curved) |
 | `chart` | `pointRadius` | number | `2` | Data point size on lines |
@@ -218,8 +219,8 @@ The web dashboard (`static/index.html`) loads user preferences from `static/conf
 | `gauge` | `ramMax` | number | `100` | RAM gauge max value |
 | `gauge` | `swapMax` | number | `100` | Swap gauge max value |
 | `gauge` | `diskMax` | number | `100` | Disk gauge max value (gauge only) |
-| `gaugeRefreshMs` | `cpu` | number | `5000` | CPU gauge refresh (ms) |
-| `gaugeRefreshMs` | `ram` | number | `10000` | RAM gauge refresh (ms) |
+| `gaugeRefreshMs` | `cpu` | number | `60000` | CPU gauge refresh (ms) |
+| `gaugeRefreshMs` | `ram` | number | `60000` | RAM gauge refresh (ms) |
 | `gaugeRefreshMs` | `swap` | number | `60000` | Swap gauge refresh (ms) |
 | `gaugeRefreshMs` | `disk` | number | `60000` | Disk gauge refresh (ms) |
 | `sensorFilter` | `enabled` | boolean | `false` | Enable temp sensor filtering |

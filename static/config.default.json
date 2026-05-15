@@ -7,8 +7,8 @@
   },
 
   "refreshIntervals": {
-    "currentTempMs": 10000,
-    "chartDataMs": 30000
+    "currentTempMs": 60000,
+    "chartDataMs": 60000
   },
 
   "colors": {
@@ -48,8 +48,8 @@
   },
 
   "gaugeRefreshMs": {
-    "cpu": 5000,
-    "ram": 10000,
+    "cpu": 60000,
+    "ram": 60000,
     "swap": 60000,
     "disk": 60000
   },

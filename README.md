@@ -94,7 +94,7 @@ tmux new -s temp-tracker
 | Flag        | Default | Description                            |
 |-------------|---------|----------------------------------------|
 | `-port`     | `8080`  | HTTP server port                       |
-| `-interval` | `30`    | Temperature polling interval in seconds |
+| `-interval` | `60`    | Temperature polling interval in seconds |
 | `-retain`   | `8760`  | Delete temperature readings older than N hours (~12 months) |
 
 ## Environment variables
@@ -104,12 +104,12 @@ All polling intervals are overridable via environment variables. See `.env.examp
 | Variable              | Default | Description                                      |
 |-----------------------|---------|--------------------------------------------------|
 | `LOG_LEVEL`           | `INFO`  | Log level: `DEBUG`, `INFO`, `WARN`, or `ERROR`   |
-| `TEMP_POLL_INTERVAL`  | `30`    | Temperature polling interval in seconds           |
-| `CPU_POLL_INTERVAL`   | `30`    | CPU polling interval in seconds                  |
-| `MEMORY_POLL_INTERVAL`| `10`    | Memory polling interval in seconds               |
+| `TEMP_POLL_INTERVAL`  | `60`    | Temperature polling interval in seconds           |
+| `CPU_POLL_INTERVAL`   | `60`    | CPU polling interval in seconds                  |
+| `MEMORY_POLL_INTERVAL`| `60`    | Memory polling interval in seconds               |
 | `SWAP_POLL_INTERVAL`  | `60`    | Swap polling interval in seconds                 |
 | `DISK_POLL_INTERVAL`  | `60`    | Disk polling interval in seconds                 |
-| `LOAD_POLL_INTERVAL`  | `10`    | Load polling interval in seconds                 |
+| `LOAD_POLL_INTERVAL`  | `60`    | Load polling interval in seconds                 |
 
 Examples:
 
@@ -172,12 +172,12 @@ Serves the web dashboard (`static/index.html`).
 
 | Metric | Interval | Retention | Source |
 |--------|----------|-----------|--------|
-| Temperature | 30s | 8760h (1 year) | `/sys/class/thermal` / hwmon |
-| CPU | 30s | 24h | gopsutil cpu.Percent |
-| Memory | 10s | 24h | gopsutil mem.VirtualMemory |
+| Temperature | 60s | 8760h (1 year) | `/sys/class/thermal` / hwmon |
+| CPU | 60s | 24h | gopsutil cpu.Percent |
+| Memory | 60s | 24h | gopsutil mem.VirtualMemory |
 | Swap | 60s | 168h (7 days) | gopsutil mem.SwapMemory |
 | Disk | 60s | 168h (7 days) | gopsutil disk.Usage (gauge only) |
-| Load | 10s | 24h | gopsutil load.Avg |
+| Load | 60s | 24h | gopsutil load.Avg |
 
 ## Project structure
 
@@ -223,6 +223,11 @@ Semicircular doughnut gauges show current values for CPU, RAM, Swap, and Disk. C
 - Green (< 60%)
 - Yellow (60-85%)
 - Red (> 85%)
+
+Layout behavior is mobile-first and compact:
+- Mobile and small tablets use tighter gauge cards to prioritize chart visibility.
+- Desktop keeps a 4-column gauge row with reduced card height.
+- Gauge canvas sizing is constrained in CSS to prevent Chart.js inline sizing from overflowing cards.
 
 ### Line charts
 

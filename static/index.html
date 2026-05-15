@@ -652,14 +652,14 @@ body::after {
 // =============================================================================
 const defaultConfig = {
   defaultTimeRange: { value: "3h" },
-  refreshIntervals: { currentTempMs: 10000, chartDataMs: 30000 },
+  refreshIntervals: { currentTempMs: 60000, chartDataMs: 60000 },
   colors: { palette: ["#00ff88", "#00d4ff", "#ffaa00", "#ff3366", "#a78bfa", "#fb7185", "#22d3ee", "#a3e635"] },
   chart: { lineTension: 0.1, pointRadius: 3, fillArea: true, yAxisMin: null, yAxisMax: null, showGridLines: true, maxTicksLimit: 8 },
   display: { decimalPlaces: 1, showLastUpdated: true, timeFormat24h: true },
   zoom: { wheelEnabled: true, dragEnabled: true, pinchEnabled: true },
   sensorFilter: { enabled: false, includePatterns: [] },
   gauge: { cpuMax: 100, ramMax: 100, swapMax: 100, diskMax: 100 },
-  gaugeRefreshMs: { cpu: 5000, ram: 10000, swap: 60000, disk: 60000 },
+  gaugeRefreshMs: { cpu: 60000, ram: 60000, swap: 60000, disk: 60000 },
 };
 
 let config = defaultConfig;
@@ -1059,15 +1059,15 @@ async function initialize() {
   fetchCurrentLoad();
 
   // Periodic gauge refresh at their own intervals
-  setInterval(fetchGaugeCPUFetch, config.gaugeRefreshMs?.cpu || 5000);
-  setInterval(fetchGaugeRAM, config.gaugeRefreshMs?.ram || 10000);
+  setInterval(fetchGaugeCPUFetch, config.gaugeRefreshMs?.cpu || 60000);
+  setInterval(fetchGaugeRAM, config.gaugeRefreshMs?.ram || 60000);
   setInterval(fetchGaugeSwap, config.gaugeRefreshMs?.swap || 60000);
   setInterval(fetchGaugeDisk, config.gaugeRefreshMs?.disk || 60000);
-  setInterval(fetchCurrentLoad, 10000);
-  setInterval(fetchCurrentTemp, config.refreshIntervals.currentTempMs);
+  setInterval(fetchCurrentLoad, 60000);
+  setInterval(fetchCurrentTemp, config.refreshIntervals.currentTempMs || 60000);
 
   // Periodic chart data refresh
-  setInterval(loadAllCharts, config.refreshIntervals.chartDataMs);
+  setInterval(loadAllCharts, config.refreshIntervals.chartDataMs || 60000);
 
   console.log('[Init] Dashboard initialized');
 }

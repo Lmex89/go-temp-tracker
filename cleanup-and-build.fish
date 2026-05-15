@@ -16,6 +16,9 @@
 # 'set -l' creates local variables only visible in current scope (unlike Python, functions can't see outer locals)
 set -g LOG_LEVEL (string upper (echo $LOG_LEVEL | string trim))
 set -g LOG_FILE "cleanup-and-build.log"
+# Shared poll interval default (seconds).
+# Like a Python module-level constant: DEFAULT_INTERVAL = 60.
+set -g DEFAULT_INTERVAL 60
 test -z "$LOG_LEVEL"; and set LOG_LEVEL "INFO"
 
 # Log level numeric values (like Python's logging.DEBUG = 10, logging.INFO = 20, etc.)
@@ -183,7 +186,9 @@ set -l build_status $status
 
 if test $build_status -eq 0
     log INFO "Build successful"
-    log INFO "Ready to run: nohup ./temp-tracker -port 9091 -interval 30 > tracker.log 2>&1 &"
+    # Show a one-line run command with all metric intervals pinned to 60s.
+    # This is similar to passing env overrides in Python's subprocess env dict.
+    log INFO "Ready to run: nohup env TEMP_POLL_INTERVAL=$DEFAULT_INTERVAL CPU_POLL_INTERVAL=$DEFAULT_INTERVAL MEMORY_POLL_INTERVAL=$DEFAULT_INTERVAL SWAP_POLL_INTERVAL=$DEFAULT_INTERVAL DISK_POLL_INTERVAL=$DEFAULT_INTERVAL LOAD_POLL_INTERVAL=$DEFAULT_INTERVAL ./temp-tracker -port 9091 -interval $DEFAULT_INTERVAL > tracker.log 2>&1 &"
 else
     log ERROR "Build failed with exit status $build_status"
     log FATAL "Aborting"

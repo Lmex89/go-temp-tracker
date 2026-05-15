@@ -30,7 +30,7 @@ func getEnvInt(key string, defaultVal int) int {
 // Go's main() takes no args — use os.Args or the flag package instead.
 func main() {
 	port := flag.Int("port", 8080, "HTTP server port")
-	interval := flag.Int("interval", 30, "Temperature polling interval in seconds")
+	interval := flag.Int("interval", 60, "Temperature polling interval in seconds")
 	retain := flag.Int("retain", 8760, "Delete temp readings older than N hours (default: 12 months)")
 	flag.Parse()
 
@@ -58,26 +58,30 @@ func main() {
 	db.SetMaxIdleConns(1)
 
 	// Temperature polling goroutine (existing).
-	// Interval can be overridden with TEMP_POLL_INTERVAL env var (default: 30s).
+	// Default is now 60s to align all metric pollers to one cadence.
+	// Think of this as one global scheduler tick in Python (every minute).
 	poller := NewPoller(sensor, store, db)
 	go poller.Run(*interval, *retain)
 
-	// System metric polling goroutines — each at an appropriate interval.
-	// All intervals can be overridden via environment variables.
-	// CPU: default 30s, retain 24h (env: CPU_POLL_INTERVAL).
-	cpuInterval := getEnvInt("CPU_POLL_INTERVAL", 30)
+	// System metric polling goroutines.
+	// We keep one shared default interval (60s) so CPU/memory/swap/disk/load all
+	// sample at the same pace, similar to using one cron expression in Python.
+	metricDefaultInterval := 60
+
+	// CPU: default 60s, retain 24h (env: CPU_POLL_INTERVAL).
+	cpuInterval := getEnvInt("CPU_POLL_INTERVAL", metricDefaultInterval)
 	go RunMetricPoller(store, db, "cpu", cpuInterval, 24, metrics.ReadCPU)
-	// Memory: default 10s, retain 24h (env: MEMORY_POLL_INTERVAL).
-	memInterval := getEnvInt("MEMORY_POLL_INTERVAL", 10)
+	// Memory: default 60s, retain 24h (env: MEMORY_POLL_INTERVAL).
+	memInterval := getEnvInt("MEMORY_POLL_INTERVAL", metricDefaultInterval)
 	go RunMetricPoller(store, db, "memory", memInterval, 24, metrics.ReadMemory)
-	// Swap: default 60s, retain 168h (7 days) — changes slowly (env: SWAP_POLL_INTERVAL).
-	swapInterval := getEnvInt("SWAP_POLL_INTERVAL", 60)
+	// Swap: default 60s, retain 168h (7 days) (env: SWAP_POLL_INTERVAL).
+	swapInterval := getEnvInt("SWAP_POLL_INTERVAL", metricDefaultInterval)
 	go RunMetricPoller(store, db, "swap", swapInterval, 168, metrics.ReadSwap)
-	// Disk: default 60s, retain 168h (7 days) — changes slowly (env: DISK_POLL_INTERVAL).
-	diskInterval := getEnvInt("DISK_POLL_INTERVAL", 60)
+	// Disk: default 60s, retain 168h (7 days) (env: DISK_POLL_INTERVAL).
+	diskInterval := getEnvInt("DISK_POLL_INTERVAL", metricDefaultInterval)
 	go RunMetricPoller(store, db, "disk", diskInterval, 168, metrics.ReadDisk)
-	// Load: default 10s, retain 24h (env: LOAD_POLL_INTERVAL).
-	loadInterval := getEnvInt("LOAD_POLL_INTERVAL", 10)
+	// Load: default 60s, retain 24h (env: LOAD_POLL_INTERVAL).
+	loadInterval := getEnvInt("LOAD_POLL_INTERVAL", metricDefaultInterval)
 	go RunMetricPoller(store, db, "load", loadInterval, 24, metrics.ReadLoad)
 
 	// Setting up HTTP routes — ServeMux is like Flask's app or Django's urlpatterns.
