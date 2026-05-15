@@ -152,7 +152,7 @@ All metric endpoints support `?hours=N` (relative) or `?from=ISO&to=ISO` (absolu
 | Temperature | 30s | 8760h (1 year) | sensor.go (hwmon/thermal zones) |
 | CPU | 30s | 24h | metrics.go (gopsutil cpu.Percent) |
 | Memory | 10s | 24h | metrics.go (gopsutil mem.VirtualMemory) |
-| Swap | 60s | 168h (7 days) | metrics.go (gopsutil mem.SwapMemory) |
+| Swap | 10s | 168h (7 days) | metrics.go (gopsutil mem.SwapMemory) |
 | Disk | 60s | 168h (7 days) | metrics.go (gopsutil disk.Usage) - gauge only |
 | Load | 10s | 24h | metrics.go (gopsutil load.Avg) |
 

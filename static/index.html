@@ -1,122 +1,622 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="es">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>System Monitor</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.2.0/dist/chartjs-plugin-zoom.min.js"></script>
+<!-- Fuentes: IBM Plex Mono para datos técnicos, Orbitron para títulos de sci-fi -->
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Orbitron:wght@400;700;900&family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
 <style>
+:root {
+  /* Color scheme: Deep space blacks + phosphor green + amber warning + cyan accent */
+  --bg-primary: #050a15;
+  --bg-secondary: #0a1120;
+  --bg-tertiary: #0f1729;
+  --border-subtle: #1e2a3a;
+  --border-glow: #1e3a4a;
+  --text-primary: #e2e8f0;
+  --text-secondary: #8b9eb0;
+  --text-muted: #4a5568;
+  --accent-green: #00ff88;
+  --accent-amber: #ffaa00;
+  --accent-cyan: #00d4ff;
+  --accent-red: #ff3366;
+  --glow-green: rgba(0, 255, 136, 0.3);
+  --glow-cyan: rgba(0, 212, 255, 0.3);
+  --glow-amber: rgba(255, 170, 0, 0.3);
+}
+
 * { margin: 0; padding: 0; box-sizing: border-box; }
-body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: radial-gradient(circle at top, #111c36, #0f172a 65%); color: #e2e8f0; padding: 20px; }
-h1 { margin-bottom: 6px; font-size: 1.5rem; color: #38bdf8; }
-.subtitle { margin-bottom: 16px; color: #94a3b8; font-size: 0.92rem; }
-.panel { background: rgba(15, 23, 42, 0.72); border: 1px solid #334155; border-radius: 14px; padding: 14px; margin-bottom: 16px; backdrop-filter: blur(6px); }
-.controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-.controls + .controls { margin-top: 10px; }
-.controls label { font-size: 0.875rem; color: #94a3b8; display: inline-flex; gap: 6px; align-items: center; }
-.controls input, .controls button { border: 1px solid #334155; border-radius: 8px; background: #1e293b; color: #e2e8f0; font-size: 0.875rem; }
-.controls input { padding: 6px 10px; }
-.controls button { padding: 7px 12px; cursor: pointer; transition: background 0.15s ease, border-color 0.15s ease, transform 0.08s ease; }
-.controls button:hover { background: #263449; border-color: #475569; }
-.controls button:active { transform: translateY(1px); }
-.controls button.active { background: #0369a1; border-color: #38bdf8; color: #f8fafc; }
-.controls span { font-size: 0.875rem; color: #94a3b8; }
-.controls .current-temp { color: #4ade80; font-weight: 600; }
-.status { color: #cbd5e1; font-size: 0.875rem; }
-.status strong { color: #38bdf8; }
-.error { color: #fca5a5; font-size: 0.875rem; }
 
-/* Gauge row */
-.gauge-row { display: flex; gap: 16px; flex-wrap: wrap; justify-content: center; }
-.gauge-wrapper { position: relative; width: 140px; height: 100px; }
-.gauge-canvas { width: 140px; height: 100px; }
-.gauge-center { position: absolute; top: 58px; left: 50%; transform: translateX(-50%); text-align: center; pointer-events: none; }
-.gauge-value { display: block; font-size: 1.2rem; font-weight: 700; color: #e2e8f0; line-height: 1.2; }
-.gauge-label { display: block; font-size: 0.7rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; }
-.gauge-sub { display: block; font-size: 0.65rem; color: #64748b; margin-top: 1px; }
+body {
+  font-family: 'IBM Plex Mono', 'Space Mono', monospace;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  min-height: 100vh;
+  position: relative;
+  overflow-x: hidden;
+}
 
-/* Chart sections */
-.section-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; padding: 0 4px; }
-.section-header h2 { font-size: 1rem; color: #94a3b8; font-weight: 500; }
-.section-header .current-label { font-size: 0.82rem; color: #4ade80; }
-.chart-container { height: 320px; background: #1e293b; border-radius: 12px; padding: 16px; border: 1px solid #334155; }
-.chart-container + .chart-container { margin-top: 16px; }
+/* Grid background pattern - líneas técnicas sutiles */
+body::before {
+  content: '';
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background-image:
+    linear-gradient(rgba(0, 212, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 212, 255, 0.03) 1px, transparent 1px);
+  background-size: 40px 40px;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* CRT scanline overlay - efecto de monitor retro */
+body::after {
+  content: '';
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(0, 0, 0, 0.03) 0px,
+    rgba(0, 0, 0, 0.03) 1px,
+    transparent 1px,
+    transparent 2px
+  );
+  pointer-events: none;
+  z-index: 9999;
+}
+
+/* Layout container */
+.container {
+  position: relative;
+  z-index: 1;
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 20px 24px;
+}
+
+/* ===================================================================
+   HEADER - Panel de título estilo misión espacial
+   =================================================================== */
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 24px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border-subtle);
+  position: relative;
+}
+
+.header::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  width: 200px;
+  height: 1px;
+  background: linear-gradient(90deg, var(--accent-cyan), transparent);
+  box-shadow: 0 0 8px var(--glow-cyan);
+}
+
+.header-left h1 {
+  font-family: 'Orbitron', sans-serif;
+  font-weight: 900;
+  font-size: 1.8rem;
+  color: var(--text-primary);
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  text-shadow: 0 0 10px rgba(0, 212, 255, 0.5);
+  margin-bottom: 4px;
+}
+
+.header-left .subtitle {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+}
+
+.header-right {
+  text-align: right;
+}
+
+.status-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.75rem;
+  color: var(--accent-green);
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent-green);
+  box-shadow: 0 0 8px var(--glow-green);
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+@keyframes pulse-glow {
+  0%, 100% { opacity: 1; box-shadow: 0 0 8px var(--glow-green); }
+  50% { opacity: 0.6; box-shadow: 0 0 16px var(--glow-green); }
+}
+
+/* ===================================================================
+   CONTROL PANEL - Bordes técnicos con esquinas decorativas
+   =================================================================== */
+.panel {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 0;
+  padding: 16px;
+  margin-bottom: 20px;
+  position: relative;
+}
+
+/* Decorative corners - marcas de esquina estilo técnico */
+.panel::before, .panel::after,
+.panel > .corner-tl::before, .panel > .corner-tl::after {
+  content: '';
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border-color: var(--accent-cyan);
+  border-style: solid;
+  pointer-events: none;
+}
+
+.panel::before { top: -1px; left: -1px; border-width: 2px 0 0 2px; }
+.panel::after { top: -1px; right: -1px; border-width: 2px 2px 0 0; }
+.panel .corner-bl::before { bottom: -1px; left: -1px; border-width: 0 0 2px 2px; position: absolute; width: 12px; height: 12px; border-color: var(--accent-cyan); border-style: solid; }
+.panel .corner-br::after { bottom: -1px; right: -1px; border-width: 0 2px 2px 0; position: absolute; width: 12px; height: 12px; border-color: var(--accent-cyan); border-style: solid; }
+
+/* Tech label in corner */
+.panel-label {
+  position: absolute;
+  top: -8px;
+  left: 16px;
+  background: var(--bg-primary);
+  padding: 0 8px;
+  font-size: 0.65rem;
+  color: var(--accent-cyan);
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  font-family: 'Orbitron', sans-serif;
+}
+
+/* ===================================================================
+   CONTROLS - Botones estilo terminal/retro
+   =================================================================== */
+.controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.controls + .controls {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.controls label {
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.controls input, .controls button {
+  font-family: 'IBM Plex Mono', monospace;
+  border: 1px solid var(--border-subtle);
+  border-radius: 2px;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 0.8rem;
+  transition: all 0.2s ease;
+}
+
+.controls input {
+  padding: 6px 10px;
+}
+
+.controls input:focus {
+  outline: none;
+  border-color: var(--accent-cyan);
+  box-shadow: 0 0 6px rgba(0, 212, 255, 0.2);
+}
+
+.controls button {
+  padding: 7px 14px;
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  font-size: 0.7rem;
+  position: relative;
+  overflow: hidden;
+}
+
+.controls button::before {
+  content: '';
+  position: absolute;
+  top: 0; left: -100%;
+  width: 100%; height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(0, 212, 255, 0.1), transparent);
+  transition: left 0.3s ease;
+}
+
+.controls button:hover {
+  border-color: var(--accent-cyan);
+  color: var(--accent-cyan);
+}
+
+.controls button:hover::before {
+  left: 100%;
+}
+
+.controls button:active {
+  transform: translateY(1px);
+}
+
+.controls button.active {
+  background: rgba(0, 212, 255, 0.15);
+  border-color: var(--accent-cyan);
+  color: var(--accent-cyan);
+  box-shadow: 0 0 8px rgba(0, 212, 255, 0.15);
+}
+
+.controls span {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.controls .current-temp {
+  color: var(--accent-green);
+  font-weight: 600;
+}
+
+.status { color: var(--text-secondary); font-size: 0.75rem; }
+.status strong { color: var(--accent-cyan); }
+.error { color: var(--accent-red); font-size: 0.75rem; }
+
+/* ===================================================================
+   GAUGE ROW - Instrumentos estilo panel de avión/nave
+   =================================================================== */
+.gauge-section {
+  margin-bottom: 24px;
+}
+
+.gauge-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 16px;
+}
+
+.gauge-frame {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  padding: 16px;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Corner accents on gauges */
+.gauge-frame::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0;
+  width: 20px; height: 20px;
+  border-top: 2px solid var(--accent-cyan);
+  border-left: 2px solid var(--accent-cyan);
+}
+
+.gauge-frame::after {
+  content: '';
+  position: absolute;
+  bottom: 0; right: 0;
+  width: 20px; height: 20px;
+  border-bottom: 2px solid var(--accent-cyan);
+  border-right: 2px solid var(--accent-cyan);
+}
+
+.gauge-wrapper {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0px;
+  margin-top: -4px;
+}
+
+.gauge-canvas {
+  width: 140px;
+  height: 100px;
+}
+
+.gauge-data {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0px;
+  margin-top: -2px;
+}
+
+.gauge-value {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 1.7rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1.1;
+  text-shadow: 0 0 8px rgba(226, 232, 240, 0.3);
+}
+
+.gauge-label {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 2px;
+}
+
+.gauge-sub {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  letter-spacing: 1px;
+}
+
+/* ===================================================================
+   CHART SECTIONS - Paneles de gráficos estilo monitor técnico
+   =================================================================== */
+.chart-section {
+  margin-bottom: 24px;
+}
+
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  padding: 0 4px;
+}
+
+.section-header h2 {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  font-weight: 700;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  position: relative;
+  padding-left: 16px;
+}
+
+/* Decorative line before section title */
+.section-header h2::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 8px;
+  height: 8px;
+  background: var(--accent-cyan);
+  box-shadow: 0 0 6px var(--glow-cyan);
+  clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
+}
+
+.section-header .current-label {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.75rem;
+  color: var(--accent-green);
+  letter-spacing: 0.5px;
+}
+
+.chart-container {
+  height: 340px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  padding: 16px;
+  position: relative;
+}
+
+/* Corner accents on chart containers */
+.chart-container::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0;
+  width: 16px; height: 16px;
+  border-top: 2px solid var(--border-glow);
+  border-left: 2px solid var(--border-glow);
+}
+
+.chart-container::after {
+  content: '';
+  position: absolute;
+  bottom: 0; right: 0;
+  width: 16px; height: 16px;
+  border-bottom: 2px solid var(--border-glow);
+  border-right: 2px solid var(--border-glow);
+}
+
+/* ===================================================================
+   ANIMATIONS
+   =================================================================== */
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-in {
+  animation: fade-in-up 0.6s ease-out forwards;
+}
+
+.gauge-frame:nth-child(1) { animation-delay: 0.1s; }
+.gauge-frame:nth-child(2) { animation-delay: 0.2s; }
+.gauge-frame:nth-child(3) { animation-delay: 0.3s; }
+.gauge-frame:nth-child(4) { animation-delay: 0.4s; }
+
+/* Responsive */
+@media (max-width: 768px) {
+  .container { padding: 12px; }
+  .header { flex-direction: column; gap: 12px; }
+  .header-left h1 { font-size: 1.4rem; }
+  .gauge-row { grid-template-columns: repeat(2, 1fr); }
+  .chart-container { height: 280px; }
+  .controls { gap: 6px; }
+}
+
+@media (max-width: 480px) {
+  .gauge-row { grid-template-columns: 1fr; }
+  .section-header { flex-direction: column; align-items: flex-start; gap: 6px; }
+}
 </style>
 </head>
 <body>
-<h1>System Monitor</h1>
-<div class="subtitle">Real-time system metrics: temperature, CPU, memory, swap, and load averages.</div>
 
-<div class="panel">
-  <div class="controls">
-    <span>Zoom:</span>
-    <button type="button" class="preset-btn active" data-range="5m">5 min</button>
-    <button type="button" class="preset-btn" data-range="1h">1 hour</button>
-    <button type="button" class="preset-btn" data-range="3h">3 hours</button>
-    <button type="button" class="preset-btn" data-range="6h">6 hours</button>
-    <button type="button" class="preset-btn" data-range="12h">12 hours</button>
-    <button type="button" class="preset-btn" data-range="24h">24 hours</button>
-    <button type="button" id="reset-zoom">Reset chart</button>
-    <span class="status">Showing <strong id="active-range-label">6 hours</strong></span>
+<div class="container">
+
+  <!-- Header estilo Mission Control -->
+  <header class="header">
+    <div class="header-left">
+      <h1>System Monitor</h1>
+      <div class="subtitle">Real-time telemetry dashboard</div>
+    </div>
+    <div class="header-right">
+      <div class="status-indicator">
+        <span class="status-dot"></span>
+        <span>ONLINE</span>
+      </div>
+      <div id="system-time" style="font-size: 0.7rem; color: var(--text-muted); margin-top: 4px; font-family: 'IBM Plex Mono', monospace;"></div>
+    </div>
+  </header>
+
+  <!-- Control Panel -->
+  <div class="panel" style="animation: fade-in-up 0.5s ease-out forwards;">
+    <span class="panel-label">Controls</span>
+    <div class="controls">
+      <span style="color: var(--text-secondary); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 1px;">Range:</span>
+      <button type="button" class="preset-btn active" data-range="5m">5 min</button>
+      <button type="button" class="preset-btn" data-range="1h">1 hour</button>
+      <button type="button" class="preset-btn" data-range="3h">3 hours</button>
+      <button type="button" class="preset-btn" data-range="6h">6 hours</button>
+      <button type="button" class="preset-btn" data-range="12h">12 hours</button>
+      <button type="button" class="preset-btn" data-range="24h">24 hours</button>
+      <button type="button" id="reset-zoom">Reset chart</button>
+      <span class="status">Showing <strong id="active-range-label">6 hours</strong></span>
+    </div>
+    <div class="controls">
+      <label for="range-from">From</label>
+      <input id="range-from" type="datetime-local">
+      <label for="range-to">To</label>
+      <input id="range-to" type="datetime-local">
+      <button type="button" id="apply-range">Apply range</button>
+      <span id="range-error" class="error"></span>
+    </div>
   </div>
-  <div class="controls">
-    <label for="range-from">From</label>
-    <input id="range-from" type="datetime-local">
-    <label for="range-to">To</label>
-    <input id="range-to" type="datetime-local">
-    <button type="button" id="apply-range">Apply range</button>
-    <span id="range-error" class="error"></span>
+
+  <!-- Gauge Row -->
+  <div class="gauge-section">
+    <div class="gauge-row">
+      <div class="gauge-frame animate-in">
+        <div class="gauge-wrapper">
+          <canvas id="gauge-cpu" class="gauge-canvas"></canvas>
+          <div class="gauge-data">
+            <span class="gauge-value" id="gauge-cpu-value">--</span>
+            <span class="gauge-label">CPU</span>
+          </div>
+        </div>
+      </div>
+      <div class="gauge-frame animate-in">
+        <div class="gauge-wrapper">
+          <canvas id="gauge-ram" class="gauge-canvas"></canvas>
+          <div class="gauge-data">
+            <span class="gauge-value" id="gauge-ram-value">--</span>
+            <span class="gauge-label">RAM</span>
+          </div>
+        </div>
+      </div>
+      <div class="gauge-frame animate-in">
+        <div class="gauge-wrapper">
+          <canvas id="gauge-swap" class="gauge-canvas"></canvas>
+          <div class="gauge-data">
+            <span class="gauge-value" id="gauge-swap-value">--</span>
+            <span class="gauge-label">SWAP</span>
+          </div>
+        </div>
+      </div>
+      <div class="gauge-frame animate-in">
+        <div class="gauge-wrapper">
+          <canvas id="gauge-disk" class="gauge-canvas"></canvas>
+          <div class="gauge-data">
+            <span class="gauge-value" id="gauge-disk-value">--</span>
+            <span class="gauge-label">DISK /</span>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
+
+  <!-- Temperature Chart -->
+  <div class="chart-section" style="animation: fade-in-up 0.6s ease-out 0.2s both;">
+    <div class="section-header">
+      <h2>Temperature</h2>
+      <span class="current-label" id="temp-current">Current: --</span>
+    </div>
+    <div class="chart-container"><canvas id="temp-chart"></canvas></div>
+  </div>
+
+  <!-- CPU Chart -->
+  <div class="chart-section" style="animation: fade-in-up 0.6s ease-out 0.3s both;">
+    <div class="section-header">
+      <h2>CPU Usage</h2>
+      <span class="current-label" id="cpu-current">Current: --</span>
+    </div>
+    <div class="chart-container"><canvas id="chart-cpu"></canvas></div>
+  </div>
+
+  <!-- Memory Chart -->
+  <div class="chart-section" style="animation: fade-in-up 0.6s ease-out 0.4s both;">
+    <div class="section-header">
+      <h2>Memory Usage</h2>
+      <span class="current-label" id="mem-current">Current: --</span>
+    </div>
+    <div class="chart-container"><canvas id="chart-memory"></canvas></div>
+  </div>
+
+  <!-- Load Chart -->
+  <div class="chart-section" style="animation: fade-in-up 0.6s ease-out 0.5s both;">
+    <div class="section-header">
+      <h2>System Load</h2>
+      <span class="current-label" id="load-current">Current: --</span>
+    </div>
+    <div class="chart-container"><canvas id="chart-load"></canvas></div>
+  </div>
+
 </div>
-
-<!-- Gauges row -->
-<div class="panel">
-  <div class="gauge-row">
-    <div class="gauge-wrapper">
-      <canvas id="gauge-cpu" class="gauge-canvas"></canvas>
-      <div class="gauge-center"><span class="gauge-value">--</span><span class="gauge-label">CPU</span></div>
-    </div>
-    <div class="gauge-wrapper">
-      <canvas id="gauge-ram" class="gauge-canvas"></canvas>
-      <div class="gauge-center"><span class="gauge-value">--</span><span class="gauge-label">RAM</span></div>
-    </div>
-    <div class="gauge-wrapper">
-      <canvas id="gauge-swap" class="gauge-canvas"></canvas>
-      <div class="gauge-center"><span class="gauge-value">--</span><span class="gauge-label">SWAP</span></div>
-    </div>
-    <div class="gauge-wrapper">
-      <canvas id="gauge-disk" class="gauge-canvas"></canvas>
-      <div class="gauge-center"><span class="gauge-value">--</span><span class="gauge-label">DISK /</span></div>
-    </div>
-  </div>
-</div>
-
-<!-- Temperature chart -->
-<div class="section-header"><h2>Temperature</h2><span class="current-label" id="temp-current">Current: --</span></div>
-<div class="chart-container"><canvas id="temp-chart"></canvas></div>
-
-<!-- CPU chart -->
-<div class="section-header" style="margin-top:20px"><h2>CPU Usage</h2><span class="current-label" id="cpu-current">Current: --</span></div>
-<div class="chart-container"><canvas id="chart-cpu"></canvas></div>
-
-<!-- Memory chart -->
-<div class="section-header" style="margin-top:20px"><h2>Memory Usage</h2><span class="current-label" id="mem-current">Current: --</span></div>
-<div class="chart-container"><canvas id="chart-memory"></canvas></div>
-
-<!-- Load chart -->
-<div class="section-header" style="margin-top:20px"><h2>System Load</h2><span class="current-label" id="load-current">Current: --</span></div>
-<div class="chart-container"><canvas id="chart-load"></canvas></div>
 
 <script>
 // =============================================================================
 // DEFAULTS & CONFIG
 // =============================================================================
 const defaultConfig = {
-  defaultTimeRange: { value: "6h" },
+  defaultTimeRange: { value: "3h" },
   refreshIntervals: { currentTempMs: 10000, chartDataMs: 30000 },
-  colors: { palette: ["#38bdf8", "#4ade80", "#f472b6", "#fbbf24", "#a78bfa"] },
-  chart: { lineTension: 0.3, pointRadius: 2, fillArea: false, yAxisMin: null, yAxisMax: null, showGridLines: true, maxTicksLimit: 12 },
+  colors: { palette: ["#00ff88", "#00d4ff", "#ffaa00", "#ff3366", "#a78bfa", "#fb7185", "#22d3ee", "#a3e635"] },
+  chart: { lineTension: 0.1, pointRadius: 3, fillArea: true, yAxisMin: null, yAxisMax: null, showGridLines: true, maxTicksLimit: 8 },
   display: { decimalPlaces: 1, showLastUpdated: true, timeFormat24h: true },
   zoom: { wheelEnabled: true, dragEnabled: true, pinchEnabled: true },
   sensorFilter: { enabled: false, includePatterns: [] },
@@ -155,7 +655,24 @@ function formatBytes(bytes) {
 }
 
 // =============================================================================
-// GAUGES
+// CLOCK
+// =============================================================================
+function updateClock() {
+  const now = new Date();
+  const timeStr = now.getFullYear() + '-' +
+    String(now.getMonth()+1).padStart(2,'0') + '-' +
+    String(now.getDate()).padStart(2,'0') + ' ' +
+    String(now.getHours()).padStart(2,'0') + ':' +
+    String(now.getMinutes()).padStart(2,'0') + ':' +
+    String(now.getSeconds()).padStart(2,'0');
+  const el = document.getElementById('system-time');
+  if (el) el.textContent = timeStr;
+}
+setInterval(updateClock, 1000);
+updateClock();
+
+// =============================================================================
+// GAUGES - Doughnut style with custom colors
 // =============================================================================
 const gauges = {};
 
@@ -163,11 +680,12 @@ function createGauge(id, maxVal, unit) {
   const ctx = document.getElementById(id).getContext('2d');
   const chart = new Chart(ctx, {
     type: 'doughnut',
-    data: { datasets: [{ data: [0, 100], backgroundColor: ['#4ade80', '#0f172a'], borderWidth: 0 }] },
+    data: { datasets: [{ data: [0, 100], backgroundColor: ['#00ff88', '#0f172a'], borderWidth: 0 }] },
     options: {
       circumference: 180, rotation: 270, cutout: '80%',
       responsive: true, maintainAspectRatio: true,
       plugins: { tooltip: { enabled: false }, legend: { display: false } },
+      animation: { animateRotate: true, duration: 800, easing: 'easeOutQuart' },
     },
   });
   gauges[id] = { chart, maxVal, unit };
@@ -176,17 +694,31 @@ function createGauge(id, maxVal, unit) {
 function updateGauge(id, value) {
   const g = gauges[id];
   if (!g) return;
-  const pct = Math.min((value / g.maxVal) * 100, 100);
-  const color = pct > 85 ? '#ef4444' : pct > 60 ? '#fbbf24' : '#4ade80';
+
+  // Validate value - must be a finite number, not null/undefined/NaN
+  // If invalid, default to 0 instead of showing negative or NaN
+  const safeValue = (typeof value === 'number' && isFinite(value) && value >= 0) ? value : 0;
+
+  // Clamp percentage between 0 and 100 - never negative, never over 100
+  const pct = Math.max(0, Math.min((safeValue / g.maxVal) * 100, 100));
+
+  // Color based on percentage - green -> amber -> red
+  const color = pct > 85 ? '#ff3366' : pct > 60 ? '#ffaa00' : '#00ff88';
   g.chart.data.datasets[0].data = [pct, 100 - pct];
-  g.chart.data.datasets[0].backgroundColor = [color, '#0f172a'];
+  g.chart.data.datasets[0].backgroundColor = [color, '#0a1120'];
   g.chart.update();
-  const overlay = document.getElementById(id).parentElement.querySelector('.gauge-value');
-  if (overlay) overlay.textContent = value.toFixed(1) + g.unit;
+
+  // Update the value text below the gauge (not overlaid on the canvas)
+  const valueEl = document.getElementById(id + '-value');
+  if (valueEl) {
+    valueEl.textContent = safeValue.toFixed(1) + g.unit;
+    valueEl.style.color = color;
+    valueEl.style.textShadow = `0 0 10px ${color}66`;
+  }
 }
 
 // =============================================================================
-// CHARTS
+// CHARTS - Line charts with dark theme
 // =============================================================================
 const metricCharts = {};
 
@@ -199,11 +731,25 @@ function createMetricChart(id, yLabel, unitSuffix) {
       responsive: true, maintainAspectRatio: false,
       interaction: { mode: "nearest", intersect: false },
       plugins: {
-        legend: { labels: { color: "#94a3b8", boxWidth: 12, padding: 8, font: { size: 10 } } },
+        legend: {
+          labels: {
+            color: "#8b9eb0",
+            boxWidth: 12,
+            padding: 12,
+            font: { size: 11, family: "'IBM Plex Mono', monospace" }
+          }
+        },
         tooltip: {
-          backgroundColor: "rgba(15, 23, 42, 0.95)", titleColor: "#38bdf8",
-          bodyColor: "#e2e8f0", borderColor: "#334155", borderWidth: 1,
-          padding: 10, cornerRadius: 8, displayColors: true,
+          backgroundColor: "rgba(5, 10, 21, 0.95)",
+          titleColor: "#00d4ff",
+          bodyColor: "#e2e8f0",
+          borderColor: "#1e3a4a",
+          borderWidth: 1,
+          padding: 12,
+          cornerRadius: 4,
+          displayColors: true,
+          titleFont: { family: "'IBM Plex Mono', monospace", size: 12 },
+          bodyFont: { family: "'IBM Plex Mono', monospace", size: 11 },
           callbacks: {
             title: function(ctx) {
               const d = new Date(ctx[0].parsed.x);
@@ -220,7 +766,7 @@ function createMetricChart(id, yLabel, unitSuffix) {
           zoom: {
             wheel: { enabled: config.zoom.wheelEnabled },
             pinch: { enabled: config.zoom.pinchEnabled },
-            drag: { enabled: config.zoom.dragEnabled, backgroundColor: "rgba(56,189,248,0.12)", borderColor: "rgba(56,189,248,0.6)", borderWidth: 1 },
+            drag: { enabled: config.zoom.dragEnabled, backgroundColor: "rgba(0, 212, 255, 0.08)", borderColor: "rgba(0, 212, 255, 0.4)", borderWidth: 1 },
             mode: "x",
           },
         },
@@ -228,13 +774,20 @@ function createMetricChart(id, yLabel, unitSuffix) {
       scales: {
         x: {
           type: "linear",
-          ticks: { color: "#64748b", maxTicksLimit: config.chart.maxTicksLimit, callback: v => { const d=new Date(v); return `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`; } },
-          grid: { color: "#1e293b" },
+          ticks: {
+            color: "#4a5568",
+            maxTicksLimit: config.chart.maxTicksLimit,
+            font: { family: "'IBM Plex Mono', monospace", size: 10 },
+            callback: v => { const d=new Date(v); return `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`; }
+          },
+          grid: { color: "#0f1729" },
+          border: { color: "#1e2a3a" },
         },
         y: {
-          title: { display: true, text: yLabel, color: "#94a3b8" },
-          ticks: { color: "#64748b" },
-          grid: { color: "#334155", display: config.chart.showGridLines },
+          title: { display: true, text: yLabel, color: "#8b9eb0", font: { family: "'IBM Plex Mono', monospace", size: 11 } },
+          ticks: { color: "#4a5568", font: { family: "'IBM Plex Mono', monospace", size: 10 } },
+          grid: { color: "#1e2a3a", display: config.chart.showGridLines },
+          border: { color: "#1e2a3a" },
           min: config.chart.yAxisMin,
           max: config.chart.yAxisMax,
         },
@@ -255,19 +808,25 @@ function loadMetricData(chartId, apiUrl) {
       const allSensors = [...new Set(data.map(d => d.sensor))];
       const datasets = allSensors.map((sensor, i) => {
         const points = data.filter(d => d.sensor === sensor);
+        const color = palette[i % palette.length];
         return {
           label: sensor,
           data: points.map(p => ({ x: new Date(p.created_at).getTime(), y: p.temp_c })),
-          borderColor: palette[i % palette.length],
-          backgroundColor: palette[i % palette.length] + "33",
+          borderColor: color,
+          backgroundColor: color + "22",
           fill: config.chart.fillArea || false,
           tension: config.chart.lineTension,
           pointRadius: config.chart.pointRadius,
+          pointHoverRadius: config.chart.pointRadius + 2,
+          pointBackgroundColor: color,
+          pointBorderColor: "#050a15",
+          pointBorderWidth: 2,
+          borderWidth: 2,
         };
       });
       mc.chart.data.datasets = datasets;
       if (mc.chart.resetZoom) mc.chart.resetZoom();
-      mc.chart.update();
+      mc.chart.update('none');
     })
     .catch(err => console.error(`[${chartId}] fetch error:`, err));
 }
@@ -405,7 +964,7 @@ function fetchCurrentTemp() {
       const filtered = data.filter(d => shouldIncludeSensor(d.sensor));
       const label = document.getElementById('temp-current');
       if (filtered.length > 0) {
-        label.textContent = 'Current: ' + filtered.map(d => `${d.sensor}: ${d.temp_c.toFixed(config.display.decimalPlaces)}°C`).join(', ');
+        label.textContent = 'Current: ' + filtered.map(d => `${d.sensor}: ${d.temp_c.toFixed(config.display.decimalPlaces)} C`).join(', ');
       }
     })
     .catch(() => {});
@@ -447,7 +1006,7 @@ async function initialize() {
   createGauge('gauge-disk', 100, '%');
 
   // Create metric charts
-  createMetricChart('temp-chart', 'Temperature (°C)', '°C');
+  createMetricChart('temp-chart', 'Temperature (C)', 'C');
   createMetricChart('chart-cpu', 'CPU Usage (%)', '%');
   createMetricChart('chart-memory', 'Memory Usage (%)', '%');
   createMetricChart('chart-load', 'Load Average', '');
@@ -464,8 +1023,8 @@ async function initialize() {
   // Periodic gauge refresh at their own intervals
   setInterval(fetchGaugeCPUFetch, config.gaugeRefreshMs?.cpu || 5000);
   setInterval(fetchGaugeRAM, config.gaugeRefreshMs?.ram || 10000);
-  setInterval(fetchGaugeSwap, config.gaugeRefreshMs?.swap || 60000);
-  setInterval(fetchGaugeDisk, config.gaugeRefreshMs?.disk || 60000);
+  setInterval(fetchGaugeSwap, config.gaugeRefreshMs?.swap || 10000);
+  setInterval(fetchGaugeDisk, config.gaugeRefreshMs?.disk || 10000);
   setInterval(fetchCurrentLoad, 10000);
   setInterval(fetchCurrentTemp, config.refreshIntervals.currentTempMs);
 
@@ -476,5 +1035,6 @@ async function initialize() {
 }
 initialize();
 </script>
+
 </body>
 </html>

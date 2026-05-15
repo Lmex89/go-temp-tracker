@@ -84,11 +84,24 @@ func (sm *SystemMetrics) ReadMemory() []MetricPoint {
 	// Return multiple points — each is like a separate "sensor" reading.
 	// The chart will show used_percent; bytes are for the gauge display.
 	return []MetricPoint{
-		{Sensor: "memory/used_percent", Value: v.UsedPercent, Unit: "%"},
+		{Sensor: "memory/used_percent", Value: clampPercent(v.UsedPercent), Unit: "%"},
 		{Sensor: "memory/total_bytes", Value: float64(v.Total), Unit: "bytes"},
 		{Sensor: "memory/used_bytes", Value: float64(v.Used), Unit: "bytes"},
 		{Sensor: "memory/free_bytes", Value: float64(v.Free), Unit: "bytes"},
 	}
+}
+
+// clampPercent ensures a percentage value stays within [0, 100].
+// gopsutil can return negative percentages in edge cases (e.g., disabled swap),
+// so we clamp defensively. Like max(0, min(100, val)) in Python.
+func clampPercent(val float64) float64 {
+	if val < 0 {
+		return 0
+	}
+	if val > 100 {
+		return 100
+	}
+	return val
 }
 
 // ReadSwap returns swap memory stats.
@@ -101,7 +114,7 @@ func (sm *SystemMetrics) ReadSwap() []MetricPoint {
 		return nil
 	}
 	return []MetricPoint{
-		{Sensor: "swap/used_percent", Value: v.UsedPercent, Unit: "%"},
+		{Sensor: "swap/used_percent", Value: clampPercent(v.UsedPercent), Unit: "%"},
 		{Sensor: "swap/total_bytes", Value: float64(v.Total), Unit: "bytes"},
 		{Sensor: "swap/used_bytes", Value: float64(v.Used), Unit: "bytes"},
 		{Sensor: "swap/free_bytes", Value: float64(v.Free), Unit: "bytes"},
@@ -140,7 +153,7 @@ func (sm *SystemMetrics) ReadDisk() []MetricPoint {
 		// Forward slash in mountpoint is OK — it's unique in the sensor name.
 		points = append(points, MetricPoint{
 			Sensor: fmt.Sprintf("disk/%s", p.Mountpoint),
-			Value:  usage.UsedPercent,
+			Value:  clampPercent(usage.UsedPercent),
 			Unit:   "%",
 		})
 		// Also store raw bytes for the gauge text display.

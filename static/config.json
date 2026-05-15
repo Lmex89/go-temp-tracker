@@ -4,7 +4,7 @@
   "_comment_thresholds": "Gauge colors: green < 60%, yellow 60-85%, red > 85% (hardcoded in frontend)",
 
   "defaultTimeRange": {
-    "value": "6h"
+    "value": "3h"
   },
 
   "refreshIntervals": {
@@ -20,13 +20,13 @@
   },
 
   "chart": {
-    "lineTension": 0.3,
-    "pointRadius": 2,
-    "fillArea": false,
+    "lineTension": 0.1,
+    "pointRadius": 3,
+    "fillArea": true,
     "yAxisMin": null,
     "yAxisMax": null,
     "showGridLines": true,
-    "maxTicksLimit": 12
+    "maxTicksLimit": 8
   },
 
   "display": {
@@ -50,11 +50,11 @@
   },
 
   "gaugeRefreshMs": {
-    "_comment": "Gauge auto-refresh intervals in milliseconds (should match backend polling intervals * 1000)",
-    "cpu": 30000,
+    "_comment": "Gauge auto-refresh intervals in milliseconds",
+    "cpu": 5000,
     "ram": 10000,
-    "swap": 60000,
-    "disk": 60000
+    "swap": 10000,
+    "disk": 10000
   },
 
   "sensorFilter": {
