@@ -244,24 +244,3 @@ All share the same time range controls (5m to 24h presets, or custom range).
 ### Configuration
 
 Edit `static/config.json` to customize colors, refresh intervals, gauge parameters, and sensor filtering without modifying code. See `AGENTS.md` for all configuration options.
-
-## CRITICAL: Never delete temps.db
-
-The SQLite database (`temps.db`) contains all historical metric data across every metric type. Schema migration is automatic and idempotent. **Deleting this file destroys ALL historical data irreversibly.**
-
-SQLite runtime artifacts (`temps.db-shm`, `temps.db-wal`) are automatically ignored via `.gitignore` — they also contain live data and must not be deleted.
-
-## Database schema
-
-```sql
-CREATE TABLE readings (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    sensor TEXT NOT NULL,
-    temp_c REAL NOT NULL,
-    metric_type TEXT NOT NULL DEFAULT 'temperature',
-    unit TEXT NOT NULL DEFAULT 'C',
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-```
-
-Migration (`ALTER TABLE ADD COLUMN`) runs automatically on startup — no manual schema changes needed.
