@@ -70,8 +70,8 @@ func main() {
 	// Memory: default 10s, retain 24h (env: MEMORY_POLL_INTERVAL).
 	memInterval := getEnvInt("MEMORY_POLL_INTERVAL", 10)
 	go RunMetricPoller(store, db, "memory", memInterval, 24, metrics.ReadMemory)
-	// Swap: default 10s, retain 168h (7 days) (env: SWAP_POLL_INTERVAL).
-	swapInterval := getEnvInt("SWAP_POLL_INTERVAL", 10)
+	// Swap: default 60s, retain 168h (7 days) — changes slowly (env: SWAP_POLL_INTERVAL).
+	swapInterval := getEnvInt("SWAP_POLL_INTERVAL", 60)
 	go RunMetricPoller(store, db, "swap", swapInterval, 168, metrics.ReadSwap)
 	// Disk: default 60s, retain 168h (7 days) — changes slowly (env: DISK_POLL_INTERVAL).
 	diskInterval := getEnvInt("DISK_POLL_INTERVAL", 60)

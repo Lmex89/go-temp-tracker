@@ -1023,8 +1023,8 @@ async function initialize() {
   // Periodic gauge refresh at their own intervals
   setInterval(fetchGaugeCPUFetch, config.gaugeRefreshMs?.cpu || 5000);
   setInterval(fetchGaugeRAM, config.gaugeRefreshMs?.ram || 10000);
-  setInterval(fetchGaugeSwap, config.gaugeRefreshMs?.swap || 10000);
-  setInterval(fetchGaugeDisk, config.gaugeRefreshMs?.disk || 10000);
+  setInterval(fetchGaugeSwap, config.gaugeRefreshMs?.swap || 60000);
+  setInterval(fetchGaugeDisk, config.gaugeRefreshMs?.disk || 60000);
   setInterval(fetchCurrentLoad, 10000);
   setInterval(fetchCurrentTemp, config.refreshIntervals.currentTempMs);
 
