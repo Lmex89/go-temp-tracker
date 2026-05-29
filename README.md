@@ -95,7 +95,7 @@ tmux new -s temp-tracker
 |-------------|---------|----------------------------------------|
 | `-port`     | `8080`  | HTTP server port                       |
 | `-interval` | `60`    | Temperature polling interval in seconds |
-| `-retain`   | `8760`  | Delete temperature readings older than N hours (~12 months) |
+| `-retain`   | `8760`  | Delete ALL readings older than N hours (~12 months) |
 
 ## Environment variables
 
@@ -173,11 +173,11 @@ Serves the web dashboard (`static/index.html`).
 | Metric | Interval | Retention | Source |
 |--------|----------|-----------|--------|
 | Temperature | 60s | 8760h (1 year) | `/sys/class/thermal` / hwmon |
-| CPU | 60s | 24h | gopsutil cpu.Percent |
-| Memory | 60s | 24h | gopsutil mem.VirtualMemory |
-| Swap | 60s | 168h (7 days) | gopsutil mem.SwapMemory |
-| Disk | 60s | 168h (7 days) | gopsutil disk.Usage (gauge only) |
-| Load | 60s | 24h | gopsutil load.Avg |
+| CPU | 60s | 8760h (1 year) | gopsutil cpu.Percent |
+| Memory | 60s | 8760h (1 year) | gopsutil mem.VirtualMemory |
+| Swap | 60s | 8760h (1 year) | gopsutil mem.SwapMemory |
+| Disk | 60s | 8760h (1 year) | gopsutil disk.Usage (gauge only) |
+| Load | 60s | 8760h (1 year) | gopsutil load.Avg |
 
 ## Project structure
 

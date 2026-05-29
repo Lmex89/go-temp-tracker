@@ -1,264 +1,32 @@
-# Sensor Temperature Tracker — Agent Instructions
+# Sensor Temperature Tracker - Agent Notes
 
-## Mandatory: Python-to-Go Docstring Style
+## Non-negotiables
+- Do not delete or truncate `temps.db` (or `temps.db-shm` / `temps.db-wal` while app is running). Schema migration is automatic in `db.go`; data loss is irreversible.
+- Keep code/comments ASCII only; no emojis in code, logs, strings, or comments.
+- For Go edits, keep the existing teaching style comments for Python developers (compare Go behavior to Python where helpful).
 
-**Every code modification MUST include explanatory comments** written for a Python backend developer learning Go. This is **required**, not optional.
+## Verified Commands
+- Build: `go build -o temp-tracker .`
+- Run default: `./temp-tracker` (actual defaults from `main.go`: `-port 8080 -interval 60 -retain 8760`)
+- Run custom: `./temp-tracker -port 9090 -interval 60 -retain 48`
+- Debug logs: `LOG_LEVEL=DEBUG ./temp-tracker`
+- Quick verification: `go test ./...` (currently prints `no test files`)
+- Local helper script: `cleanup-and-build.fish` kills running `temp-tracker` processes, rebuilds, and logs to `cleanup-and-build.log`.
+- Spike report (on-demand analysis): `go build -o spike-report ./cmd/spike-report/ && ./spike-report` (defaults: last 7 days, 30-day baseline, +15C threshold; flags: `-days`, `-baseline-days`, `-deviation`, `-format table|json|csv`, `-output`)
 
-### Comment Style Guidelines
+## Config Quirks That Cause Mistakes
+- `main.go` reads only these env vars at runtime: `LOG_LEVEL`, `CPU_POLL_INTERVAL`, `MEMORY_POLL_INTERVAL`, `SWAP_POLL_INTERVAL`, `DISK_POLL_INTERVAL`, `LOAD_POLL_INTERVAL`.
+- Polling intervals come from flags (`-interval` for temperature, `*_POLL_INTERVAL` env vars for system metrics).
+- **Retention is unified**: the `-retain` flag controls deletion for ALL metric types (temperature, CPU, memory, swap, disk, load). Default is 8760h (~1 year).
+- `.env.example` includes `PORT`, `TEMP_POLL_INTERVAL`, `TEMP_RETAIN_HOURS`, and `*_RETAIN_HOURS`, but those are not consumed by current Go code.
 
-When adding or modifying code, always add comments that:
+## Architecture Snapshot
+- Entrypoint is `main.go`: creates sensor + metrics readers, opens SQLite, forces single DB connection (`SetMaxOpenConns(1)`), starts one goroutine per poller, registers HTTP handlers, serves `static/`.
+- Data model is one table (`readings`) for all metrics with legacy value field `temp_c`; metric identity is in `metric_type` + `unit`.
+- DB migration in `SQLiteStore.InitDB()` auto-adds `metric_type` and `unit` columns when missing; no manual migration files exist.
+- Time handling: DB stores UTC strings; API parsing accepts RFC3339 plus frontend datetime formats; responses are converted to `America/Merida` in `timeutil.go`.
 
-1. **Compare Go concepts to Python equivalents** — e.g., "struct is like a Python dataclass", "goroutine is like threading.Thread but lighter", "interface is like Python's ABC/Protocol"
-2. **Explain Go-specific syntax** — e.g., "the `&` means 'address of' — like getting a reference in Python", "`defer` is like Python's context manager (`with ...`)"
-3. **Note key differences** — e.g., "Go returns (value, error) instead of raising exceptions", "maps must be created with `make()` before use", "capitalized = exported/public, lowercase = private"
-4. **Use inline comments liberally** — Explain what each block does, similar to Python docstrings but inline (Go doesn't have docstrings on functions like Python)
-
-### Example Comment Patterns
-
-```go
-// SensorReader is an *interface* (like a Python ABC or Protocol, but implicit).
-// Any type with a Read() method automatically satisfies it — no "implements" keyword.
-
-// Read() returns (map, error) — Go's way of handling errors instead of try/except.
-// You MUST check if err != nil before using the result.
-
-// defer db.Close() runs when the function returns — like Python's "with db:" context manager.
-// It ensures cleanup (close connections, files, etc.) even if an error occurs.
-
-// make(map[string]float64) creates an empty map — like {} in Python.
-// But in Go, you MUST use make() for maps, slices, and channels before using them.
-
-// range over a slice gives (index, value) — like Python's enumerate().
-// We use _ for the index because Go doesn't allow unused variables.
-```
-
-### Enforcement
-
-- **No pull request or change should be accepted without these comments**
-- If you see code without comments, add them before committing
-- Comments should be in English (code language) but can reference Spanish terms if helpful
-- Target audience: experienced Python developer, Go beginner
-
----
-
-## Code Style: No Emojis
-
-**Never use emojis in code** — this includes comments, strings, output messages, and variable names.
-
-### Rationale
-
-- Emojis can cause encoding issues across different terminals, editors, and systems
-- They reduce readability in logs, diffs, and code reviews
-- Many build/CI systems may not handle Unicode properly
-- Keep code clean and universally compatible
-
-### Allowed Alternatives
-
-Use plain ASCII instead:
-
-| Instead of | Use |
-|------------|-----|
-| [OK] | `[OK]`, `[PASS]`, `+` |
-| [X] | `[FAIL]`, `[ERROR]`, `-` |
-| (warn) | `[WARN]`, `!` |
-| >> | `>>`, `=>` |
-| [tool] | `[BUILD]`, `[SETUP]` |
-| [broom] | `[CLEAN]`, `[REMOVE]` |
-| [search] | `[SEARCH]`, `[FIND]` |
-
-### Enforcement
-
-- **Review all code for emojis before committing**
-- If emojis are found, replace with ASCII equivalents
-- This applies to all files: Go code, shell scripts, HTML, CSS, etc.
-
----
-
-## Essential Commands
-
-- **Build**: `go build -o temp-tracker .`
-- **Run**: `./temp-tracker` (defaults: port 8080, interval 30s, retain 8760h)
-- **Custom run**: `./temp-tracker -port 9090 -interval 60 -retain 48`
-- **Env vars**: See `.env.example` for all overridable polling intervals
-- **Debug logging**: `LOG_LEVEL=DEBUG ./temp-tracker`
-- **Load env file**: `source .env.example && ./temp-tracker` (edit first as needed)
-
-## CRITICAL: Never Delete temps.db
-
-**`temps.db` must never be deleted or truncated.** It contains historical metric data across ALL metric types (temperature, CPU, memory, swap, disk, load). The application auto-migrates the schema on startup via `ALTER TABLE ADD COLUMN` — **no manual intervention or file deletion is ever needed.**
-
-- Schema migration is idempotent — runs automatically, safe to restart
-- Deleting `temps.db` destroys ALL historical data irreversibly
-- The DB is SQLite, stored in the project root directory
-- `temps.db-shm` and `temps.db-wal` are SQLite runtime artifacts (shared memory + WAL) — also contain live data, but are properly ignored via `.gitignore` (`*.db-shm`, `*.db-wal`)
-
-## Key Notes
-
-- **Linux-only**: Requires `/sys/class/thermal/thermal_zone*` sensors (temperature) + `/proc` (CPU/memory/disk via gopsutil)
-- **Runtime artifacts**: `temps.db` (SQLite) is created automatically — **NEVER DELETE**. `temps.db-shm`/`temps.db-wal` are ignored via `.gitignore`.
-- **Entrypoint**: `main.go` wires up temperature sensors + system metrics, DB store, polling goroutines, and HTTP server
-- **Dashboard**: Served from `static/index.html`
-  - Gauges row at top (semicircular doughnut charts for CPU, RAM, Swap, Disk)
-  - Gauge cards use compact mobile-first sizing, with constrained desktop canvas sizing to avoid overflow
-  - Multiple Chart.js line graphs stacked vertically (Temperature, CPU, Memory, Load)
-  - Zoom/pan controls (drag, wheel, pinch)
-  - Configurable time ranges and refresh intervals via `config.json`
-- **Logging**: Uses `logger.go` with leveled logging (DEBUG/INFO/WARN/ERROR/FATAL), controlled by `LOG_LEVEL` env var
-
-## Architecture
-
-### Data Flow
-
-```
-Temperature sensors (/sys/class/thermal)   System metrics (gopsutil v3)
-         |                                      |
-   sensor.go (SensorReader)               metrics.go (SystemMetrics)
-         |                                      |
-    +----+------+-------------------+-------+---+
-    |           |                   |       |
-  poller.go  RunMetricPoller()     ...    ...
-    |           |                   |       |
-    +-----+-----+-------+---------+       |
-          |             |                 |
-       db.go (SQLiteStore — unified readings table)
-          |
-     handler.go (HTTP API)
-          |
-    static/index.html (Chart.js dashboard)
-```
-
-### API Endpoints
-
-| Endpoint | Return Type | Purpose |
-|----------|-------------|---------|
-| `GET /api/temps?hours=N` | `[]Reading` | Historical temperature (backward compat) |
-| `GET /api/current` | `[]Reading` | Latest temperature per sensor (backward compat) |
-| `GET /api/cpu?hours=N` | `[]Reading` | Historical CPU per-core % |
-| `GET /api/memory?hours=N` | `[]Reading` | Historical memory usage % |
-| `GET /api/swap?hours=N` | `[]Reading` | Historical swap usage % |
-| `GET /api/load?hours=N` | `[]Reading` | Historical load averages (1m, 5m, 15m) |
-| `GET /api/current/cpu` | `[]Reading` | Latest CPU readings |
-| `GET /api/current/memory` | `[]Reading` | Latest memory readings |
-| `GET /api/current/swap` | `[]Reading` | Latest swap readings |
-| `GET /api/current/disk` | `[]Reading` | Latest disk readings (gauge only) |
-| `GET /api/current/load` | `[]Reading` | Latest load readings |
-| `GET /` | HTML | Dashboard |
-
-All metric endpoints support `?hours=N` (relative) or `?from=ISO&to=ISO` (absolute range).
-
-### Polling Intervals
-
-| Metric | Interval | Retention | Source |
-|--------|----------|-----------|--------|
-| Temperature | 60s | 8760h (1 year) | sensor.go (hwmon/thermal zones) |
-| CPU | 60s | 24h | metrics.go (gopsutil cpu.Percent) |
-| Memory | 60s | 24h | metrics.go (gopsutil mem.VirtualMemory) |
-| Swap | 60s | 168h (7 days) | metrics.go (gopsutil mem.SwapMemory) |
-| Disk | 60s | 168h (7 days) | metrics.go (gopsutil disk.Usage) - gauge only |
-| Load | 60s | 24h | metrics.go (gopsutil load.Avg) |
-
-### Response Format (all endpoints)
-
-Reading struct is unified across all metric types:
-```json
-{
-  "sensor": "cpu/Core 0",
-  "temp_c": 45.2,
-  "metric_type": "cpu",
-  "unit": "%",
-  "created_at": "2026-05-07 14:30:00"
-}
-```
-
-The `temp_c` field name is historic (kept for backward compatibility). It stores the value for any metric type.
-
-### Files
-
-| File | Purpose |
-|------|---------|
-| `logger.go` | Leveled logging (DEBUG/INFO/WARN/ERROR/FATAL) |
-| `main.go` | Entry point — wires everything |
-| `sensor.go` | Temperature sensor reader (hwmon + thermal zones) |
-| `metrics.go` | System metrics reader (CPU, mem, swap, disk, load) via gopsutil v3 |
-| `poller.go` | Polling loops — one goroutine per metric type |
-| `db.go` | SQLite store with schema migration |
-| `handler.go` | HTTP API handlers |
-| `timeutil.go` | Timezone conversion (America/Merida) |
-| `static/index.html` | Dashboard with gauges + line charts |
-| `static/config.json` | Active dashboard configuration |
-| `static/config.default.json` | Reference defaults |
-| `.env.example` | Environment variable reference template |
-
----
-
-## Dashboard Configuration
-
-The web dashboard (`static/index.html`) loads user preferences from `static/config.json`. Edit this file to customize default chart behavior without modifying code.
-
-### Configuration Options
-
-| Section | Option | Type | Default | Description |
-|---------|--------|------|---------|-------------|
-| `defaultTimeRange` | `value` | string | `"6h"` | Initial time range: `"5m"`, `"3h"`, `"6h"`, `"12h"` |
-| `refreshIntervals` | `currentTempMs` | number | `60000` | Temperature current refresh (ms) |
-| `refreshIntervals` | `chartDataMs` | number | `60000` | All chart data refresh (ms) |
-| `colors` | `palette` | array | `["#38bdf8", ...]` | Hex colors for sensor lines |
-| `chart` | `lineTension` | number | `0.3` | Curve smoothness (0=straight, 1=very curved) |
-| `chart` | `pointRadius` | number | `2` | Data point size on lines |
-| `chart` | `fillArea` | boolean | `false` | Fill area under lines |
-| `chart` | `yAxisMin/Max` | number/null | `null` | Fix Y-axis (null=auto) |
-| `chart` | `showGridLines` | boolean | `true` | Y-axis grid lines |
-| `chart` | `maxTicksLimit` | number | `12` | Max X-axis labels |
-| `display` | `decimalPlaces` | number | `1` | Value decimal precision |
-| `display` | `showLastUpdated` | boolean | `true` | Show timestamp |
-| `display` | `timeFormat24h` | boolean | `true` | 24h time format |
-| `zoom` | `wheelEnabled` | boolean | `true` | Mouse wheel zoom |
-| `zoom` | `dragEnabled` | boolean | `true` | Drag-to-zoom |
-| `zoom` | `pinchEnabled` | boolean | `true` | Pinch zoom (touch) |
-| `gauge` | `cpuMax` | number | `100` | CPU gauge max value |
-| `gauge` | `ramMax` | number | `100` | RAM gauge max value |
-| `gauge` | `swapMax` | number | `100` | Swap gauge max value |
-| `gauge` | `diskMax` | number | `100` | Disk gauge max value (gauge only) |
-| `gaugeRefreshMs` | `cpu` | number | `60000` | CPU gauge refresh (ms) |
-| `gaugeRefreshMs` | `ram` | number | `60000` | RAM gauge refresh (ms) |
-| `gaugeRefreshMs` | `swap` | number | `60000` | Swap gauge refresh (ms) |
-| `gaugeRefreshMs` | `disk` | number | `60000` | Disk gauge refresh (ms) |
-| `sensorFilter` | `enabled` | boolean | `false` | Enable temp sensor filtering |
-| `sensorFilter` | `includePatterns` | array | `[]` | Show only matching sensors |
-
-### Sensor Filtering
-
-Filter which temperature sensors appear on the chart (temperature panel only). System metric charts (CPU, memory, etc.) are not affected by this filter.
-
-### Configuration Files
-
-| File | Purpose |
-|------|---------|
-| `config.json` | **Active configuration** — Edit this to customize |
-| `config.default.json` | **Reference defaults** |
-
-**To restore defaults**: Copy `config.default.json` to `config.json`:
-```bash
-cp static/config.default.json static/config.json
-```
-
-### Fallback Behavior
-
-If `config.json` fails to load (404, parse error, etc.), the dashboard uses hardcoded defaults identical to the shipped `config.json`.
-
-## Database Schema
-
-Single unified table `readings` with auto-migration:
-
-```sql
-CREATE TABLE readings (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    sensor TEXT NOT NULL,
-    temp_c REAL NOT NULL,
-    metric_type TEXT NOT NULL DEFAULT 'temperature',
-    unit TEXT NOT NULL DEFAULT 'C',
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-```
-
-Migration runs automatically on startup — no manual schema changes needed.
+## API/Dashboard Notes
+- Historical endpoints exist for `temps`, `cpu`, `memory`, `swap`, `disk`, `load`; current-value endpoints exist under `/api/current/*`.
+- `static/index.html` loads `/config.json` with in-code fallback defaults if fetch/parse fails.
+- Active dashboard settings live in `static/config.json` (not `static/config.default.json`). If sensors appear "missing", check `sensorFilter` first.

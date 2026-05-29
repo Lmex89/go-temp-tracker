@@ -31,7 +31,7 @@ func getEnvInt(key string, defaultVal int) int {
 func main() {
 	port := flag.Int("port", 8080, "HTTP server port")
 	interval := flag.Int("interval", 60, "Temperature polling interval in seconds")
-	retain := flag.Int("retain", 8760, "Delete temp readings older than N hours (default: 12 months)")
+	retain := flag.Int("retain", 8760, "Delete readings older than N hours for ALL metric types (default: 12 months)")
 	flag.Parse()
 
 	Logger.Info("Starting System Monitor")
@@ -68,21 +68,21 @@ func main() {
 	// sample at the same pace, similar to using one cron expression in Python.
 	metricDefaultInterval := 60
 
-	// CPU: default 60s, retain 24h (env: CPU_POLL_INTERVAL).
+	// CPU: default 60s, same retention as temperature (env: CPU_POLL_INTERVAL).
 	cpuInterval := getEnvInt("CPU_POLL_INTERVAL", metricDefaultInterval)
-	go RunMetricPoller(store, db, "cpu", cpuInterval, 24, metrics.ReadCPU)
-	// Memory: default 60s, retain 24h (env: MEMORY_POLL_INTERVAL).
+	go RunMetricPoller(store, db, "cpu", cpuInterval, *retain, metrics.ReadCPU)
+	// Memory: default 60s, same retention as temperature (env: MEMORY_POLL_INTERVAL).
 	memInterval := getEnvInt("MEMORY_POLL_INTERVAL", metricDefaultInterval)
-	go RunMetricPoller(store, db, "memory", memInterval, 24, metrics.ReadMemory)
-	// Swap: default 60s, retain 168h (7 days) (env: SWAP_POLL_INTERVAL).
+	go RunMetricPoller(store, db, "memory", memInterval, *retain, metrics.ReadMemory)
+	// Swap: default 60s, same retention as temperature (env: SWAP_POLL_INTERVAL).
 	swapInterval := getEnvInt("SWAP_POLL_INTERVAL", metricDefaultInterval)
-	go RunMetricPoller(store, db, "swap", swapInterval, 168, metrics.ReadSwap)
-	// Disk: default 60s, retain 168h (7 days) (env: DISK_POLL_INTERVAL).
+	go RunMetricPoller(store, db, "swap", swapInterval, *retain, metrics.ReadSwap)
+	// Disk: default 60s, same retention as temperature (env: DISK_POLL_INTERVAL).
 	diskInterval := getEnvInt("DISK_POLL_INTERVAL", metricDefaultInterval)
-	go RunMetricPoller(store, db, "disk", diskInterval, 168, metrics.ReadDisk)
-	// Load: default 60s, retain 24h (env: LOAD_POLL_INTERVAL).
+	go RunMetricPoller(store, db, "disk", diskInterval, *retain, metrics.ReadDisk)
+	// Load: default 60s, same retention as temperature (env: LOAD_POLL_INTERVAL).
 	loadInterval := getEnvInt("LOAD_POLL_INTERVAL", metricDefaultInterval)
-	go RunMetricPoller(store, db, "load", loadInterval, 24, metrics.ReadLoad)
+	go RunMetricPoller(store, db, "load", loadInterval, *retain, metrics.ReadLoad)
 
 	// Setting up HTTP routes — ServeMux is like Flask's app or Django's urlpatterns.
 	mux := http.NewServeMux()

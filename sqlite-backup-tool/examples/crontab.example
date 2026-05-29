@@ -1,0 +1,41 @@
+# SQLite Backup Tool - Cron Examples
+
+# Run daily at 2:00 AM
+0 2 * * * /usr/bin/python3 /opt/sqlite-backup-tool/backup.py --config /etc/sqlite-backup/config.yaml
+
+# Run every 6 hours
+0 */6 * * * /usr/bin/python3 /opt/sqlite-backup-tool/backup.py --config /etc/sqlite-backup/config.yaml
+
+# Run every 12 hours with log output to cron log
+0 */12 * * * /usr/bin/python3 /opt/sqlite-backup-tool/backup.py --config /etc/sqlite-backup/config.yaml >> /var/log/sqlite-backup-cron.log 2>&1
+
+# Daily at 3:00 AM with email notification on failure (requires MAILTO setup)
+MAILTO=admin@example.com
+0 3 * * * /usr/bin/python3 /opt/sqlite-backup-tool/backup.py --config /etc/sqlite-backup/config.yaml || echo "SQLite backup failed! Check logs."
+
+# Multiple databases with different schedules
+# Note: Each database needs its own config file
+
+# Temperature database - daily at 2 AM
+0 2 * * * /usr/bin/python3 /opt/sqlite-backup-tool/backup.py --config /etc/sqlite-backup/temps-config.yaml
+
+# User database - daily at 3 AM
+0 3 * * * /usr/bin/python3 /opt/sqlite-backup-tool/backup.py --config /etc/sqlite-backup/users-config.yaml
+
+# Analytics database - every 6 hours
+0 */6 * * * /usr/bin/python3 /opt/sqlite-backup-tool/backup.py --config /etc/sqlite-backup/analytics-config.yaml
+
+# Weekly full backup (Sunday at 1:00 AM)
+0 1 * * 0 /usr/bin/python3 /opt/sqlite-backup-tool/backup.py --config /etc/sqlite-backup/config.yaml
+
+# Monthly backup (1st of each month at 4:00 AM)
+0 4 1 * * /usr/bin/python3 /opt/sqlite-backup-tool/backup.py --config /etc/sqlite-backup/config.yaml
+
+# Hourly backups for critical databases
+0 * * * * /usr/bin/python3 /opt/sqlite-backup-tool/backup.py --config /etc/sqlite-backup/critical-config.yaml
+
+# Run backup with verbose output for debugging
+0 2 * * * /usr/bin/python3 /opt/sqlite-backup-tool/backup.py --config /etc/sqlite-backup/config.yaml --verbose >> /var/log/sqlite-backup-debug.log 2>&1
+
+# Run dry-run test weekly to verify configuration
+0 6 * * 1 /usr/bin/python3 /opt/sqlite-backup-tool/backup.py --config /etc/sqlite-backup/config.yaml --dry-run

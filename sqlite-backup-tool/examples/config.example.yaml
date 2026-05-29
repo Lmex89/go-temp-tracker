@@ -1,0 +1,37 @@
+# SQLite Backup Tool - Example Configuration
+
+backup:
+  # Path to source SQLite database (required)
+  # Use absolute paths in production to avoid confusion
+  source_db: "/var/lib/myapp/database.db"
+
+  # Directory where backups will be stored (required)
+  # The tool will create this directory if it doesn't exist
+  backup_dir: "/var/backups/sqlite/myapp"
+
+  # Number of backups to retain (default: 7)
+  # When this limit is exceeded, the oldest backups are deleted
+  retention_count: 7
+
+  # Backup filename format (supports Python strftime)
+  # Available placeholders:
+  #   %Y - Year (e.g., 2026)
+  #   %m - Month (01-12)
+  #   %d - Day (01-31)
+  #   %H - Hour (00-23)
+  #   %M - Minute (00-59)
+  #   %S - Second (00-59)
+  filename_format: "backup_%Y%m%d_%H%M%S.db"
+
+  # Verify backup integrity after creation (recommended)
+  verify_backup: true
+
+logging:
+  # Log file path (set to null for stdout only)
+  log_file: "/var/log/sqlite-backup.log"
+
+  # Logging level: DEBUG, INFO, WARNING, ERROR
+  level: "INFO"
+
+  # Also log to stdout in addition to the log file
+  log_to_stdout: true

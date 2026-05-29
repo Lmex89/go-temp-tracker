@@ -1,0 +1,48 @@
+# SQLite Backup Tool - Configuration
+
+backup:
+  # Path to source SQLite database (required)
+  # This can be absolute: /var/lib/myapp/data.db
+  # or relative: ./data.db
+  source_db: "../temps.db"
+
+  # Directory where backups will be stored (required)
+  # The tool will create this directory if it doesn't exist
+  # Recommended: use an absolute path
+  backup_dir: "/mnt/data/bkp"
+
+  # Number of backups to retain (default: 7)
+  # When this limit is exceeded, the oldest backups are deleted
+  # Set to 0 to disable automatic cleanup (not recommended)
+  retention_count: 7
+
+  # Backup filename format (supports Python strftime)
+  # Available placeholders:
+  #   %Y - Year (e.g., 2026)
+  #   %m - Month (01-12)
+  #   %d - Day (01-31)
+  #   %H - Hour (00-23)
+  #   %M - Minute (00-59)
+  #   %S - Second (00-59)
+  # Examples:
+  #   "backup_%Y%m%d_%H%M%S.db"  -> backup_20260522_140530.db
+  #   "%Y-%m-%d_%H-%M-%S.db"      -> 2026-05-22_14-05-30.db
+  #   "db_backup_%Y%m%d.db"        -> db_backup_20260522.db
+  filename_format: "backup_%Y%m%d_%H%M%S.db"
+
+  # Verify backup integrity after creation (recommended)
+  # This runs PRAGMA integrity_check to ensure the backup is valid
+  verify_backup: true
+
+logging:
+  # Log file path (set to null for stdout only)
+  # The tool will create the log directory if it doesn't exist
+  log_file: null
+
+  # Logging level: DEBUG, INFO, WARNING, ERROR
+  # DEBUG includes progress information for large databases
+  level: "INFO"
+
+  # Also log to stdout in addition to the log file
+  # When running via cron, stdout is captured by cron's email/log
+  log_to_stdout: true
