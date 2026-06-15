@@ -186,9 +186,13 @@ set -l build_status $status
 
 if test $build_status -eq 0
     log INFO "Build successful"
-    # Show a one-line run command with all metric intervals pinned to 60s.
-    # This is similar to passing env overrides in Python's subprocess env dict.
-    log INFO "Ready to run: nohup env TEMP_POLL_INTERVAL=$DEFAULT_INTERVAL CPU_POLL_INTERVAL=$DEFAULT_INTERVAL MEMORY_POLL_INTERVAL=$DEFAULT_INTERVAL SWAP_POLL_INTERVAL=$DEFAULT_INTERVAL DISK_POLL_INTERVAL=$DEFAULT_INTERVAL LOAD_POLL_INTERVAL=$DEFAULT_INTERVAL ./temp-tracker -port 9091 -interval $DEFAULT_INTERVAL > tracker.log 2>&1 &"
+    # Start the server in the background so the dashboard HTML is served.
+    # nohup keeps it running after this script exits (like Python's subprocess.Popen with start_new_session).
+    # The Go app serves static/index.html from the static/ directory on /.
+    log INFO "Starting temp-tracker in background on port 9091"
+    nohup env CPU_POLL_INTERVAL=$DEFAULT_INTERVAL MEMORY_POLL_INTERVAL=$DEFAULT_INTERVAL SWAP_POLL_INTERVAL=$DEFAULT_INTERVAL DISK_POLL_INTERVAL=$DEFAULT_INTERVAL LOAD_POLL_INTERVAL=$DEFAULT_INTERVAL ./temp-tracker -port 9091 -interval $DEFAULT_INTERVAL > tracker.log 2>&1 &
+    log INFO "Server PID: $last_pid"
+    log INFO "Dashboard: http://localhost:9091"
 else
     log ERROR "Build failed with exit status $build_status"
     log FATAL "Aborting"
@@ -196,5 +200,5 @@ else
 end
 
 log INFO "========================================"
-log INFO "Cleanup and rebuild complete"
+log INFO "Cleanup, rebuild, and start complete"
 log INFO "========================================"
