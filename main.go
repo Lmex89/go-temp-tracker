@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -52,37 +53,50 @@ func main() {
 	// SystemMetrics for CPU, memory, swap, disk, load (gopsutil-based).
 	metrics := NewSystemMetrics()
 
-	// Force single connection to SQLite — prevents SQLITE_BUSY from concurrent goroutines.
-	// All 6 poller goroutines share this one connection (like a global lock in Python).
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
+	// Allow up to 10 connections to SQLite — WAL mode supports concurrent reads.
+	// Poller goroutines and HTTP handlers share these connections without serializing.
+	// With WAL + modernc internal locking, writers still serialize safely,
+	// but the extra headroom prevents HTTP handlers from queueing behind pollers.
+	db.SetMaxOpenConns(10)
+	db.SetMaxIdleConns(3)
 
-	// Temperature polling goroutine (existing).
-	// Default is now 60s to align all metric pollers to one cadence.
-	// Think of this as one global scheduler tick in Python (every minute).
+	// Stagger pollers by 3s each so they don't all hit the DB simultaneously.
+	// Without staggering, 6 goroutines sharing 3 conns create a thundering herd
+	// against SQLite's internal lock, causing 5s busy_timeout waits on every cycle.
+	// In Python: time.sleep(offset) before entering the while loop.
 	poller := NewPoller(sensor, store, db)
-	go poller.Run(*interval, *retain)
+	go func() {
+		time.Sleep(0 * time.Second)
+		poller.Run(*interval, *retain)
+	}()
 
-	// System metric polling goroutines.
-	// We keep one shared default interval (60s) so CPU/memory/swap/disk/load all
-	// sample at the same pace, similar to using one cron expression in Python.
 	metricDefaultInterval := 60
 
-	// CPU: default 60s, same retention as temperature (env: CPU_POLL_INTERVAL).
 	cpuInterval := getEnvInt("CPU_POLL_INTERVAL", metricDefaultInterval)
-	go RunMetricPoller(store, db, "cpu", cpuInterval, *retain, metrics.ReadCPU)
-	// Memory: default 60s, same retention as temperature (env: MEMORY_POLL_INTERVAL).
+	go func() {
+		time.Sleep(3 * time.Second)
+		RunMetricPoller(store, db, "cpu", cpuInterval, *retain, metrics.ReadCPU)
+	}()
 	memInterval := getEnvInt("MEMORY_POLL_INTERVAL", metricDefaultInterval)
-	go RunMetricPoller(store, db, "memory", memInterval, *retain, metrics.ReadMemory)
-	// Swap: default 60s, same retention as temperature (env: SWAP_POLL_INTERVAL).
+	go func() {
+		time.Sleep(6 * time.Second)
+		RunMetricPoller(store, db, "memory", memInterval, *retain, metrics.ReadMemory)
+	}()
 	swapInterval := getEnvInt("SWAP_POLL_INTERVAL", metricDefaultInterval)
-	go RunMetricPoller(store, db, "swap", swapInterval, *retain, metrics.ReadSwap)
-	// Disk: default 60s, same retention as temperature (env: DISK_POLL_INTERVAL).
+	go func() {
+		time.Sleep(9 * time.Second)
+		RunMetricPoller(store, db, "swap", swapInterval, *retain, metrics.ReadSwap)
+	}()
 	diskInterval := getEnvInt("DISK_POLL_INTERVAL", metricDefaultInterval)
-	go RunMetricPoller(store, db, "disk", diskInterval, *retain, metrics.ReadDisk)
-	// Load: default 60s, same retention as temperature (env: LOAD_POLL_INTERVAL).
+	go func() {
+		time.Sleep(12 * time.Second)
+		RunMetricPoller(store, db, "disk", diskInterval, *retain, metrics.ReadDisk)
+	}()
 	loadInterval := getEnvInt("LOAD_POLL_INTERVAL", metricDefaultInterval)
-	go RunMetricPoller(store, db, "load", loadInterval, *retain, metrics.ReadLoad)
+	go func() {
+		time.Sleep(15 * time.Second)
+		RunMetricPoller(store, db, "load", loadInterval, *retain, metrics.ReadLoad)
+	}()
 
 	// Setting up HTTP routes — ServeMux is like Flask's app or Django's urlpatterns.
 	mux := http.NewServeMux()

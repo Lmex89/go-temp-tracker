@@ -89,7 +89,9 @@ func (s *SQLiteStore) InitDB() *sql.DB {
 		temp_c REAL NOT NULL,
 		created_at TEXT NOT NULL DEFAULT (datetime('now'))
 	);
-	CREATE INDEX IF NOT EXISTS idx_readings_created_at ON readings(created_at);`
+	CREATE INDEX IF NOT EXISTS idx_readings_created_at ON readings(created_at);
+	CREATE INDEX IF NOT EXISTS idx_readings_metric_type_created_at ON readings(metric_type, created_at);
+	CREATE INDEX IF NOT EXISTS idx_readings_metric_type_sensor_id ON readings(metric_type, sensor, id);`
 
 	if _, err := db.Exec(schema); err != nil {
 		Logger.Error("Failed to create schema: %v", err)
