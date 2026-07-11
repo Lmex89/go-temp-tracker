@@ -51,7 +51,41 @@ nohup ./temp-tracker -port 9091 -interval 30 > tracker.log 2>&1 &
 
 ### systemd service (survives reboots)
 
-Create `/etc/systemd/system/temp-tracker.service`:
+The project includes helper scripts that create, enable, and start the service for you.
+
+#### User service (starts on login, no sudo)
+
+```bash
+./setup-systemd-service.sh
+# or, if you prefer Fish:
+./setup-systemd-service.fish
+```
+
+This installs `~/.config/systemd/user/temp-tracker.service` and uses the same settings as `cleanup-and-build.fish` (port **9091**, 60s polling intervals).
+
+- Check status: `systemctl --user status temp-tracker`
+- Stop: `systemctl --user stop temp-tracker` (or `./service-manager.sh stop`)
+- Restart: `systemctl --user restart temp-tracker` (or `./service-manager.sh restart`)
+- View logs: `journalctl --user -u temp-tracker -f` (or `./view-logs.sh -f`)
+
+#### System service (starts at boot, requires sudo)
+
+```bash
+./setup-systemd-service.sh --system
+# or, if you prefer Fish:
+./setup-systemd-service.fish --system
+```
+
+This installs `/etc/systemd/system/temp-tracker.service`, runs as your user, and starts automatically at boot.
+
+- Check status: `sudo systemctl status temp-tracker`
+- Stop: `sudo systemctl stop temp-tracker` (or `./service-manager.sh --system stop`)
+- Restart: `sudo systemctl restart temp-tracker` (or `./service-manager.sh --system restart`)
+- View logs: `sudo journalctl -u temp-tracker -f` (or `./view-logs.sh --system -f`)
+
+#### Manual setup
+
+If you prefer to write the unit file yourself, create `/etc/systemd/system/temp-tracker.service`:
 
 ```ini
 [Unit]
@@ -59,9 +93,9 @@ Description=Sensor Temperature Tracker
 After=network.target
 
 [Service]
-ExecStart=/home/lmex89/Documentos/probe/sensors-temp/temp-tracker -port 9091 -interval 30
+ExecStart=/home/lmex89/Documentos/probe/sensors-temp/temp-tracker -port 9091 -interval 60
 WorkingDirectory=/home/lmex89/Documentos/probe/sensors-temp
-Restart=always
+Restart=on-failure
 RestartSec=5
 User=lmex89
 
@@ -76,8 +110,6 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now temp-tracker
 ```
 
-- Check status: `sudo systemctl status temp-tracker`
-- View logs: `journalctl -u temp-tracker -f`
 - Stop: `sudo systemctl stop temp-tracker`
 
 ### tmux session

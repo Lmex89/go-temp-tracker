@@ -13,6 +13,9 @@
 - Debug logs: `LOG_LEVEL=DEBUG ./temp-tracker`
 - Quick verification: `go test ./...` (currently prints `no test files`)
 - Local helper script: `cleanup-and-build.fish` kills running `temp-tracker` processes, rebuilds, and logs to `cleanup-and-build.log`.
+- Install systemd service: `./setup-systemd-service.fish` (or `./setup-systemd-service.sh`) creates the unit file, enables it, and starts it immediately. Defaults to a user service (`~/.config/systemd/user/temp-tracker.service`) that starts on login with no sudo. Add `--system` to install a system service (`/etc/systemd/system/temp-tracker.service`) that starts at boot and uses sudo. Uses the same port/env settings as `cleanup-and-build.fish` (port 9091, 60s intervals).
+- Manage the service: `./service-manager.fish` / `./service-manager.sh` supports `status`, `start`, `stop`, `restart`, and `logs` (with optional `-f` to follow). Add `--system` to manage the system service.
+- View logs quickly: `./view-logs.fish` / `./view-logs.sh` shows the last 50 lines; add `-f` to follow and `--system` for the system service.
 - Spike report (on-demand analysis): `go build -o spike-report ./cmd/spike-report/ && ./spike-report` (defaults: last 7 days, 30-day baseline, +15C deviation; flags: `-days`, `-baseline-days`, `-deviation`, `-format table|json|csv`, `-output`).
 - SQLite backup tool (separate): `cd sqlite-backup-tool && python backup.py` (configurable via `config.yaml`).
 
