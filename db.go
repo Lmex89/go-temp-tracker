@@ -3,6 +3,8 @@ package main
 import (
 	"database/sql"
 	"fmt"
+	"strings"
+	"time"
 )
 
 // Reading is a *struct* — like a Python dataclass or a NamedTuple.
@@ -142,12 +144,53 @@ func (s *SQLiteStore) migrateSchema(db *sql.DB) {
 }
 
 // Insert adds a new reading to the database.
+// execWithRetry wraps db.Exec with exponential backoff retry on SQLITE_BUSY.
+// Even with SetMaxOpenConns(1), a safety net prevents transient lock failures.
+// Retries up to 5 times: 50ms, 100ms, 200ms, 400ms, 800ms (total ~1.5s).
+// In Python: a decorator with time.sleep(backoff) around cursor.execute().
+func execWithRetry(db *sql.DB, query string, args ...interface{}) (sql.Result, error) {
+	maxRetries := 5
+	backoff := 50 * time.Millisecond
+
+	var result sql.Result
+	var err error
+
+	for i := 0; i <= maxRetries; i++ {
+		result, err = db.Exec(query, args...)
+		if err == nil {
+			return result, nil
+		}
+
+		if !isBusyError(err) || i == maxRetries {
+			return nil, err
+		}
+
+		Logger.Debug("DB busy, retrying in %v (attempt %d/%d)", backoff, i+1, maxRetries)
+		time.Sleep(backoff)
+		backoff *= 2
+	}
+
+	return result, err
+}
+
+// isBusyError checks if an error is a SQLite busy/locked error.
+// Matches both "database is locked" and "SQLITE_BUSY" patterns.
+func isBusyError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "database is locked") ||
+		strings.Contains(msg, "SQLITE_BUSY")
+}
+
 // Now includes metric_type and unit for multi-metric support.
 // Uses parameterized queries (the ? placeholders) — like Python's cursor.execute("...", (sensor, temp)).
 // This prevents SQL injection (same as using ? or %s in Python).
 func (s *SQLiteStore) Insert(db *sql.DB, sensor string, temp float64, metricType string, unit string) {
 	// Insert into the readings table with metric_type and unit columns.
-	_, err := db.Exec(
+	_, err := execWithRetry(
+		db,
 		"INSERT INTO readings (sensor, temp_c, metric_type, unit) VALUES (?, ?, ?, ?)",
 		sensor, temp, metricType, unit,
 	)
@@ -402,7 +445,8 @@ func (s *SQLiteStore) QueryLatestByType(db *sql.DB, metricType string) []Reading
 func (s *SQLiteStore) Prune(db *sql.DB, hours int) {
 	Logger.Debug("Pruning all readings older than %d hour(s)", hours)
 
-	result, err := db.Exec(
+	result, err := execWithRetry(
+		db,
 		"DELETE FROM readings WHERE created_at < datetime('now', ?)",
 		fmt.Sprintf("-%d hours", hours),
 	)
@@ -425,7 +469,8 @@ func (s *SQLiteStore) Prune(db *sql.DB, hours int) {
 func (s *SQLiteStore) PruneByType(db *sql.DB, metricType string, hours int) {
 	Logger.Debug("Pruning [%s] readings older than %d hour(s)", metricType, hours)
 
-	result, err := db.Exec(
+	result, err := execWithRetry(
+		db,
 		"DELETE FROM readings WHERE metric_type = ? AND created_at < datetime('now', ?)",
 		metricType, fmt.Sprintf("-%d hours", hours),
 	)

@@ -10,39 +10,64 @@ import (
 // In Python this would be a @dataclass or a Pandas DataFrame row.
 type ReportRow struct {
 	Sensor       string  `json:"sensor"`
-	Timestamp    string  `json:"timestamp"`     // Local time string (America/Merida)
-	TempC        float64 `json:"temp_c"`        // Temperature in Celsius
-	AboveMean    float64 `json:"above_mean"`    // Deviation from baseline
-	CPUPercent   float64 `json:"cpu_percent"`   // CPU total % at nearest timestamp
-	Load1Min     float64 `json:"load_1min"`     // System load 1m average
-	Load5Min     float64 `json:"load_5min"`     // System load 5m average
+	Timestamp    string  `json:"timestamp"`
+	TempC        float64 `json:"temp_c"`
+	AboveMean    float64 `json:"above_mean"`
+	Severity     string  `json:"severity"`
+	BaselineMean float64 `json:"baseline_mean"`
+	BaselineMin  float64 `json:"baseline_min"`
+	BaselineMax  float64 `json:"baseline_max"`
+	BaselineStd  float64 `json:"baseline_std"`
+	CPUPercent   float64 `json:"cpu_percent"`
+	MemPercent   float64 `json:"mem_percent"`
+	SwapPercent  float64 `json:"swap_percent"`
+	DiskPercent  float64 `json:"disk_percent"`
+	Load1Min     float64 `json:"load_1min"`
+	Load5Min     float64 `json:"load_5min"`
+	Load15Min    float64 `json:"load_15min"`
+}
+
+// SensorSummary holds per-sensor aggregate stats for the report.
+type SensorSummary struct {
+	Sensor      string  `json:"sensor"`
+	SpikeCount  int     `json:"spike_count"`
+	MaxTempC    float64 `json:"max_temp_c"`
+	MaxDeviation float64 `json:"max_deviation"`
+	AvgDeviation float64 `json:"avg_deviation"`
+	FirstSpike  string  `json:"first_spike"`
+	LastSpike   string  `json:"last_spike"`
 }
 
 // Report holds all metadata and rows for formatting.
 type Report struct {
-	Days         int         `json:"days"`
-	BaselineDays int         `json:"baseline_days"`
-	Deviation    float64     `json:"deviation_threshold"`
-	GeneratedAt  string      `json:"generated_at"`
-	SpikeCount   int         `json:"spike_count"`
-	SensorCount  int         `json:"sensor_count"`
-	Rows         []ReportRow `json:"rows"`
+	Days           int             `json:"days"`
+	BaselineDays   int             `json:"baseline_days"`
+	Deviation      float64         `json:"deviation_threshold"`
+	GeneratedAt    string          `json:"generated_at"`
+	SpikeCount     int             `json:"spike_count"`
+	SensorCount    int             `json:"sensor_count"`
+	MaxSpikeTemp   float64         `json:"max_spike_temp"`
+	MaxDeviation   float64         `json:"max_deviation"`
+	AvgDeviation   float64         `json:"avg_deviation"`
+	TopSensor      string          `json:"top_sensor"`
+	SeverityCounts map[string]int  `json:"severity_counts"`
+	Rows           []ReportRow     `json:"rows"`
+	Summaries      []SensorSummary `json:"sensor_summaries"`
 }
 
-// correlateMetrics finds the nearest CPU and load readings for each spike.
+// correlateMetrics finds the nearest system metric readings for each spike.
 // It searches within a +/- 60 second window around the spike timestamp.
 //
 // In Python terms:
 //   for spike in spikes:
 //       cpu = find_nearest(cpu_df, spike.timestamp, window=60)
+//       mem = find_nearest(mem_df, spike.timestamp, window=60)
 //       load = find_nearest(load_df, spike.timestamp, window=60)
 func correlateMetrics(db *sql.DB, spikes []Spike, loc *time.Location) ([]ReportRow, error) {
 	if len(spikes) == 0 {
 		return nil, nil
 	}
 
-	// Find the time range covering all spikes so we can batch-query CPU/load.
-	// In Python: min(s.Timestamp for s in spikes)
 	var minTime, maxTime time.Time
 	for i, s := range spikes {
 		if i == 0 || s.Timestamp.Before(minTime) {
@@ -52,22 +77,42 @@ func correlateMetrics(db *sql.DB, spikes []Spike, loc *time.Location) ([]ReportR
 			maxTime = s.Timestamp
 		}
 	}
+	logger.debug("correlating %d spikes, time range %s to %s",
+		len(spikes), minTime.Format("2006-01-02 15:04:05"), maxTime.Format("2006-01-02 15:04:05"))
 
-	// Query all CPU and load readings in the spike window (with 60s padding).
-	// This avoids N+1 queries — like doing a JOIN or batch fetch in SQLAlchemy.
 	padding := time.Minute
+	logger.debug("querying correlated metrics with +/- %v padding", padding)
+
 	cpuReadings, err := queryMetricRange(db, "cpu", minTime.Add(-padding), maxTime.Add(padding))
 	if err != nil {
 		return nil, fmt.Errorf("CPU query failed: %w", err)
 	}
+	logger.debug("  cpu: %d readings", len(cpuReadings))
+
+	memReadings, err := queryMetricRange(db, "memory", minTime.Add(-padding), maxTime.Add(padding))
+	if err != nil {
+		return nil, fmt.Errorf("memory query failed: %w", err)
+	}
+	logger.debug("  memory: %d readings", len(memReadings))
+
+	swapReadings, err := queryMetricRange(db, "swap", minTime.Add(-padding), maxTime.Add(padding))
+	if err != nil {
+		return nil, fmt.Errorf("swap query failed: %w", err)
+	}
+	logger.debug("  swap: %d readings", len(swapReadings))
+
+	diskReadings, err := queryMetricRange(db, "disk", minTime.Add(-padding), maxTime.Add(padding))
+	if err != nil {
+		return nil, fmt.Errorf("disk query failed: %w", err)
+	}
+	logger.debug("  disk: %d readings", len(diskReadings))
 
 	loadReadings, err := queryMetricRange(db, "load", minTime.Add(-padding), maxTime.Add(padding))
 	if err != nil {
 		return nil, fmt.Errorf("load query failed: %w", err)
 	}
+	logger.debug("  load: %d readings", len(loadReadings))
 
-	// Build a lookup map for CPU total by timestamp string.
-	// In Python: {row.timestamp: row.value for row in cpu_readings if row.sensor == "cpu/total"}
 	cpuByTime := make(map[string]float64)
 	for _, r := range cpuReadings {
 		if r.Sensor == "cpu/total" {
@@ -75,36 +120,65 @@ func correlateMetrics(db *sql.DB, spikes []Spike, loc *time.Location) ([]ReportR
 		}
 	}
 
-	// Build lookup maps for load 1m and 5m by timestamp.
-	load1mByTime := make(map[string]float64)
-	load5mByTime := make(map[string]float64)
-	for _, r := range loadReadings {
-		key := r.Timestamp.Format(time.RFC3339)
-		if r.Sensor == "load/1min" {
-			load1mByTime[key] = r.Value
-		} else if r.Sensor == "load/5min" {
-			load5mByTime[key] = r.Value
+	memByTime := make(map[string]float64)
+	for _, r := range memReadings {
+		if r.Sensor == "memory/percent" {
+			memByTime[r.Timestamp.Format(time.RFC3339)] = r.Value
 		}
 	}
 
-	// For each spike, find the nearest timestamp within 60s.
+	swapByTime := make(map[string]float64)
+	for _, r := range swapReadings {
+		if r.Sensor == "swap/percent" {
+			swapByTime[r.Timestamp.Format(time.RFC3339)] = r.Value
+		}
+	}
+
+	diskByTime := make(map[string]float64)
+	for _, r := range diskReadings {
+		if r.Sensor == "disk/percent" {
+			diskByTime[r.Timestamp.Format(time.RFC3339)] = r.Value
+		}
+	}
+
+	load1mByTime := make(map[string]float64)
+	load5mByTime := make(map[string]float64)
+	load15mByTime := make(map[string]float64)
+	for _, r := range loadReadings {
+		key := r.Timestamp.Format(time.RFC3339)
+		switch r.Sensor {
+		case "load/1min":
+			load1mByTime[key] = r.Value
+		case "load/5min":
+			load5mByTime[key] = r.Value
+		case "load/15min":
+			load15mByTime[key] = r.Value
+		}
+	}
+
 	var rows []ReportRow
 	for _, spike := range spikes {
-		cpuVal := findNearestValue(spike.Timestamp, cpuByTime)
-		load1m := findNearestValue(spike.Timestamp, load1mByTime)
-		load5m := findNearestValue(spike.Timestamp, load5mByTime)
-
 		rows = append(rows, ReportRow{
-			Sensor:     spike.Sensor,
-			Timestamp:  spike.Timestamp.In(loc).Format("2006-01-02 15:04:05"),
-			TempC:      round1(spike.TempC),
-			AboveMean:  round1(spike.Deviation),
-			CPUPercent: round1(cpuVal),
-			Load1Min:   round1(load1m),
-			Load5Min:   round1(load5m),
+			Sensor:       spike.Sensor,
+			Timestamp:    spike.Timestamp.In(loc).Format("2006-01-02 15:04:05"),
+			TempC:        round1(spike.TempC),
+			AboveMean:    round1(spike.Deviation),
+			Severity:     spike.Severity,
+			BaselineMean: round1(spike.BaselineMean),
+			BaselineMin:  round1(spike.BaselineMin),
+			BaselineMax:  round1(spike.BaselineMax),
+			BaselineStd:  round1(spike.BaselineStd),
+			CPUPercent:   round1(findNearestValue(spike.Timestamp, cpuByTime)),
+			MemPercent:   round1(findNearestValue(spike.Timestamp, memByTime)),
+			SwapPercent:  round1(findNearestValue(spike.Timestamp, swapByTime)),
+			DiskPercent:  round1(findNearestValue(spike.Timestamp, diskByTime)),
+			Load1Min:     round1(findNearestValue(spike.Timestamp, load1mByTime)),
+			Load5Min:     round1(findNearestValue(spike.Timestamp, load5mByTime)),
+			Load15Min:    round1(findNearestValue(spike.Timestamp, load15mByTime)),
 		})
 	}
 
+	logger.debug("built %d correlated report rows", len(rows))
 	return rows, nil
 }
 

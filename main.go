@@ -53,12 +53,14 @@ func main() {
 	// SystemMetrics for CPU, memory, swap, disk, load (gopsutil-based).
 	metrics := NewSystemMetrics()
 
-	// Allow up to 10 connections to SQLite — WAL mode supports concurrent reads.
-	// Poller goroutines and HTTP handlers share these connections without serializing.
-	// With WAL + modernc internal locking, writers still serialize safely,
-	// but the extra headroom prevents HTTP handlers from queueing behind pollers.
-	db.SetMaxOpenConns(10)
-	db.SetMaxIdleConns(3)
+	// Serialize all DB operations through a single connection.
+	// SQLite only allows one writer at a time (even in WAL mode).
+	// With multiple connections, 6 pollers collide at :52 every minute,
+	// causing SQLITE_BUSY errors and data loss. A single connection
+	// makes Go's database/sql queue all operations, eliminating lock contention.
+	// HTTP handlers share the same connection — slightly slower but no data loss.
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 
 	// Stagger pollers by 3s each so they don't all hit the DB simultaneously.
 	// Without staggering, 6 goroutines sharing 3 conns create a thundering herd

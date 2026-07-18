@@ -11,7 +11,9 @@ import (
 
 // writeReport dispatches to the correct formatter based on the format string.
 // Supported: "table", "json", "csv".
+// In Python: if format == "table": write_table(...) elif ...
 func writeReport(w io.Writer, report Report, format string) error {
+	logger.debug("writing report in %s format (%d rows)", format, len(report.Rows))
 	switch format {
 	case "table":
 		return writeTable(w, report)
@@ -25,42 +27,61 @@ func writeReport(w io.Writer, report Report, format string) error {
 }
 
 // writeTable outputs a human-readable ASCII table using text/tabwriter.
-// text/tabwriter is like Python's tabulate or prettytable, but from Go's stdlib.
 func writeTable(w io.Writer, report Report) error {
-	// tabwriter.NewWriter is like Python's csv.writer but for aligned columns.
-	// \t separates columns; the writer pads them to equal width.
-	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-
-	// Header block
 	fmt.Fprintf(w, "Temperature Spike Report\n")
 	fmt.Fprintf(w, "========================\n")
-	fmt.Fprintf(w, "Period:      last %d days\n", report.Days)
-	fmt.Fprintf(w, "Baseline:    %d-day average per sensor\n", report.BaselineDays)
-	fmt.Fprintf(w, "Threshold:   > baseline + %.1fC\n", report.Deviation)
-	fmt.Fprintf(w, "Generated:   %s\n", report.GeneratedAt)
-	fmt.Fprintf(w, "Spikes:      %d across %d sensor(s)\n\n", report.SpikeCount, report.SensorCount)
+	fmt.Fprintf(w, "Period:        last %d days\n", report.Days)
+	fmt.Fprintf(w, "Baseline:      %d-day average per sensor\n", report.BaselineDays)
+	fmt.Fprintf(w, "Threshold:     > baseline + %.1fC\n", report.Deviation)
+	fmt.Fprintf(w, "Generated:     %s\n", report.GeneratedAt)
+	fmt.Fprintf(w, "Spikes:        %d across %d sensor(s)\n", report.SpikeCount, report.SensorCount)
+	fmt.Fprintf(w, "Max spike:     %.1fC (deviation +%.1fC)\n", report.MaxSpikeTemp, report.MaxDeviation)
+	fmt.Fprintf(w, "Avg deviation: +%.1fC\n", report.AvgDeviation)
+	fmt.Fprintf(w, "Top sensor:    %s (%d spikes)\n", report.TopSensor, report.SeverityCounts["mild"]+report.SeverityCounts["moderate"]+report.SeverityCounts["high"]+report.SeverityCounts["severe"])
+	fmt.Fprintf(w, "Severity:      mild=%d moderate=%d high=%d severe=%d\n\n",
+		report.SeverityCounts["mild"], report.SeverityCounts["moderate"],
+		report.SeverityCounts["high"], report.SeverityCounts["severe"])
 
-	// Table header — tab-separated so tabwriter aligns columns.
-	fmt.Fprintf(tw, "Sensor\tTime\tTemp C\t+Avg\tCPU %%\tLoad 1m\tLoad 5m\n")
-	fmt.Fprintf(tw, "------\t----\t------\t----\t-----\t-------\t-------\n")
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+
+	fmt.Fprintf(tw, "Sensor\tTime\tTemp\t+Avg\tSev\tBase Avg\tBase Min\tBase Max\tCPU%%\tMem%%\tSwap%%\tDisk%%\tLoad1\tLoad5\tLoad15\n")
+	fmt.Fprintf(tw, "------\t----\t----\t----\t---\t--------\t--------\t--------\t----\t-----\t------\t------\t-----\t-----\t------\n")
 
 	for _, row := range report.Rows {
-		cpuStr := formatFloatOrDash(row.CPUPercent)
-		load1mStr := formatFloatOrDash(row.Load1Min)
-		load5mStr := formatFloatOrDash(row.Load5Min)
-
-		fmt.Fprintf(tw, "%s\t%s\t%.1f\t+%.1f\t%s\t%s\t%s\n",
+		fmt.Fprintf(tw, "%s\t%s\t%.1f\t+%.1f\t%s\t%.1f\t%.1f\t%.1f\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			row.Sensor,
 			row.Timestamp,
 			row.TempC,
 			row.AboveMean,
-			cpuStr,
-			load1mStr,
-			load5mStr,
+			row.Severity,
+			row.BaselineMean,
+			row.BaselineMin,
+			row.BaselineMax,
+			formatFloatOrDash(row.CPUPercent),
+			formatFloatOrDash(row.MemPercent),
+			formatFloatOrDash(row.SwapPercent),
+			formatFloatOrDash(row.DiskPercent),
+			formatFloatOrDash(row.Load1Min),
+			formatFloatOrDash(row.Load5Min),
+			formatFloatOrDash(row.Load15Min),
 		)
 	}
+	tw.Flush()
 
-	return tw.Flush() // Flush writes the aligned output — like closing a file buffer.
+	if len(report.Summaries) > 0 {
+		fmt.Fprintf(w, "\nPer-Sensor Summary\n")
+		fmt.Fprintf(w, "------------------\n")
+		sw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+		fmt.Fprintf(sw, "Sensor\tSpikes\tMax Temp\tMax Dev\tAvg Dev\tFirst Spike\tLast Spike\n")
+		fmt.Fprintf(sw, "------\t------\t--------\t-------\t-------\t-----------\t----------\n")
+		for _, s := range report.Summaries {
+			fmt.Fprintf(sw, "%s\t%d\t%.1fC\t+%.1fC\t+%.1fC\t%s\t%s\n",
+				s.Sensor, s.SpikeCount, s.MaxTempC, s.MaxDeviation, s.AvgDeviation, s.FirstSpike, s.LastSpike)
+		}
+		sw.Flush()
+	}
+
+	return nil
 }
 
 // writeJSON outputs the report as pretty-printed JSON.
@@ -73,12 +94,13 @@ func writeJSON(w io.Writer, report Report) error {
 }
 
 // writeCSV outputs the report as RFC 4180 CSV.
-// In Python: csv.writer(fp).writerows(rows)
 func writeCSV(w io.Writer, report Report) error {
 	cw := csv.NewWriter(w)
 
-	// Write header row
-	header := []string{"sensor", "timestamp", "temp_c", "above_mean", "cpu_percent", "load_1min", "load_5min"}
+	header := []string{"sensor", "timestamp", "temp_c", "above_mean", "severity",
+		"baseline_mean", "baseline_min", "baseline_max", "baseline_std",
+		"cpu_percent", "mem_percent", "swap_percent", "disk_percent",
+		"load_1min", "load_5min", "load_15min"}
 	if err := cw.Write(header); err != nil {
 		return err
 	}
@@ -89,16 +111,25 @@ func writeCSV(w io.Writer, report Report) error {
 			row.Timestamp,
 			fmt.Sprintf("%.1f", row.TempC),
 			fmt.Sprintf("%.1f", row.AboveMean),
+			row.Severity,
+			fmt.Sprintf("%.1f", row.BaselineMean),
+			fmt.Sprintf("%.1f", row.BaselineMin),
+			fmt.Sprintf("%.1f", row.BaselineMax),
+			fmt.Sprintf("%.1f", row.BaselineStd),
 			formatFloatOrDash(row.CPUPercent),
+			formatFloatOrDash(row.MemPercent),
+			formatFloatOrDash(row.SwapPercent),
+			formatFloatOrDash(row.DiskPercent),
 			formatFloatOrDash(row.Load1Min),
 			formatFloatOrDash(row.Load5Min),
+			formatFloatOrDash(row.Load15Min),
 		}
 		if err := cw.Write(record); err != nil {
 			return err
 		}
 	}
 
-	cw.Flush() // Ensure all buffered data is written.
+	cw.Flush()
 	return cw.Error()
 }
 
