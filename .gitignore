@@ -27,6 +27,8 @@ temps.db
 tracker.log
 cleanup-and-build.log
 service-manager.log
+setup-systemd-service.log
+view-logs.log
 
 # SQLite runtime artifacts (shared memory + WAL, contain live data)
 *.db-shm
