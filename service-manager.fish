@@ -56,27 +56,32 @@ if test -z "$COMMAND"
     exit 1
 end
 
-if test "$SYSTEM_MODE" -eq 1
-    set -g SYSTEMCTL "sudo systemctl"
-else
-    set -g SYSTEMCTL "systemctl --user"
+function run_systemctl
+    # In Fish, a variable holding a command AND its flags cannot be used as the command.
+    # systemctl --user as one string would look for a binary literally named "systemctl --user".
+    # Use a function instead -- like a Bash wrapper that forwards arguments.
+    if test "$SYSTEM_MODE" -eq 1
+        sudo systemctl $argv
+    else
+        systemctl --user $argv
+    end
 end
 
 switch "$COMMAND"
     case "status"
-        $SYSTEMCTL status "$SERVICE_NAME" --no-pager
+        run_systemctl status "$SERVICE_NAME" --no-pager
     case "start"
         echo "Starting $SERVICE_NAME..."
-        $SYSTEMCTL start "$SERVICE_NAME"
-        $SYSTEMCTL status "$SERVICE_NAME" --no-pager
+        run_systemctl start "$SERVICE_NAME"
+        run_systemctl status "$SERVICE_NAME" --no-pager
     case "stop"
         echo "Stopping $SERVICE_NAME..."
-        $SYSTEMCTL stop "$SERVICE_NAME"
+        run_systemctl stop "$SERVICE_NAME"
         echo "Stopped."
     case "restart"
         echo "Restarting $SERVICE_NAME..."
-        $SYSTEMCTL restart "$SERVICE_NAME"
-        $SYSTEMCTL status "$SERVICE_NAME" --no-pager
+        run_systemctl restart "$SERVICE_NAME"
+        run_systemctl status "$SERVICE_NAME" --no-pager
     case "logs"
         if test "$FOLLOW" -eq 1
             if test "$SYSTEM_MODE" -eq 1
