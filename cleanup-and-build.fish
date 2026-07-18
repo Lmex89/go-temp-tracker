@@ -1,5 +1,5 @@
 #!/usr/bin/env fish
-# cleanup-and-build.fish — Clean up temp-tracker binary, kill running instances, and rebuild
+# cleanup-and-build.fish -- Clean up temp-tracker binary, kill running instances, and rebuild
 #
 # Like a Python script that:
 #   - Uses logging module with timestamps and levels
@@ -129,7 +129,7 @@ else
 end
 
 # Step 2: Find and kill running temp-tracker processes
-# pgrep -f matches the full command line — like Python's psutil.process_iter() checking cmdline()
+# pgrep -f matches the full command line -- like Python's psutil.process_iter() checking cmdline()
 # The -f flag is crucial: without it, pgrep only matches the process name, not the full command with args
 log INFO "Step 2: Checking for running processes"
 set -l pids (pgrep -f "temp-tracker")
@@ -139,7 +139,7 @@ set -l pids (pgrep -f "temp-tracker")
 if test -n "$pids"
     log INFO "Found running temp-tracker process(es): $pids"
     
-    # Iterate over each PID — like Python's for pid in pids.split():
+    # Iterate over each PID -- like Python's for pid in pids.split():
     for pid in $pids
         log INFO "Killing PID $pid"
         # kill is like Python's os.kill(pid, signal.SIGTERM)
@@ -148,15 +148,15 @@ if test -n "$pids"
         set -l kill_status $status
         log DEBUG "Sent SIGTERM to PID $pid (exit status: $kill_status)"
         
-        # Wait a moment for graceful shutdown — like Python's time.sleep(0.5)
+        # Wait a moment for graceful shutdown -- like Python's time.sleep(0.5)
         # Fish's sleep accepts decimals (unlike some shells)
         sleep 0.5
         
-        # Check if process still exists — kill -0 tests existence without sending a real signal
+        # Check if process still exists -- kill -0 tests existence without sending a real signal
         # In Python: try os.kill(pid, 0) except ProcessLookupError: ...
         if kill -0 $pid 2>/dev/null
             log WARN "PID $pid still running after SIGTERM, sending SIGKILL"
-            kill -9 $pid 2>/dev/null  # SIGKILL — force terminate, like Python's process.terminate()
+            kill -9 $pid 2>/dev/null  # SIGKILL -- force terminate, like Python's process.terminate()
             set -l force_status $status
             log DEBUG "Sent SIGKILL to PID $pid (exit status: $force_status)"
             
@@ -178,8 +178,8 @@ end
 # Step 3: Rebuild the binary
 log INFO "Step 3: Building binary"
 
-# Run go build — like Python's subprocess.run(['go', 'build', '-o', 'temp-tracker', '.'])
-# Check exit status with $status — like Python's subprocess.run().returncode
+# Run go build -- like Python's subprocess.run(['go', 'build', '-o', 'temp-tracker', '.'])
+# Check exit status with $status -- like Python's subprocess.run().returncode
 # In Fish, the status variable is set automatically after each command
 go build -o temp-tracker .
 set -l build_status $status
@@ -196,7 +196,7 @@ if test $build_status -eq 0
 else
     log ERROR "Build failed with exit status $build_status"
     log FATAL "Aborting"
-    exit 1  # Like Python's sys.exit(1) — return error code to shell
+    exit 1  # Like Python's sys.exit(1) -- return error code to shell
 end
 
 log INFO "========================================"

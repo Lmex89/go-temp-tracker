@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# service-manager.sh — Manage the temp-tracker systemd service.
+# service-manager.sh -- Manage the temp-tracker systemd service.
 #
 # Usage:
 #   ./service-manager.sh status              # user service status

@@ -11,13 +11,13 @@ import (
 )
 
 // logger is the package-level logger, initialized in main().
-// Similar to Python's logging.getLogger(__name__) — available to all files in this package.
+// Similar to Python's logging.getLogger(__name__) -- available to all files in this package.
 var logger *spikeLogger
 
-// main is the entry point — like Python's `if __name__ == "__main__": main()`.
+// main is the entry point -- like Python's `if __name__ == "__main__": main()`.
 // Go's main() takes no args; use the flag package for CLI arguments.
 func main() {
-	// Define CLI flags — like Python's argparse or click.
+	// Define CLI flags -- like Python's argparse or click.
 	// flag.String("name", "default", "help text") creates a string flag.
 	days := flag.Int("days", 7, "Report window: look for spikes in the last N days")
 	baselineDays := flag.Int("baseline-days", 30, "Baseline window: calculate per-sensor average over the last N days")
@@ -29,7 +29,7 @@ func main() {
 
 	flag.Parse()
 
-	// Initialize the logger — like Python's logging.basicConfig(level=...).
+	// Initialize the logger -- like Python's logging.basicConfig(level=...).
 	// LOG_LEVEL env var takes precedence; -verbose flag sets DEBUG if env is empty.
 	logLevel := os.Getenv("LOG_LEVEL")
 	if logLevel == "" && *verbose {
@@ -40,7 +40,7 @@ func main() {
 	logger.info("spike-report starting (days=%d, baseline=%d, deviation=%.1f, db=%s, format=%s)",
 		*days, *baselineDays, *deviation, *dbPath, *format)
 
-	// Open the SQLite database — like Python's sqlite3.connect(db_path).
+	// Open the SQLite database -- like Python's sqlite3.connect(db_path).
 	// sql.Open returns a *sql.DB which is a connection pool, not a single connection.
 	db, err := sql.Open("sqlite", *dbPath)
 	if err != nil {
@@ -48,7 +48,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Failed to open database: %v\n", err)
 		os.Exit(1)
 	}
-	defer db.Close() // Ensure cleanup when main() returns — like Python's `with db:`.
+	defer db.Close() // Ensure cleanup when main() returns -- like Python's `with db:`.
 
 	if err := db.Ping(); err != nil {
 		logger.error("failed to connect to database: %v", err)
@@ -57,7 +57,7 @@ func main() {
 	}
 	logger.debug("database connection established: %s", *dbPath)
 
-	// Load the America/Merida timezone for display — like pytz.timezone("America/Merida").
+	// Load the America/Merida timezone for display -- like pytz.timezone("America/Merida").
 	// If the system doesn't have this timezone, fall back to UTC.
 	loc, err := time.LoadLocation("America/Merida")
 	if err != nil {
@@ -66,7 +66,7 @@ func main() {
 	}
 
 	// Calculate the time range boundaries.
-	// time.Now().UTC() gets current UTC time — like Python's datetime.utcnow().
+	// time.Now().UTC() gets current UTC time -- like Python's datetime.utcnow().
 	now := time.Now().UTC()
 	reportSince := now.AddDate(0, 0, -*days)
 	baselineSince := now.AddDate(0, 0, -*baselineDays)
@@ -74,7 +74,7 @@ func main() {
 		reportSince.Format("2006-01-02 15:04:05"), baselineSince.Format("2006-01-02 15:04:05"))
 
 	// Step 1: Detect temperature spikes.
-	// This calls spike.go logic — calculates per-sensor baselines and filters readings.
+	// This calls spike.go logic -- calculates per-sensor baselines and filters readings.
 	logger.info("detecting temperature spikes...")
 	spikes, err := detectSpikes(db, baselineSince, reportSince, now, *deviation)
 	if err != nil {
@@ -91,7 +91,7 @@ func main() {
 	logger.info("found %d spike(s) across %d sensor(s)", len(spikes), countUniqueSensorsFromSpikes(spikes))
 
 	// Step 2: Correlate with system metrics for each spike.
-	// This calls correlate.go logic — finds the nearest CPU/memory/swap/disk/load reading.
+	// This calls correlate.go logic -- finds the nearest CPU/memory/swap/disk/load reading.
 	logger.info("correlating spikes with system metrics...")
 	correlated, err := correlateMetrics(db, spikes, loc)
 	if err != nil {
@@ -102,7 +102,7 @@ func main() {
 	logger.debug("correlation complete: %d rows", len(correlated))
 
 	// Step 3: Format and output the report.
-	// This calls format.go logic — table, JSON, or CSV.
+	// This calls format.go logic -- table, JSON, or CSV.
 	var out *os.File
 	if *outputPath == "-" {
 		out = os.Stdout

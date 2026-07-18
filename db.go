@@ -7,8 +7,8 @@ import (
 	"time"
 )
 
-// Reading is a *struct* — like a Python dataclass or a NamedTuple.
-// Fields with capital letters are "exported" (public) — like Python's public attributes.
+// Reading is a *struct* -- like a Python dataclass or a NamedTuple.
+// Fields with capital letters are "exported" (public) -- like Python's public attributes.
 // Lowercase fields would be private (only accessible within this package).
 // The backtick tags (`json:"sensor"`) tell the JSON encoder what key names to use.
 // In Python you'd use @dataclass or just a dict.
@@ -17,11 +17,11 @@ type Reading struct {
 	Sensor     string  `json:"sensor"`
 	TempC      float64 `json:"temp_c"`      // Renamed to "value" later? Kept for backward compat.
 	MetricType string  `json:"metric_type"` // "temperature", "cpu", "memory", "disk", "load"
-	Unit       string  `json:"unit"`        // "°C", "%", "bytes", ""
+	Unit       string  `json:"unit"`        // "C", "%", "bytes", ""
 	CreatedAt  string  `json:"created_at"`
 }
 
-// Store is the interface for database operations — like a Python ABC/Protocol.
+// Store is the interface for database operations -- like a Python ABC/Protocol.
 // Any type that has all these methods automatically satisfies Store (no "extends" keyword).
 // This lets us swap out SQLite for another DB later without changing other code.
 type Store interface {
@@ -53,14 +53,14 @@ func NewSQLiteStore() *SQLiteStore {
 func (s *SQLiteStore) InitDB() *sql.DB {
 	Logger.Info("Initializing SQLite database (temps.db)")
 
-	// sql.Open opens a database driver — it doesn't actually connect yet (like Python's sqlite3.connect).
+	// sql.Open opens a database driver -- it doesn't actually connect yet (like Python's sqlite3.connect).
 	db, err := sql.Open("sqlite", "temps.db")
 	if err != nil {
 		Logger.Error("Failed to open database: %v", err)
 		return nil
 	}
 
-	// Ping actually tests the connection — similar to conn = sqlite3.connect() which connects immediately.
+	// Ping actually tests the connection -- similar to conn = sqlite3.connect() which connects immediately.
 	if err := db.Ping(); err != nil {
 		Logger.Error("Failed to ping database: %v", err)
 		return nil
@@ -70,13 +70,13 @@ func (s *SQLiteStore) InitDB() *sql.DB {
 
 	// Enable WAL (Write-Ahead Logging) mode for concurrent read/write access.
 	// Multiple goroutines write to the DB simultaneously (CPU poll, mem poll, etc.).
-	// WAL allows a writer to proceed while readers read the old snapshot — no locks.
+	// WAL allows a writer to proceed while readers read the old snapshot -- no locks.
 	// In Python: conn.execute("PRAGMA journal_mode=WAL")
 	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
 		Logger.Warn("Failed to enable WAL mode: %v", err)
 	}
 
-	// Set busy timeout to 5 seconds — when SQLITE_BUSY, wait and retry instead of failing.
+	// Set busy timeout to 5 seconds -- when SQLITE_BUSY, wait and retry instead of failing.
 	// This gives time for other writers to finish before giving up.
 	// In Python: conn.execute("PRAGMA busy_timeout=5000")
 	if _, err := db.Exec("PRAGMA busy_timeout=5000"); err != nil {
@@ -110,12 +110,12 @@ func (s *SQLiteStore) InitDB() *sql.DB {
 }
 
 // migrateSchema adds metric_type and unit columns to the readings table.
-// In SQLite, ALTER TABLE ADD COLUMN is limited — we can only add columns, not modify existing ones.
+// In SQLite, ALTER TABLE ADD COLUMN is limited -- we can only add columns, not modify existing ones.
 // The NOT NULL with DEFAULT ensures existing rows get the correct default values.
 // This is idempotent: it only adds columns if they don't already exist.
 func (s *SQLiteStore) migrateSchema(db *sql.DB) {
 	// Check if metric_type column exists.
-	// pragma_table_info returns column metadata — like Python's PRAGMA table_info().
+	// pragma_table_info returns column metadata -- like Python's PRAGMA table_info().
 	var count int
 	err := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('readings') WHERE name='metric_type'").Scan(&count)
 	if err != nil {
@@ -123,7 +123,7 @@ func (s *SQLiteStore) migrateSchema(db *sql.DB) {
 	}
 	if count == 0 {
 		Logger.Info("Migrating schema: adding metric_type column")
-		// NOT NULL DEFAULT 'temperature' — existing temp rows get the correct type.
+		// NOT NULL DEFAULT 'temperature' -- existing temp rows get the correct type.
 		if _, err := db.Exec("ALTER TABLE readings ADD COLUMN metric_type TEXT NOT NULL DEFAULT 'temperature'"); err != nil {
 			Logger.Error("Migration failed (metric_type): %v", err)
 		}
@@ -137,7 +137,7 @@ func (s *SQLiteStore) migrateSchema(db *sql.DB) {
 	}
 	if count == 0 {
 		Logger.Info("Migrating schema: adding unit column")
-		if _, err := db.Exec("ALTER TABLE readings ADD COLUMN unit TEXT NOT NULL DEFAULT '°C'"); err != nil {
+		if _, err := db.Exec("ALTER TABLE readings ADD COLUMN unit TEXT NOT NULL DEFAULT 'C'"); err != nil {
 			Logger.Error("Migration failed (unit): %v", err)
 		}
 	}
@@ -185,7 +185,7 @@ func isBusyError(err error) bool {
 }
 
 // Now includes metric_type and unit for multi-metric support.
-// Uses parameterized queries (the ? placeholders) — like Python's cursor.execute("...", (sensor, temp)).
+// Uses parameterized queries (the ? placeholders) -- like Python's cursor.execute("...", (sensor, temp)).
 // This prevents SQL injection (same as using ? or %s in Python).
 func (s *SQLiteStore) Insert(db *sql.DB, sensor string, temp float64, metricType string, unit string) {
 	// Insert into the readings table with metric_type and unit columns.
@@ -201,7 +201,7 @@ func (s *SQLiteStore) Insert(db *sql.DB, sensor string, temp float64, metricType
 	}
 }
 
-// Query retrieves temperature readings from the last N hours (backward compat — temperature only).
+// Query retrieves temperature readings from the last N hours (backward compat -- temperature only).
 // Now filters by metric_type = 'temperature' so it doesn't mix in CPU/memory/etc.
 func (s *SQLiteStore) Query(db *sql.DB, hours int) []Reading {
 	Logger.Debug("Querying temperature readings from last %d hour(s)", hours)
@@ -316,7 +316,7 @@ func (s *SQLiteStore) QueryLatestPerSensor(db *sql.DB) []Reading {
 	}
 
 	for _, r := range readings {
-		Logger.Debug("Latest %s: %.2f°C at %s", r.Sensor, r.TempC, r.CreatedAt)
+		Logger.Debug("Latest %s: %.2fC at %s", r.Sensor, r.TempC, r.CreatedAt)
 	}
 
 	return readings

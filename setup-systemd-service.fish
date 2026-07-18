@@ -1,5 +1,5 @@
 #!/usr/bin/env fish
-# setup-systemd-service.fish — Install temp-tracker as a systemd service.
+# setup-systemd-service.fish -- Install temp-tracker as a systemd service.
 #
 # Usage:
 #   ./setup-systemd-service.fish          # user service (starts on login, no sudo)
@@ -30,7 +30,7 @@ end
 # Service identity.
 set -g SERVICE_NAME "temp-tracker.service"
 
-# Runtime settings — keep them in sync with cleanup-and-build.fish.
+# Runtime settings -- keep them in sync with cleanup-and-build.fish.
 set -g PORT 9091
 set -g INTERVAL 60
 set -g CPU_POLL_INTERVAL 60

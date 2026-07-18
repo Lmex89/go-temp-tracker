@@ -27,8 +27,8 @@ func getEnvInt(key string, defaultVal int) int {
 	return parsed
 }
 
-// main is the entry point — analogous to Python's if __name__ == "__main__": main()
-// Go's main() takes no args — use os.Args or the flag package instead.
+// main is the entry point -- analogous to Python's if __name__ == "__main__": main()
+// Go's main() takes no args -- use os.Args or the flag package instead.
 func main() {
 	port := flag.Int("port", 8080, "HTTP server port")
 	interval := flag.Int("interval", 60, "Temperature polling interval in seconds")
@@ -58,7 +58,7 @@ func main() {
 	// With multiple connections, 6 pollers collide at :52 every minute,
 	// causing SQLITE_BUSY errors and data loss. A single connection
 	// makes Go's database/sql queue all operations, eliminating lock contention.
-	// HTTP handlers share the same connection — slightly slower but no data loss.
+	// HTTP handlers share the same connection -- slightly slower but no data loss.
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
 
@@ -100,7 +100,7 @@ func main() {
 		RunMetricPoller(store, db, "load", loadInterval, *retain, metrics.ReadLoad)
 	}()
 
-	// Setting up HTTP routes — ServeMux is like Flask's app or Django's urlpatterns.
+	// Setting up HTTP routes -- ServeMux is like Flask's app or Django's urlpatterns.
 	mux := http.NewServeMux()
 
 	// Existing temperature endpoints (backward compatible).

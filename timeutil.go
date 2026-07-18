@@ -8,7 +8,7 @@ import (
 
 // Time layout constants for parsing/formatting timestamps.
 // Go uses a REFERENCE TIME instead of format codes like Python's %Y-%m-%d.
-// The reference is: Mon Jan 2 15:04:05 MST 2006 → "2006-01-02 15:04:05"
+// The reference is: Mon Jan 2 15:04:05 MST 2006 -> "2006-01-02 15:04:05"
 // Think of it as: YYYY-MM-DD HH:MM:SS but with specific numbers (01/02 03:04:05PM '06 -0700).
 const (
 	dbTimeLayout        = "2006-01-02 15:04:05"   // Format stored in SQLite (UTC)
@@ -17,7 +17,7 @@ const (
 )
 
 // TimeConverter is an interface for converting UTC timestamps to a local timezone.
-// This decouples timezone logic from the rest of the code — similar to Python's
+// This decouples timezone logic from the rest of the code -- similar to Python's
 // abc or Protocol where you define a method signature.
 type TimeConverter interface {
 	ToLocal(utcTimestamp string) string
@@ -55,19 +55,19 @@ func meridaLocation() *time.Location {
 // and normalizes them to UTC for SQLite queries.
 // 
 // This is like Python's datetime.fromisoformat() or dateutil.parser.parse(),
-// but Go doesn't have a universal parser — we try multiple formats explicitly.
+// but Go doesn't have a universal parser -- we try multiple formats explicitly.
 // 
 // Supported formats (tried in order):
-// 1. RFC3339Nano — ISO 8601 with nanoseconds (e.g., "2024-01-15T10:30:00.000Z")
-// 2. RFC3339 — ISO 8601 without nanoseconds (e.g., "2024-01-15T10:30:00Z")
-// 3. dbTimeLayout — Database format (e.g., "2024-01-15 10:30:00")
-// 4. frontendTimeLayout — HTML datetime-local with T (e.g., "2024-01-15T10:30")
-// 5. frontendTimeLayout2 — HTML datetime-local with space (e.g., "2024-01-15 10:30")
+// 1. RFC3339Nano -- ISO 8601 with nanoseconds (e.g., "2024-01-15T10:30:00.000Z")
+// 2. RFC3339 -- ISO 8601 without nanoseconds (e.g., "2024-01-15T10:30:00Z")
+// 3. dbTimeLayout -- Database format (e.g., "2024-01-15 10:30:00")
+// 4. frontendTimeLayout -- HTML datetime-local with T (e.g., "2024-01-15T10:30")
+// 5. frontendTimeLayout2 -- HTML datetime-local with space (e.g., "2024-01-15 10:30")
 // 
-// Returns (time.Time, error) — Go's error handling pattern instead of exceptions.
+// Returns (time.Time, error) -- Go's error handling pattern instead of exceptions.
 // You MUST check err != nil before using the time value.
 func ParseTimestampInput(raw string) (time.Time, error) {
-	// Trim whitespace — like Python's .strip().
+	// Trim whitespace -- like Python's .strip().
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return time.Time{}, fmt.Errorf("empty timestamp")
@@ -76,7 +76,7 @@ func ParseTimestampInput(raw string) (time.Time, error) {
 	Logger.Debug("ParseTimestampInput raw=%q", raw)
 
 	// Try RFC3339Nano first (most precise, includes timezone like "Z" for UTC).
-	// time.Parse returns (time.Time, error) — like Python's datetime.fromisoformat() but with explicit error.
+	// time.Parse returns (time.Time, error) -- like Python's datetime.fromisoformat() but with explicit error.
 	if t, err := time.Parse(time.RFC3339Nano, raw); err == nil {
 		Logger.Debug("Parsed as RFC3339Nano -> UTC=%s", t.UTC().Format(dbTimeLayout))
 		return t.UTC(), nil  // Convert to UTC for consistent database queries.
@@ -87,7 +87,7 @@ func ParseTimestampInput(raw string) (time.Time, error) {
 		return t.UTC(), nil
 	}
 	// Try database format (assumed to be UTC).
-	// ParseInLocation parses as if the time is in the given location — like Python's .replace(tzinfo=...).
+	// ParseInLocation parses as if the time is in the given location -- like Python's .replace(tzinfo=...).
 	if t, err := time.ParseInLocation(dbTimeLayout, raw, time.UTC); err == nil {
 		Logger.Debug("Parsed as dbTimeLayout(UTC) -> UTC=%s", t.UTC().Format(dbTimeLayout))
 		return t.UTC(), nil
@@ -104,7 +104,7 @@ func ParseTimestampInput(raw string) (time.Time, error) {
 		return t.UTC(), nil
 	}
 
-	// No format matched — return error instead of raising an exception.
+	// No format matched -- return error instead of raising an exception.
 	return time.Time{}, fmt.Errorf("unsupported timestamp format: %s", raw)
 }
 
@@ -115,14 +115,14 @@ func ParseTimestampInput(raw string) (time.Time, error) {
 //	local_dt = utc_dt.astimezone(pytz.timezone("America/Merida"))
 //
 // Go uses a REFERENCE TIME: "2006-01-02 15:04:05" which is the time of Go's birth.
-// This is Go's format string — NOT strftime-style like Python's "%Y-%m-%d %H:%M:%S".
+// This is Go's format string -- NOT strftime-style like Python's "%Y-%m-%d %H:%M:%S".
 // The reference time is: Mon Jan 2 15:04:05 MST 2006 (01/02 03:04:05PM '06 -0700).
 func (c *MeridaTimeConverter) ToLocal(utcTimestamp string) string {
 	utcTime, err := time.Parse("2006-01-02 15:04:05", utcTimestamp)
 	if err != nil {
 		return utcTimestamp
 	}
-	// .In(c.location) converts to the target timezone — like astimezone() in Python.
-	// .Format() converts back to string — like strftime() in Python.
+	// .In(c.location) converts to the target timezone -- like astimezone() in Python.
+	// .Format() converts back to string -- like strftime() in Python.
 	return utcTime.In(c.location).Format("2006-01-02 15:04:05")
 }

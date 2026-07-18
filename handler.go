@@ -10,7 +10,7 @@ import (
 )
 
 // handleTemps returns an http.HandlerFunc (a function that handles HTTP requests).
-// This is a *closure* — like a Python nested function that captures store and db from the outer scope.
+// This is a *closure* -- like a Python nested function that captures store and db from the outer scope.
 // In Flask you'd write @app.route("/api/temps") with a view function.
 // In Django you'd write a class-based view or a function.
 // Here we use a "factory" pattern: handleTemps(store, db) returns the actual handler function.
@@ -96,7 +96,7 @@ func handleCurrent(store Store, db *sql.DB) http.HandlerFunc {
 }
 
 // handleMetricByType returns an HTTP handler for querying historical data of a specific metric type.
-// This is a generic factory — used for cpu, memory, disk, load, swap.
+// This is a generic factory -- used for cpu, memory, disk, load, swap.
 // In Python: def make_metric_handler(metric_type): return lambda request: ...
 func handleMetricByType(store Store, db *sql.DB, metricType string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// logLevel is a custom type based on int — like an IntEnum in Python.
+// logLevel is a custom type based on int -- like an IntEnum in Python.
 // Go doesn't have classes, so we use typed constants with iota (similar to Enum auto()).
 type logLevel int
 
@@ -23,7 +23,7 @@ const (
 	logERROR
 )
 
-// levelNames maps logLevel values to their string names — like a Python dict.
+// levelNames maps logLevel values to their string names -- like a Python dict.
 var levelNames = map[logLevel]string{
 	logDEBUG: "DEBUG",
 	logINFO:  "INFO",
@@ -31,11 +31,11 @@ var levelNames = map[logLevel]string{
 	logERROR: "ERROR",
 }
 
-// spikeLogger provides leveled logging with timestamps — like Python's logging.Logger.
+// spikeLogger provides leveled logging with timestamps -- like Python's logging.Logger.
 // It's thread-safe (uses sync.Mutex) so multiple goroutines can log without garbled output.
 // In Python, logging.Logger is already thread-safe; here we have to manage it manually.
 type spikeLogger struct {
-	mu     sync.Mutex  // Mutex = mutual exclusion lock — like threading.Lock() in Python
+	mu     sync.Mutex  // Mutex = mutual exclusion lock -- like threading.Lock() in Python
 	logger *log.Logger // Go's standard library logger
 	level  logLevel    // Minimum level to actually print
 }
@@ -58,7 +58,7 @@ func newSpikeLogger(level string) *spikeLogger {
 }
 
 // logf is the internal method that all public methods (debug, info, etc.) call.
-// ...interface{} is like *args in Python — variadic parameters of any type.
+// ...interface{} is like *args in Python -- variadic parameters of any type.
 // In Python: def log(self, level, format, *args): ...
 func (l *spikeLogger) logf(level logLevel, format string, args ...interface{}) {
 	// Skip if this log level is below the configured minimum.

@@ -215,24 +215,24 @@ Serves the web dashboard (`static/index.html`).
 
 ```
 sensors-temp/
-├── logger.go       Leveled logger (DEBUG/INFO/WARN/ERROR/FATAL)
-├── main.go         Entry point — wires sensors, metrics, store, pollers, HTTP server
-├── sensor.go       SensorReader + LinuxThermalSensor (reads /sys/class/thermal/ and hwmon)
-├── metrics.go      SystemMetrics (CPU, memory, swap, disk, load via gopsutil v3)
-├── poller.go       Poller + RunMetricPoller — one goroutine per metric type
-├── db.go           Store + SQLiteStore (schema, migration, insert, query, prune)
-├── timeutil.go     TimeConverter + MeridaTimeConverter (UTC -> America/Merida)
-├── handler.go      REST API endpoints
-├── static/
-│   ├── index.html           Chart.js dashboard (gauges + line charts)
-│   ├── config.json          Active dashboard configuration
-│   └── config.default.json  Reference defaults
-├── .env.example    Environment variable reference template
-├── AGENTS.md       IDE agent instructions
-├── README.md       This file
-├── go.mod / go.sum Go module files
-├── temps.db        SQLite database (created at runtime — NEVER DELETE)
-└── temp-tracker    Compiled binary
+|-- logger.go       Leveled logger (DEBUG/INFO/WARN/ERROR/FATAL)
+|-- main.go         Entry point -- wires sensors, metrics, store, pollers, HTTP server
+|-- sensor.go       SensorReader + LinuxThermalSensor (reads /sys/class/thermal/ and hwmon)
+|-- metrics.go      SystemMetrics (CPU, memory, swap, disk, load via gopsutil v3)
+|-- poller.go       Poller + RunMetricPoller -- one goroutine per metric type
+|-- db.go           Store + SQLiteStore (schema, migration, insert, query, prune)
+|-- timeutil.go     TimeConverter + MeridaTimeConverter (UTC -> America/Merida)
+|-- handler.go      REST API endpoints
+|-- static/
+|   |-- index.html           Chart.js dashboard (gauges + line charts)
+|   |-- config.json          Active dashboard configuration
+|   `-- config.default.json  Reference defaults
+|-- .env.example    Environment variable reference template
+|-- AGENTS.md       IDE agent instructions
+|-- README.md       This file
+|-- go.mod / go.sum Go module files
+|-- temps.db        SQLite database (created at runtime -- NEVER DELETE)
+`-- temp-tracker    Compiled binary
 ```
 
 ## Log levels

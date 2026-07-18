@@ -1,5 +1,5 @@
 #!/usr/bin/env fish
-# service-manager.fish — Manage the temp-tracker systemd service.
+# service-manager.fish -- Manage the temp-tracker systemd service.
 #
 # Usage:
 #   ./service-manager.fish status              # user service status

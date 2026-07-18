@@ -249,7 +249,7 @@ func findNearestValue(target time.Time, lookup map[string]float64) float64 {
 		}
 		diff := target.Sub(ts)
 		if diff < 0 {
-			diff = -diff // abs() — Go doesn't have math.Abs for time.Duration.
+			diff = -diff // abs() -- Go doesn't have math.Abs for time.Duration.
 		}
 		if diff > window {
 			continue

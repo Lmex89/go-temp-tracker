@@ -49,7 +49,7 @@ func detectSpikes(
 	}
 	logger.debug("loaded %d baseline readings", len(baselineRows))
 
-	// Group by sensor and accumulate values — like Python's collections.defaultdict(list).
+	// Group by sensor and accumulate values -- like Python's collections.defaultdict(list).
 	sensorTemps := make(map[string][]float64)
 	for _, r := range baselineRows {
 		sensorTemps[r.Sensor] = append(sensorTemps[r.Sensor], r.TempC)
@@ -143,7 +143,7 @@ type tempReading struct {
 // queryTemperatureRange fetches temperature readings between two UTC timestamps.
 // This is like Python: cursor.execute("SELECT ... WHERE created_at >= ? AND ...", (since, until))
 func queryTemperatureRange(db *sql.DB, since, until time.Time) ([]tempReading, error) {
-	// SQLite datetime format for the query — "2006-01-02 15:04:05" is Go's reference time layout.
+	// SQLite datetime format for the query -- "2006-01-02 15:04:05" is Go's reference time layout.
 	// In Python you'd use strftime("%Y-%m-%d %H:%M:%S").
 	layout := "2006-01-02 15:04:05"
 	rows, err := db.Query(
@@ -158,7 +158,7 @@ func queryTemperatureRange(db *sql.DB, since, until time.Time) ([]tempReading, e
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close() // Ensure rows are closed — like Python's `with cursor:`.
+	defer rows.Close() // Ensure rows are closed -- like Python's `with cursor:`.
 
 	var readings []tempReading
 	for rows.Next() {

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# view-logs.sh — Show temp-tracker service logs.
+# view-logs.sh -- Show temp-tracker service logs.
 #
 # Usage:
 #   ./view-logs.sh          # user service logs (last 50 lines)

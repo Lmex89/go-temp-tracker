@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	// gopsutil v3 — pure Go system metrics library (like Python's psutil, but for Go).
-	// No CGo required — reads from /proc and /sys under the hood.
+	// gopsutil v3 -- pure Go system metrics library (like Python's psutil, but for Go).
+	// No CGo required -- reads from /proc and /sys under the hood.
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/disk"
 	"github.com/shirou/gopsutil/v3/load"
@@ -14,7 +14,7 @@ import (
 )
 
 // MetricPoint holds one sensor reading value.
-// This is like a lightweight dataclass — sensor name, numeric value, and unit string.
+// This is like a lightweight dataclass -- sensor name, numeric value, and unit string.
 // In Python: @dataclass class MetricPoint: sensor: str; value: float; unit: str
 type MetricPoint struct {
 	Sensor string
@@ -27,7 +27,7 @@ type MetricPoint struct {
 // Each method returns a slice of MetricPoint (like a list of dataclass instances).
 type SystemMetrics struct{}
 
-// NewSystemMetrics constructor — returns a pointer to a new SystemMetrics.
+// NewSystemMetrics constructor -- returns a pointer to a new SystemMetrics.
 func NewSystemMetrics() *SystemMetrics {
 	return &SystemMetrics{}
 }
@@ -39,14 +39,14 @@ func NewSystemMetrics() *SystemMetrics {
 func (sm *SystemMetrics) ReadCPU() []MetricPoint {
 	// cpu.Percent with interval > 0 blocks for that duration to measure recent CPU usage.
 	// percpu=true returns one float per logical core + total as the last element.
-	// Wait — actually without percpu=false, the total is NOT included.
+	// Wait -- actually without percpu=false, the total is NOT included.
 	// Let's call with percpu=true and compute total manually.
 	percents, err := cpu.Percent(time.Second, true)
 	if err != nil {
 		Logger.Warn("Failed to read CPU: %v", err)
 		return nil
 	}
-	// Build MetricPoint slice — like a list comprehension in Python.
+	// Build MetricPoint slice -- like a list comprehension in Python.
 	// In Python: [MetricPoint(f"cpu/Core {i}", p, "%") for i, p in enumerate(percents)]
 	points := make([]MetricPoint, 0, len(percents)+1)
 	var total float64
@@ -81,7 +81,7 @@ func (sm *SystemMetrics) ReadMemory() []MetricPoint {
 		Logger.Warn("Failed to read memory: %v", err)
 		return nil
 	}
-	// Return multiple points — each is like a separate "sensor" reading.
+	// Return multiple points -- each is like a separate "sensor" reading.
 	// The chart will show used_percent; bytes are for the gauge display.
 	return []MetricPoint{
 		{Sensor: "memory/used_percent", Value: clampPercent(v.UsedPercent), Unit: "%"},
@@ -126,7 +126,7 @@ func (sm *SystemMetrics) ReadSwap() []MetricPoint {
 // Filters out snap/squashfs loopback mounts (read-only, always show 100%).
 // In Python: [psutil.disk_usage(part.mountpoint) for part in psutil.disk_partitions()]
 func (sm *SystemMetrics) ReadDisk() []MetricPoint {
-	// disk.Partitions(false) lists mount points — false means "physical" only.
+	// disk.Partitions(false) lists mount points -- false means "physical" only.
 	// In Python: psutil.disk_partitions()
 	partitions, err := disk.Partitions(false)
 	if err != nil {
@@ -136,13 +136,13 @@ func (sm *SystemMetrics) ReadDisk() []MetricPoint {
 	var points []MetricPoint
 	for _, p := range partitions {
 		// Skip snap loopback mounts and squashfs filesystems.
-		// These are read-only squashfs images at /snap/ — always show 100% used,
+		// These are read-only squashfs images at /snap/ -- always show 100% used,
 		// which is not useful for monitoring. Like filtering out /snap/ in Python.
 		if strings.HasPrefix(p.Mountpoint, "/snap/") || p.Fstype == "squashfs" {
 			continue
 		}
 
-		// disk.Usage reads stats for a mountpoint — total, used, free, percent.
+		// disk.Usage reads stats for a mountpoint -- total, used, free, percent.
 		// In Python: psutil.disk_usage(mountpoint)
 		usage, err := disk.Usage(p.Mountpoint)
 		if err != nil {
@@ -150,7 +150,7 @@ func (sm *SystemMetrics) ReadDisk() []MetricPoint {
 			continue
 		}
 		// Sensor name: "disk//" for root, "disk//home" for /home, etc.
-		// Forward slash in mountpoint is OK — it's unique in the sensor name.
+		// Forward slash in mountpoint is OK -- it's unique in the sensor name.
 		points = append(points, MetricPoint{
 			Sensor: fmt.Sprintf("disk/%s", p.Mountpoint),
 			Value:  clampPercent(usage.UsedPercent),

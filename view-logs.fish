@@ -1,5 +1,5 @@
 #!/usr/bin/env fish
-# view-logs.fish — Show temp-tracker service logs.
+# view-logs.fish -- Show temp-tracker service logs.
 #
 # Usage:
 #   ./view-logs.fish          # user service logs (last 50 lines)
