@@ -26,6 +26,7 @@ go.work.sum
 temps.db
 tracker.log
 cleanup-and-build.log
+service-manager.log
 
 # SQLite runtime artifacts (shared memory + WAL, contain live data)
 *.db-shm
