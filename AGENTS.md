@@ -4,6 +4,11 @@
 - Do not delete or truncate `temps.db` (or `temps.db-shm` / `temps.db-wal` while app is running). Schema migration is automatic in `db.go`; data loss is irreversible.
 - Keep code/comments ASCII only; no emojis in code, logs, strings, or comments.
 - For Go edits, keep the existing teaching style comments for Python developers (compare Go behavior to Python where helpful).
+- For Fish script edits, every script MUST follow this structure:
+  1. **Leveled logger** -- every script needs a `log` function with DEBUG/INFO/WARN/ERROR/FATAL levels, timestamps, console colors, and file output (like `cleanup-and-build.fish` and `service-manager.fish`).
+  2. **Function-based layout** -- split logic into named functions with doc comments (e.g. `parse_args`, `run_systemctl`, `dispatch`). No monolithic scripts.
+  3. **Python-developer teaching comments** -- explain Fish quirks by comparing to Python (e.g. arrays start at 1, globals need `-g`, variables holding commands+flags cannot be executed directly, `status filename` instead of `$argv[0]`).
+  4. **Never store a command with flags in a variable and execute it** -- `$SYSTEMCTL` where SYSTEMCTL="systemctl --user" fails. Use a wrapper function instead.
 
 ## Verified Commands
 - Build: `go build -o temp-tracker .`
