@@ -39,6 +39,14 @@
 - `MetricPoint` struct in `metrics.go` is the intermediate representation from system metric readers (_sensor_, _value_, _unit_) before insertion.
 - Time handling: `TimeConverter` interface + `MeridaTimeConverter`; DB stores UTC strings (`2006-01-02 15:04:05`); `ParseTimestampInput` tries RFC3339Nano, RFC3339, db format, then frontend formats (assumed Merida local); responses converted to `America/Merida`.
 
+## CodeGraphContext (CGC)
+- Binary at `/home/lmex89/go/bin/codegraph` (not on PATH; use full path in scripts/configs).
+- Index this repo: `codegraph index .`
+- MCP server runs automatically via opencode config (`codegraph` server in `~/.config/opencode/opencode.json`).
+- Ignore patterns in `.codegraphignore` at repo root.
+- Use `codegraph help` to see all CLI commands (analyze, find, list, etc.).
+- Use `codegraph find-callers . --symbol <name>` or `codegraph find-callees . --symbol <name>` for graph queries.
+
 ## API/Dashboard Notes
 - Historical endpoints exist for `temps`, `cpu`, `memory`, `swap`, `disk`, `load`; current-value endpoints exist under `/api/current/*`.
 - All historical endpoints support `?hours=N` (relative, default 1) OR `?from=ISO&to=ISO` (absolute range).

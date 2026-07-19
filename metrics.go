@@ -73,20 +73,26 @@ func (sm *SystemMetrics) ReadCPU() []MetricPoint {
 // ReadMemory returns virtual memory stats (RAM).
 // Returns: memory/used_percent=52.5%, memory/total_bytes=16GB, etc.
 // In Python: psutil.virtual_memory()
+//
+// NOTE: We use Total - Available for the "used" figure instead of gopsutil's
+// Used field. gopsutil's Used = Total - Free - Buffers - Cached - SReclaimable,
+// which under-reports usage because it treats all page cache as "available".
+// htop, free -h, and the kernel itself use MemAvailable (kernel 3.14+), which
+// estimates memory truly unavailable for new processes. Using Total - Available
+// matches what users see in htop/free.
 func (sm *SystemMetrics) ReadMemory() []MetricPoint {
-	// mem.VirtualMemory returns a struct with Total, Used, Free, UsedPercent, etc.
-	// In Python: svmem(total=..., used=..., free=..., percent=..., ...)
 	v, err := mem.VirtualMemory()
 	if err != nil {
 		Logger.Warn("Failed to read memory: %v", err)
 		return nil
 	}
-	// Return multiple points -- each is like a separate "sensor" reading.
-	// The chart will show used_percent; bytes are for the gauge display.
+	// Calculate "real" used bytes and percent matching htop/free -h behavior.
+	realUsed := v.Total - v.Available
+	realUsedPct := float64(realUsed) / float64(v.Total) * 100.0
 	return []MetricPoint{
-		{Sensor: "memory/used_percent", Value: clampPercent(v.UsedPercent), Unit: "%"},
+		{Sensor: "memory/used_percent", Value: clampPercent(realUsedPct), Unit: "%"},
 		{Sensor: "memory/total_bytes", Value: float64(v.Total), Unit: "bytes"},
-		{Sensor: "memory/used_bytes", Value: float64(v.Used), Unit: "bytes"},
+		{Sensor: "memory/used_bytes", Value: float64(realUsed), Unit: "bytes"},
 		{Sensor: "memory/free_bytes", Value: float64(v.Free), Unit: "bytes"},
 	}
 }

@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "codegraph": {
+      "command": "/home/lmex89/go/bin/codegraph",
+      "args": ["serve"]
+    }
+  }
+}

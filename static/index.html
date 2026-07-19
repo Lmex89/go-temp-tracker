@@ -336,8 +336,8 @@ body::after {
 }
 
 .gauge-canvas {
-  width: 68px;
-  height: 48px;
+  width: 82px;
+  height: 58px;
 }
 
 .gauge-data {
@@ -474,7 +474,7 @@ body::after {
   .gauge-row { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
   .gauge-frame {
     padding: 4px 6px;
-    min-height: 44px;
+    min-height: 53px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -495,9 +495,9 @@ body::after {
   }
   /* Chart.js writes inline canvas size; !important keeps the gauge inside the card. */
   .gauge-canvas {
-    width: 50px !important;
-    height: 28px !important;
-    flex: 0 0 50px;
+    width: 60px !important;
+    height: 34px !important;
+    flex: 0 0 60px;
   }
   .gauge-value { font-size: 1.05rem; }
   .gauge-label {
@@ -517,7 +517,7 @@ body::after {
 
 @media (max-width: 480px) {
   .gauge-row { gap: 5px; }
-  .gauge-canvas { width: 62px; height: 44px; }
+  .gauge-canvas { width: 74px; height: 53px; }
   .gauge-value { font-size: 0.9rem; }
   .section-header { flex-direction: column; align-items: flex-start; gap: 6px; }
 }
