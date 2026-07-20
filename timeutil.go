@@ -109,6 +109,8 @@ func ParseTimestampInput(raw string) (time.Time, error) {
 }
 
 // ToLocal parses a UTC timestamp string and converts it to America/Merida local time.
+// Returns ISO 8601 format with timezone offset (e.g., "2024-01-15T04:30:00-06:00")
+// so JavaScript's new Date() parses it correctly regardless of browser timezone.
 // In Python: from datetime import datetime; import pytz;
 //
 //	utc_dt = datetime.strptime(ts, "%Y-%m-%d %H:%M:%S").replace(tzinfo=pytz.UTC)
@@ -123,6 +125,6 @@ func (c *MeridaTimeConverter) ToLocal(utcTimestamp string) string {
 		return utcTimestamp
 	}
 	// .In(c.location) converts to the target timezone -- like astimezone() in Python.
-	// .Format() converts back to string -- like strftime() in Python.
-	return utcTime.In(c.location).Format("2006-01-02 15:04:05")
+	// .Format() with time.RFC3339 includes timezone offset -- like isoformat() in Python.
+	return utcTime.In(c.location).Format(time.RFC3339)
 }

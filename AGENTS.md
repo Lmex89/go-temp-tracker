@@ -1,5 +1,16 @@
 # Sensor Temperature Tracker - Agent Notes
 
+## Tool preference MANDATORY (non-negotiable)
+**ALWAYS use codegraph_* tools FIRST for all code search and navigation.** This includes:
+- `codegraph_find_symbol` - Find function/struct definitions
+- `codegraph_context_for_task` - Get relevant context for a task
+- `codegraph_search_symbols` - Search symbol names and signatures
+- `codegraph_find_callers` / `codegraph_find_callees` - Trace call chains
+- `codegraph_trace_dependencies` - Find dependency chains
+- `codegraph_search_semantic` - Semantic code search
+
+**ONLY fall back to built-in tools (grep, read, glob) when codegraph tools cannot satisfy the query.** Never use grep/read as the first choice for code exploration.
+
 ## Non-negotiables
 - Do not delete or truncate `temps.db` (or `temps.db-shm` / `temps.db-wal` while app is running). Schema migration is automatic in `db.go`; data loss is irreversible.
 - Keep code/comments ASCII only; no emojis in code, logs, strings, or comments.

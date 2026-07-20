@@ -836,16 +836,17 @@ function createMetricChart(id, yLabel, unitSuffix) {
   metricCharts[id] = { chart, unitSuffix };
 }
 
-function loadMetricData(chartId, apiUrl) {
+function loadMetricData(chartId, apiUrl, sensorFilter) {
   fetch(apiUrl)
     .then(r => { if (!r.ok) throw new Error(r.statusText); return r.json(); })
     .then(data => {
       const mc = metricCharts[chartId];
       if (!mc) return;
       const palette = config.colors.palette;
-      const allSensors = [...new Set(data.map(d => d.sensor))];
+      const filtered = sensorFilter ? data.filter(d => sensorFilter.includes(d.sensor)) : data;
+      const allSensors = [...new Set(filtered.map(d => d.sensor))];
       const datasets = allSensors.map((sensor, i) => {
-        const points = data.filter(d => d.sensor === sensor);
+        const points = filtered.filter(d => d.sensor === sensor);
         const color = palette[i % palette.length];
         return {
           label: sensor,
@@ -922,12 +923,12 @@ function loadAllCharts() {
   const charts = [
     { id: 'temp-chart', ep: 'temps' },
     { id: 'chart-cpu', ep: 'cpu' },
-    { id: 'chart-memory', ep: 'memory' },
+    { id: 'chart-memory', ep: 'memory', sensorFilter: ['memory/used_percent'] },
     { id: 'chart-load', ep: 'load' },
   ];
   charts.forEach(c => {
     const url = apiUrlForMetric(c.ep);
-    if (url) loadMetricData(c.id, url);
+    if (url) loadMetricData(c.id, url, c.sensorFilter);
   });
 }
 
