@@ -377,10 +377,10 @@ function print_summary
         log INFO "PostgreSQL container: docker compose -f $PROJECT_DIR/docker-compose.yml up -d"
     end
     echo ""
-    echo "To switch backend, re-run with --sqlite or --postgres:"
-    echo "  $SCRIPT_NAME                      # default (postgres)"
-    echo "  $SCRIPT_NAME --sqlite             # switch to SQLite"
-    echo "  $SCRIPT_NAME --system --sqlite    # system service with SQLite"
+    echo "To switch backend, re-run with --sqlite (default is postgres):"
+    echo "  ./setup-systemd-service.fish                   # user service (postgres)"
+    echo "  ./setup-systemd-service.fish --sqlite          # user service (sqlite)"
+    echo "  ./setup-systemd-service.fish --system --sqlite # system service (sqlite)"
     echo ""
 
     echo "Useful commands:"

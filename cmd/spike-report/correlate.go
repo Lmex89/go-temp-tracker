@@ -29,13 +29,13 @@ type ReportRow struct {
 
 // SensorSummary holds per-sensor aggregate stats for the report.
 type SensorSummary struct {
-	Sensor      string  `json:"sensor"`
-	SpikeCount  int     `json:"spike_count"`
-	MaxTempC    float64 `json:"max_temp_c"`
+	Sensor       string  `json:"sensor"`
+	SpikeCount   int     `json:"spike_count"`
+	MaxTempC     float64 `json:"max_temp_c"`
 	MaxDeviation float64 `json:"max_deviation"`
 	AvgDeviation float64 `json:"avg_deviation"`
-	FirstSpike  string  `json:"first_spike"`
-	LastSpike   string  `json:"last_spike"`
+	FirstSpike   string  `json:"first_spike"`
+	LastSpike    string  `json:"last_spike"`
 }
 
 // Report holds all metadata and rows for formatting.
@@ -59,10 +59,11 @@ type Report struct {
 // It searches within a +/- 60 second window around the spike timestamp.
 //
 // In Python terms:
-//   for spike in spikes:
-//       cpu = find_nearest(cpu_df, spike.timestamp, window=60)
-//       mem = find_nearest(mem_df, spike.timestamp, window=60)
-//       load = find_nearest(load_df, spike.timestamp, window=60)
+//
+//	for spike in spikes:
+//	    cpu = find_nearest(cpu_df, spike.timestamp, window=60)
+//	    mem = find_nearest(mem_df, spike.timestamp, window=60)
+//	    load = find_nearest(load_df, spike.timestamp, window=60)
 func correlateMetrics(db *sql.DB, spikes []Spike, loc *time.Location) ([]ReportRow, error) {
 	if len(spikes) == 0 {
 		return nil, nil
@@ -241,8 +242,9 @@ func queryMetricRange(db *sql.DB, metricType string, since, until time.Time) ([]
 // Returns -1 if nothing is found within the window (sentinel for "missing").
 //
 // In Python this would be:
-//   candidates = {k: v for k, v in lookup.items() if abs(parse(k) - target) <= 60}
-//   return min(candidates, key=lambda k: abs(parse(k) - target)) if candidates else -1
+//
+//	candidates = {k: v for k, v in lookup.items() if abs(parse(k) - target) <= 60}
+//	return min(candidates, key=lambda k: abs(parse(k) - target)) if candidates else -1
 func findNearestValue(target time.Time, lookup map[string]float64) float64 {
 	window := time.Minute // +/- 60 seconds
 	var bestKey string
