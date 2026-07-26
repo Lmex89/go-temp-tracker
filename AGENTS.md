@@ -37,6 +37,9 @@
 - Spike report (on-demand analysis): `go build -o spike-report ./cmd/spike-report/ && ./spike-report` (defaults: last 7 days, 30-day baseline, +10C deviation; flags: `-days`, `-baseline-days`, `-deviation`, `-driver`, `-db`, `-format table|json|csv`, `-output`, `-verbose` for debug logs, `LOG_LEVEL=DEBUG` env also works). Reports include per-sensor baseline stats (mean/min/max/stddev), severity classification (mild/moderate/high/severe), correlated system metrics (CPU, memory, swap, disk, load 1m/5m/15m), per-sensor summary table, and aggregate stats (max spike, avg deviation, top sensor). To run against PostgreSQL: add `-driver postgres` or set `DB_DRIVER=postgres`; the `-db` flag accepts a Postgres connection string (defaults to `DATABASE_URL` and the project's docker-compose values).
 - SQLite-to-PostgreSQL migration: `go build -o migrate-to-postgres ./cmd/migrate-to-postgres/ && ./migrate-to-postgres -sqlite temps.db` (defaults to `DATABASE_URL`, then docker-compose DSN; truncates target `readings` and bulk-copies rows with `COPY FROM`).
 - SQLite backup tool (separate): `cd sqlite-backup-tool && python backup.py` (configurable via `config.yaml`).
+- PostgreSQL backup: `./backup-db.sh` (dumps the `sensors_temp` database via `docker exec pg_dump`, gzip-compressed to `backups/<db>_<timestamp>.sql.gz`, auto-deletes backups older than 30 days).
+- PostgreSQL restore: `./restore-db.sh` (lists backups if no arg; or pass a `.sql.gz` path to restore -- drops/recreates the database, terminates active connections first).
+- Cron example (daily 02:00): `0 2 * * * /full/path/backup-db.sh >> /full/path/backups/cron.log 2>&1`
 
 ## Config Quirks That Cause Mistakes
 - `main.go` reads these env vars at runtime: `LOG_LEVEL`, `CPU_POLL_INTERVAL`, `MEMORY_POLL_INTERVAL`, `SWAP_POLL_INTERVAL`, `DISK_POLL_INTERVAL`, `LOAD_POLL_INTERVAL`, `DB_DRIVER`, `DATABASE_URL`.
