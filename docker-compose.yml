@@ -10,7 +10,7 @@ services:
       POSTGRES_USER: tracker
       POSTGRES_PASSWORD: tracker
     volumes:
-      - ./data/postgres:/var/lib/postgresql/data
+      - pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U tracker -d sensors_temp"]
       interval: 5s
@@ -19,5 +19,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "1.0"
+          cpus: "2.0"
           memory: 2G
+
+volumes:
+  pgdata:
