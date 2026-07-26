@@ -145,16 +145,24 @@ type tempReading struct {
 func queryTemperatureRange(db *sql.DB, since, until time.Time) ([]tempReading, error) {
 	// SQLite datetime format for the query -- "2006-01-02 15:04:05" is Go's reference time layout.
 	// In Python you'd use strftime("%Y-%m-%d %H:%M:%S").
-	layout := "2006-01-02 15:04:05"
-	rows, err := db.Query(
-		`SELECT sensor, temp_c, created_at FROM readings
+	var createdAtExpr string
+	if dbDriver == "postgres" {
+		// Force UTC output in the same layout SQLite uses, so parseDBTimestamp works.
+		createdAtExpr = "to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')"
+	} else {
+		createdAtExpr = "created_at"
+	}
+
+	query := fmt.Sprintf(
+		`SELECT sensor, temp_c, %s FROM readings
 		 WHERE metric_type = 'temperature'
-		   AND created_at >= ?
-		   AND created_at <= ?
+		   AND created_at >= %s
+		   AND created_at <= %s
 		 ORDER BY sensor, created_at ASC`,
-		since.Format(layout),
-		until.Format(layout),
+		createdAtExpr, placeholder(1), placeholder(2),
 	)
+
+	rows, err := db.Query(query, formatDBTime(since), formatDBTime(until))
 	if err != nil {
 		return nil, err
 	}
@@ -169,7 +177,7 @@ func queryTemperatureRange(db *sql.DB, since, until time.Time) ([]tempReading, e
 		}
 		// Parse the UTC timestamp from DB.
 		// In Python: datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
-		ts, err := time.ParseInLocation(layout, tsStr, time.UTC)
+		ts, err := parseDBTimestamp(tsStr)
 		if err != nil {
 			return nil, err
 		}

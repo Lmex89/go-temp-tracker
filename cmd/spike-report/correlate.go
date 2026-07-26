@@ -192,17 +192,23 @@ type metricReading struct {
 // queryMetricRange fetches all readings for a specific metric_type within a UTC time range.
 // Like Python: df[(df.metric_type == metric_type) & (df.created_at >= since) & (df.created_at <= until)]
 func queryMetricRange(db *sql.DB, metricType string, since, until time.Time) ([]metricReading, error) {
-	layout := "2006-01-02 15:04:05"
-	rows, err := db.Query(
-		`SELECT sensor, temp_c, created_at FROM readings
-		 WHERE metric_type = ?
-		   AND created_at >= ?
-		   AND created_at <= ?
+	var createdAtExpr string
+	if dbDriver == "postgres" {
+		createdAtExpr = "to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')"
+	} else {
+		createdAtExpr = "created_at"
+	}
+
+	query := fmt.Sprintf(
+		`SELECT sensor, temp_c, %s FROM readings
+		 WHERE metric_type = %s
+		   AND created_at >= %s
+		   AND created_at <= %s
 		 ORDER BY created_at ASC`,
-		metricType,
-		since.Format(layout),
-		until.Format(layout),
+		createdAtExpr, placeholder(1), placeholder(2), placeholder(3),
 	)
+
+	rows, err := db.Query(query, metricType, formatDBTime(since), formatDBTime(until))
 	if err != nil {
 		return nil, err
 	}
@@ -215,7 +221,7 @@ func queryMetricRange(db *sql.DB, metricType string, since, until time.Time) ([]
 		if err := rows.Scan(&r.Sensor, &r.Value, &tsStr); err != nil {
 			return nil, err
 		}
-		ts, err := time.ParseInLocation(layout, tsStr, time.UTC)
+		ts, err := parseDBTimestamp(tsStr)
 		if err != nil {
 			return nil, err
 		}

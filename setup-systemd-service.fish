@@ -2,8 +2,9 @@
 # setup-systemd-service.fish -- Install temp-tracker as a systemd service.
 #
 # Usage:
-#   ./setup-systemd-service.fish          # user service (starts on login, no sudo)
+#   ./setup-systemd-service.fish          # user service with PostgreSQL (starts on login, no sudo)
 #   ./setup-systemd-service.fish --system # system service (starts at boot, uses sudo)
+#   ./setup-systemd-service.fish --sqlite # use SQLite backend instead of PostgreSQL
 #
 # Like a Python script that:
 #   - writes a systemd unit file
@@ -61,6 +62,11 @@ set -g TARGET ""
 set -g USER_LINE ""
 set -g PORT 9091
 set -g INTERVAL 60
+# Database backend selection. Defaults to PostgreSQL; use --sqlite to switch back.
+# DATABASE_URL is pulled from the environment or falls back to docker-compose defaults.
+set -g DB_DRIVER "postgres"
+set -g DATABASE_URL (echo $DATABASE_URL | string trim)
+test -z "$DATABASE_URL"; and set DATABASE_URL "postgres://tracker:tracker@localhost:5432/sensors_temp?sslmode=disable"
 
 # ============================================================
 # Leveled logger -- identical pattern across all *.fish scripts
@@ -152,10 +158,15 @@ function parse_args
         if test "$arg" = "--system"
             set SYSTEM_MODE 1
             log INFO "System mode enabled (requires sudo, starts at boot)"
-            return
+        else if test "$arg" = "--sqlite"
+            set DB_DRIVER "sqlite"
+            set DATABASE_URL ""
+            log INFO "SQLite mode enabled"
         end
     end
-    log INFO "User mode (no sudo required, starts on login)"
+    if test "$SYSTEM_MODE" -ne 1
+        log INFO "User mode (no sudo required, starts on login)"
+    end
 end
 
 # init_paths -- set service paths based on system/user mode.
@@ -237,6 +248,14 @@ function build_unit_file
     set -a lines "[Unit]"
     set -a lines "Description=Sensor Temperature Tracker"
     set -a lines "After=network.target"
+    if test "$DB_DRIVER" = "postgres"
+        # PostgreSQL is provided by docker-compose. We add a note but do NOT
+        # require docker.service: on many systems Docker runs outside systemd
+        # (snap, docker desktop, manual daemon). The postgres container should
+        # be started separately (e.g. via docker compose up -d, cleanup-and-build.fish,
+        # or a separate systemd unit). If the container is down, temp-tracker
+        # will log a connection error on startup.
+    end
     set -a lines ""
     set -a lines "[Service]"
     set -a lines "Type=simple"
@@ -249,6 +268,10 @@ function build_unit_file
     set -a lines "Environment=SWAP_POLL_INTERVAL=$INTERVAL"
     set -a lines "Environment=DISK_POLL_INTERVAL=$INTERVAL"
     set -a lines "Environment=LOAD_POLL_INTERVAL=$INTERVAL"
+    if test "$DB_DRIVER" = "postgres"
+        set -a lines "Environment=DB_DRIVER=postgres"
+        set -a lines "Environment=DATABASE_URL=$DATABASE_URL"
+    end
     set -a lines "ExecStart=$PROJECT_DIR/temp-tracker -port $PORT -interval $INTERVAL"
     set -a lines "Restart=on-failure"
     set -a lines "RestartSec=5"
@@ -348,7 +371,16 @@ end
 function print_summary
     echo ""
     log INFO "Service installed and started"
+    log INFO "Database driver: $DB_DRIVER"
     log INFO "Dashboard: http://localhost:$PORT"
+    if test "$DB_DRIVER" = "postgres"
+        log INFO "PostgreSQL container: docker compose -f $PROJECT_DIR/docker-compose.yml up -d"
+    end
+    echo ""
+    echo "To switch backend, re-run with --sqlite or --postgres:"
+    echo "  $SCRIPT_NAME                      # default (postgres)"
+    echo "  $SCRIPT_NAME --sqlite             # switch to SQLite"
+    echo "  $SCRIPT_NAME --system --sqlite    # system service with SQLite"
     echo ""
 
     echo "Useful commands:"

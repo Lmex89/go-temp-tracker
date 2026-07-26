@@ -4,7 +4,9 @@
 *.dll
 *.so
 *.dylib
-temp-tracker
+/temp-tracker
+/spike-report
+/migrate-to-postgres
 
 # Test binary, built with `go test -c`
 *.test

@@ -21,6 +21,11 @@ set -g LOG_FILE "cleanup-and-build.log"
 # Shared poll interval default (seconds).
 # Like a Python module-level constant: DEFAULT_INTERVAL = 60.
 set -g DEFAULT_INTERVAL 60
+# Database backend selection. DB_DRIVER=postgres switches to PostgreSQL; otherwise SQLite is used.
+# Like a Python env var lookup: DB_DRIVER = os.getenv("DB_DRIVER", "sqlite").
+set -g DB_DRIVER (echo $DB_DRIVER | string trim)
+test -z "$DB_DRIVER"; and set DB_DRIVER "postgres"
+set -g DATABASE_URL (echo $DATABASE_URL | string trim)
 test -z "$LOG_LEVEL"; and set LOG_LEVEL "INFO"
 
 # Numeric log levels (like Python's logging.DEBUG = 10, logging.INFO = 20, etc.)
@@ -220,7 +225,14 @@ function build_and_start
         # nohup keeps it running after this script exits (like subprocess.Popen
         # with start_new_session=True in Python).
         log INFO "Starting temp-tracker in background on port 9091"
-        nohup env CPU_POLL_INTERVAL=$DEFAULT_INTERVAL MEMORY_POLL_INTERVAL=$DEFAULT_INTERVAL SWAP_POLL_INTERVAL=$DEFAULT_INTERVAL DISK_POLL_INTERVAL=$DEFAULT_INTERVAL LOAD_POLL_INTERVAL=$DEFAULT_INTERVAL ./temp-tracker -port 9091 -interval $DEFAULT_INTERVAL > tracker.log 2>&1 &
+        log INFO "Database driver: $DB_DRIVER"
+        if test "$DB_DRIVER" = "postgres"
+            # Ensure the PostgreSQL container from docker-compose.yml is running.
+            # docker compose up -d is idempotent -- like Python's subprocess.run(["docker", "compose", "up", "-d"]).
+            log INFO "Starting PostgreSQL via docker compose"
+            docker compose up -d
+        end
+        nohup env CPU_POLL_INTERVAL=$DEFAULT_INTERVAL MEMORY_POLL_INTERVAL=$DEFAULT_INTERVAL SWAP_POLL_INTERVAL=$DEFAULT_INTERVAL DISK_POLL_INTERVAL=$DEFAULT_INTERVAL LOAD_POLL_INTERVAL=$DEFAULT_INTERVAL DB_DRIVER=$DB_DRIVER DATABASE_URL=$DATABASE_URL ./temp-tracker -port 9091 -interval $DEFAULT_INTERVAL > tracker.log 2>&1 &
         log INFO "Server PID: $last_pid"
         log INFO "Dashboard: http://localhost:9091"
     else

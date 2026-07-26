@@ -6,7 +6,7 @@ import (
 	"os"
 	"time"
 
-	"database/sql"
+	_ "github.com/jackc/pgx/v5/stdlib"
 	_ "modernc.org/sqlite"
 )
 
@@ -22,7 +22,8 @@ func main() {
 	days := flag.Int("days", 7, "Report window: look for spikes in the last N days")
 	baselineDays := flag.Int("baseline-days", 30, "Baseline window: calculate per-sensor average over the last N days")
 	deviation := flag.Float64("deviation", 10.0, "Spike threshold: degrees Celsius above the sensor's baseline average")
-	dbPath := flag.String("db", "temps.db", "Path to SQLite database (temps.db)")
+	dbDriver := flag.String("driver", os.Getenv("DB_DRIVER"), "Database driver: sqlite or postgres (also env DB_DRIVER)")
+	dbPath := flag.String("db", "", "SQLite database path, or Postgres connection string/DATABASE_URL (defaults: temps.db for sqlite, env DATABASE_URL or docker-compose DSN for postgres)")
 	format := flag.String("format", "table", "Output format: table, json, csv")
 	outputPath := flag.String("output", "-", "Output file path (- for stdout)")
 	verbose := flag.Bool("verbose", false, "Enable debug logging (also via LOG_LEVEL=DEBUG)")
@@ -37,12 +38,14 @@ func main() {
 	}
 	logger = newSpikeLogger(logLevel)
 
-	logger.info("spike-report starting (days=%d, baseline=%d, deviation=%.1f, db=%s, format=%s)",
-		*days, *baselineDays, *deviation, *dbPath, *format)
+	setDBDriver(*dbDriver)
 
-	// Open the SQLite database -- like Python's sqlite3.connect(db_path).
-	// sql.Open returns a *sql.DB which is a connection pool, not a single connection.
-	db, err := sql.Open("sqlite", *dbPath)
+	logger.info("spike-report starting (days=%d, baseline=%d, deviation=%.1f, driver=%s, db=%s, format=%s)",
+		*days, *baselineDays, *deviation, *dbDriver, *dbPath, *format)
+
+	// Open the database. sql.Open returns a *sql.DB which is a connection pool,
+	// not a single connection -- like Python's connection pool.
+	db, err := openReportDB(*dbDriver, *dbPath)
 	if err != nil {
 		logger.error("failed to open database: %v", err)
 		fmt.Fprintf(os.Stderr, "Failed to open database: %v\n", err)
@@ -55,7 +58,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Failed to connect to database: %v\n", err)
 		os.Exit(1)
 	}
-	logger.debug("database connection established: %s", *dbPath)
+	logger.debug("database connection established: driver=%s, spec=%s", *dbDriver, *dbPath)
 
 	// Load the America/Merida timezone for display -- like pytz.timezone("America/Merida").
 	// If the system doesn't have this timezone, fall back to UTC.

@@ -24,31 +24,34 @@
 ## Verified Commands
 - Build: `go build -o temp-tracker .`
 - Build & lint: `go vet ./...`
-- Run default: `./temp-tracker` (actual defaults from `main.go`: `-port 8080 -interval 60 -retain 8760`)
+- Run default (PostgreSQL): `DB_DRIVER=postgres ./temp-tracker` (or set in `.env`; falls back to docker-compose DSN `postgres://tracker:tracker@localhost:5432/sensors_temp?sslmode=disable`). Requires `docker compose up -d` first.
+- Run with SQLite (fallback): `DB_DRIVER=sqlite ./temp-tracker` (or omit the env var; uses `temps.db` as before)
 - Run custom: `./temp-tracker -port 9090 -interval 60 -retain 48`
+- Start PostgreSQL via Docker Compose: `docker compose up -d` (uses `docker-compose.yml` with image `postgres:17-alpine`, port 5432, user/password/database `tracker`/`tracker`/`sensors_temp`)
 - Debug logs: `LOG_LEVEL=DEBUG ./temp-tracker`
 - Quick verification: `go test ./...` (currently prints `no test files`)
-- Local helper script: `cleanup-and-build.fish` kills running `temp-tracker` processes, rebuilds, and logs to `cleanup-and-build.log`.
-- Install systemd service: `./setup-systemd-service.fish` (or `./setup-systemd-service.sh`) creates the unit file, enables it, and starts it immediately. Defaults to a user service (`~/.config/systemd/user/temp-tracker.service`) that starts on login with no sudo. Add `--system` to install a system service (`/etc/systemd/system/temp-tracker.service`) that starts at boot and uses sudo. Uses the same port/env settings as `cleanup-and-build.fish` (port 9091, 60s intervals).
+- Local helper script: `cleanup-and-build.fish` kills running `temp-tracker` processes, rebuilds, logs to `cleanup-and-build.log`. Defaults to PostgreSQL driver.
+- Install systemd service: `./setup-systemd-service.fish` (or `./setup-systemd-service.sh`) creates the unit file, enables it, and starts it immediately. Defaults to a user service (`~/.config/systemd/user/temp-tracker.service`) with PostgreSQL. Add `--system` to install a system service (`/etc/systemd/system/temp-tracker.service`) that starts at boot and uses sudo. Add `--sqlite` to use SQLite instead. Uses port 9091, 60s intervals.
 - Manage the service: `./service-manager.fish` / `./service-manager.sh` supports `status`, `start`, `stop`, `restart`, and `logs` (with optional `-f` to follow). Add `--system` to manage the system service.
 - View logs quickly: `./view-logs.fish` / `./view-logs.sh` shows the last 50 lines; add `-f` to follow and `--system` for the system service.
-- Spike report (on-demand analysis): `go build -o spike-report ./cmd/spike-report/ && ./spike-report` (defaults: last 7 days, 30-day baseline, +10C deviation; flags: `-days`, `-baseline-days`, `-deviation`, `-format table|json|csv`, `-output`, `-verbose` for debug logs, `LOG_LEVEL=DEBUG` env also works). Reports include per-sensor baseline stats (mean/min/max/stddev), severity classification (mild/moderate/high/severe), correlated system metrics (CPU, memory, swap, disk, load 1m/5m/15m), per-sensor summary table, and aggregate stats (max spike, avg deviation, top sensor).
+- Spike report (on-demand analysis): `go build -o spike-report ./cmd/spike-report/ && ./spike-report` (defaults: last 7 days, 30-day baseline, +10C deviation; flags: `-days`, `-baseline-days`, `-deviation`, `-driver`, `-db`, `-format table|json|csv`, `-output`, `-verbose` for debug logs, `LOG_LEVEL=DEBUG` env also works). Reports include per-sensor baseline stats (mean/min/max/stddev), severity classification (mild/moderate/high/severe), correlated system metrics (CPU, memory, swap, disk, load 1m/5m/15m), per-sensor summary table, and aggregate stats (max spike, avg deviation, top sensor). To run against PostgreSQL: add `-driver postgres` or set `DB_DRIVER=postgres`; the `-db` flag accepts a Postgres connection string (defaults to `DATABASE_URL` and the project's docker-compose values).
+- SQLite-to-PostgreSQL migration: `go build -o migrate-to-postgres ./cmd/migrate-to-postgres/ && ./migrate-to-postgres -sqlite temps.db` (defaults to `DATABASE_URL`, then docker-compose DSN; truncates target `readings` and bulk-copies rows with `COPY FROM`).
 - SQLite backup tool (separate): `cd sqlite-backup-tool && python backup.py` (configurable via `config.yaml`).
 
 ## Config Quirks That Cause Mistakes
-- `main.go` reads only these env vars at runtime: `LOG_LEVEL`, `CPU_POLL_INTERVAL`, `MEMORY_POLL_INTERVAL`, `SWAP_POLL_INTERVAL`, `DISK_POLL_INTERVAL`, `LOAD_POLL_INTERVAL`.
+- `main.go` reads these env vars at runtime: `LOG_LEVEL`, `CPU_POLL_INTERVAL`, `MEMORY_POLL_INTERVAL`, `SWAP_POLL_INTERVAL`, `DISK_POLL_INTERVAL`, `LOAD_POLL_INTERVAL`, `DB_DRIVER`, `DATABASE_URL`.
 - Polling intervals come from flags (`-interval` for temperature, `*_POLL_INTERVAL` env vars for system metrics).
 - **Retention is unified**: the `-retain` flag controls deletion for ALL metric types (temperature, CPU, memory, swap, disk, load). Default is 8760h (~1 year).
 - `.env.example` includes `PORT`, `TEMP_POLL_INTERVAL`, `TEMP_RETAIN_HOURS`, and `*_RETAIN_HOURS`, but those are not consumed by current Go code.
 - `static/config.json` is the active dashboard config; `static/config.default.json` is the reference. If sensors appear "missing" on the temperature chart, check `sensorFilter.enabled` and `includePatterns` in `config.json` -- the default config has filtering ON with `["Core", "acpitz"]`. Copy `config.default.json` to `config.json` to show all sensors.
 
 ## Architecture Snapshot
-- Entrypoint `main.go`: creates `SensorReader` (temperature via hwmon/thermal zones) + `SystemMetrics` (CPU/mem/swap/disk/load via gopsutil v3), opens SQLite with WAL mode + busy timeout + `SetMaxOpenConns(1)`, starts 6 goroutines (1 `Poller.Run` for temperature, 5 `RunMetricPoller` for system metrics), registers HTTP handlers, serves `static/`.
+- Entrypoint `main.go`: creates `SensorReader` (temperature via hwmon/thermal zones) + `SystemMetrics` (CPU/mem/swap/disk/load via gopsutil v3). Database backend is selected by `-db-driver` flag or `DB_DRIVER` env (`sqlite` or `postgres`; defaults to `sqlite` for backward compatibility, but the service and helper scripts use `postgres`). SQLite uses WAL mode + busy timeout + `SetMaxOpenConns(1)`; PostgreSQL uses the default `pgx` connection pool. Starts 6 goroutines (1 `Poller.Run` for temperature, 5 `RunMetricPoller` for system metrics), registers HTTP handlers, serves `static/`.
 - Two polling mechanisms: `Poller` struct (temperature) calls `store.Insert` + `store.Prune`; standalone `RunMetricPoller` (system metrics) calls `store.Insert` + `store.PruneByType`. Both read -> insert -> prune -> sleep in an infinite loop.
-- `Store` interface + `SQLiteStore` implementation with methods: `Insert`, `Query`/`QueryByRange` (temperature only, backward compat), `QueryByType`/`QueryByRangeAndType` (any metric), `QueryLatestPerSensor`/`QueryLatestByType`, `Prune`/`PruneByType`.
-- Data model: single `readings` table with `sensor`, `temp_c` (legacy value field), `metric_type`, `unit`, `created_at`. Metric identity is in `metric_type` + `unit`. Schema migration auto-adds `metric_type` and `unit` when missing.
+- `Store` interface + `SQLiteStore` / `PostgresStore` implementations with methods: `Insert`, `Query`/`QueryByRange` (temperature only, backward compat), `QueryByType`/`QueryByRangeAndType` (any metric), `QueryLatestPerSensor`/`QueryLatestByType`, `Prune`/`PruneByType`.
+- Data model: single `readings` table with `sensor`, `temp_c` (legacy value field), `metric_type`, `unit`, `created_at`. Metric identity is in `metric_type` + `unit`. SQLite schema migration auto-adds `metric_type` and `unit` when missing; PostgreSQL schema includes them from the start.
 - `MetricPoint` struct in `metrics.go` is the intermediate representation from system metric readers (_sensor_, _value_, _unit_) before insertion.
-- Time handling: `TimeConverter` interface + `MeridaTimeConverter`; DB stores UTC strings (`2006-01-02 15:04:05`); `ParseTimestampInput` tries RFC3339Nano, RFC3339, db format, then frontend formats (assumed Merida local); responses converted to `America/Merida`.
+- Time handling: `TimeConverter` interface + `MeridaTimeConverter`; SQLite stores UTC strings (`2006-01-02 15:04:05`), PostgreSQL stores `TIMESTAMPTZ` and formats it back to the same UTC string for responses; `ParseTimestampInput` tries RFC3339Nano, RFC3339, db format, then frontend formats (assumed Merida local); responses converted to `America/Merida`.
 
 ## CodeGraphContext (CGC)
 - Binary at `/home/lmex89/go/bin/codegraph` (not on PATH; use full path in scripts/configs).
