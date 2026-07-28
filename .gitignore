@@ -31,6 +31,7 @@ cleanup-and-build.log
 service-manager.log
 setup-systemd-service.log
 view-logs.log
+backup-db.log
 
 # SQLite runtime artifacts (shared memory + WAL, contain live data)
 *.db-shm
