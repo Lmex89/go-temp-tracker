@@ -123,21 +123,21 @@ func correlateMetrics(db *sql.DB, spikes []Spike, loc *time.Location) ([]ReportR
 
 	memByTime := make(map[string]float64)
 	for _, r := range memReadings {
-		if r.Sensor == "memory/percent" {
+		if r.Sensor == "memory/used_percent" {
 			memByTime[r.Timestamp.Format(time.RFC3339)] = r.Value
 		}
 	}
 
 	swapByTime := make(map[string]float64)
 	for _, r := range swapReadings {
-		if r.Sensor == "swap/percent" {
+		if r.Sensor == "swap/used_percent" {
 			swapByTime[r.Timestamp.Format(time.RFC3339)] = r.Value
 		}
 	}
 
 	diskByTime := make(map[string]float64)
 	for _, r := range diskReadings {
-		if r.Sensor == "disk/percent" {
+		if r.Sensor == "disk//" {
 			diskByTime[r.Timestamp.Format(time.RFC3339)] = r.Value
 		}
 	}

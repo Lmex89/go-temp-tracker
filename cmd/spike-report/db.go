@@ -16,13 +16,13 @@ var dbDriver string
 // SQL dialect. In Python you'd set a module-level constant.
 func setDBDriver(driver string) {
 	switch driver {
-	case "postgres":
+	case "postgres", "":
 		dbDriver = "postgres"
-	case "sqlite", "":
+	case "sqlite":
 		dbDriver = "sqlite"
 	default:
-		logger.warn("unknown driver %q, falling back to sqlite", driver)
-		dbDriver = "sqlite"
+		logger.warn("unknown driver %q, falling back to postgres", driver)
+		dbDriver = "postgres"
 	}
 }
 
@@ -32,7 +32,7 @@ func setDBDriver(driver string) {
 // project's docker-compose defaults.
 func openReportDB(driver, spec string) (*sql.DB, error) {
 	switch driver {
-	case "postgres":
+	case "postgres", "":
 		dsn := spec
 		if dsn == "" {
 			dsn = os.Getenv("DATABASE_URL")
