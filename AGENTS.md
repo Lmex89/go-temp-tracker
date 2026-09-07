@@ -69,3 +69,4 @@
 - All historical endpoints support `?hours=N` (relative, default 1) OR `?from=ISO&to=ISO` (absolute range).
 - `static/index.html` loads `/config.json` with in-code fallback defaults if fetch/parse fails.
 - Active dashboard settings live in `static/config.json` (not `static/config.default.json`). If sensors appear "missing", check `sensorFilter` first.
+- **Mobile-first responsive CSS**: base styles target mobile (stacked header, 2-column gauges, full-width inputs, 260px charts). Progressive enhancement breakpoints: 600px (tablet: horizontal header, 300px charts), 768px (desktop: 4-column gauges, 340px charts), 1200px (large: 380px charts). All colors, fonts (Orbitron, IBM Plex Mono), CRT effects, and animations preserved.
