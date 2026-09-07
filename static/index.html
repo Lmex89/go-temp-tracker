@@ -68,24 +68,24 @@ body::after {
   z-index: 9999;
 }
 
-/* Layout container */
+/* Layout container - mobile first */
 .container {
   position: relative;
   z-index: 1;
   max-width: 1400px;
   margin: 0 auto;
-  padding: 20px 24px;
+  padding: 12px;
 }
 
 /* ===================================================================
-   HEADER - Space mission style title panel
+   HEADER - Space mission style title panel (mobile first)
    =================================================================== */
 .header {
   display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: 24px;
-  padding-bottom: 16px;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
   border-bottom: 1px solid var(--border-subtle);
   position: relative;
 }
@@ -104,9 +104,9 @@ body::after {
 .header-left h1 {
   font-family: 'Orbitron', sans-serif;
   font-weight: 900;
-  font-size: 1.8rem;
+  font-size: 1.3rem;
   color: var(--text-primary);
-  letter-spacing: 3px;
+  letter-spacing: 2px;
   text-transform: uppercase;
   text-shadow: 0 0 10px rgba(0, 212, 255, 0.5);
   margin-bottom: 4px;
@@ -120,7 +120,7 @@ body::after {
 }
 
 .header-right {
-  text-align: right;
+  text-align: left;
 }
 
 .status-indicator {
@@ -148,14 +148,14 @@ body::after {
 }
 
 /* ===================================================================
-   CONTROL PANEL - Technical borders with decorative corners
+   CONTROL PANEL - Technical borders with decorative corners (mobile first)
    =================================================================== */
 .panel {
   background: var(--bg-secondary);
   border: 1px solid var(--border-subtle);
   border-radius: 0;
-  padding: 16px;
-  margin-bottom: 20px;
+  padding: 12px;
+  margin-bottom: 16px;
   position: relative;
 }
 
@@ -191,11 +191,11 @@ body::after {
 }
 
 /* ===================================================================
-   CONTROLS - Botones estilo terminal/retro
+   CONTROLS - Botones estilo terminal/retro (mobile first)
    =================================================================== */
 .controls {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   align-items: center;
   flex-wrap: wrap;
 }
@@ -211,6 +211,7 @@ body::after {
   color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 1px;
+  flex: 0 0 auto;
 }
 
 .controls input, .controls button {
@@ -224,7 +225,10 @@ body::after {
 }
 
 .controls input {
-  padding: 6px 10px;
+  padding: 8px 10px;
+  width: 100%;
+  min-width: 0;
+  flex: 1 1 100%;
 }
 
 .controls input:focus {
@@ -234,13 +238,15 @@ body::after {
 }
 
 .controls button {
-  padding: 7px 14px;
+  padding: 8px 12px;
   cursor: pointer;
   text-transform: uppercase;
   letter-spacing: 1px;
-  font-size: 0.7rem;
+  font-size: 0.65rem;
   position: relative;
   overflow: hidden;
+  flex: 1 1 auto;
+  min-width: 60px;
 }
 
 .controls button::before {
@@ -287,10 +293,10 @@ body::after {
 .error { color: var(--accent-red); font-size: 0.75rem; }
 
 /* ===================================================================
-   GAUGE ROW - Aircraft/spacecraft panel style gauges
+   GAUGE ROW - Aircraft/spacecraft panel style gauges (mobile first)
    =================================================================== */
 .gauge-section {
-  margin-bottom: 24px;
+  margin-bottom: 16px;
 }
 
 .gauge-row {
@@ -302,7 +308,7 @@ body::after {
 .gauge-frame {
   background: var(--bg-secondary);
   border: 1px solid var(--border-subtle);
-  padding: 6px;
+  padding: 8px 6px;
   position: relative;
   overflow: hidden;
 }
@@ -336,8 +342,8 @@ body::after {
 }
 
 .gauge-canvas {
-  width: 82px;
-  height: 58px;
+  width: 70px;
+  height: 50px;
 }
 
 .gauge-data {
@@ -351,7 +357,7 @@ body::after {
 
 .gauge-value {
   font-family: 'Orbitron', sans-serif;
-  font-size: 1rem;
+  font-size: 0.85rem;
   font-weight: 700;
   color: var(--text-primary);
   line-height: 1.1;
@@ -373,29 +379,30 @@ body::after {
 }
 
 /* ===================================================================
-   CHART SECTIONS - Technical monitor style chart panels
+   CHART SECTIONS - Technical monitor style chart panels (mobile first)
    =================================================================== */
 .chart-section {
-  margin-bottom: 24px;
+  margin-bottom: 16px;
 }
 
 .section-header {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 12px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin-bottom: 10px;
   padding: 0 4px;
 }
 
 .section-header h2 {
   font-family: 'Orbitron', sans-serif;
-  font-size: 0.9rem;
+  font-size: 0.8rem;
   color: var(--text-secondary);
   font-weight: 700;
-  letter-spacing: 2px;
+  letter-spacing: 1.5px;
   text-transform: uppercase;
   position: relative;
-  padding-left: 16px;
+  padding-left: 14px;
 }
 
 /* Decorative line before section title */
@@ -420,10 +427,10 @@ body::after {
 }
 
 .chart-container {
-  height: 340px;
+  height: 260px;
   background: var(--bg-secondary);
   border: 1px solid var(--border-subtle);
-  padding: 16px;
+  padding: 10px;
   position: relative;
 }
 
@@ -469,9 +476,60 @@ body::after {
 .gauge-frame:nth-child(3) { animation-delay: 0.3s; }
 .gauge-frame:nth-child(4) { animation-delay: 0.4s; }
 
-/* Responsive - mobile first */
-@media (min-width: 769px) {
-  .gauge-row { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+/* ===================================================================
+   TABLET - 600px+
+   =================================================================== */
+@media (min-width: 600px) {
+  .container { padding: 16px; }
+
+  .header {
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+    margin-bottom: 20px;
+    padding-bottom: 14px;
+  }
+
+  .header-right { text-align: right; }
+
+  .header-left h1 { font-size: 1.5rem; letter-spacing: 2.5px; }
+
+  .section-header {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .section-header h2 { font-size: 0.85rem; }
+
+  .chart-container { height: 300px; padding: 12px; }
+
+  .controls input { width: auto; flex: 0 1 auto; }
+
+  .controls button { flex: 0 0 auto; font-size: 0.7rem; }
+}
+
+/* ===================================================================
+   DESKTOP - 768px+
+   =================================================================== */
+@media (min-width: 768px) {
+  .container { padding: 20px 24px; }
+
+  .header { margin-bottom: 24px; padding-bottom: 16px; }
+
+  .header-left h1 { font-size: 1.8rem; letter-spacing: 3px; }
+
+  .panel { padding: 16px; margin-bottom: 20px; }
+
+  .gauge-section { margin-bottom: 24px; }
+
+  .gauge-row {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+  }
+
   .gauge-frame {
     padding: 4px 6px;
     min-height: 53px;
@@ -479,6 +537,7 @@ body::after {
     align-items: center;
     justify-content: center;
   }
+
   .gauge-wrapper {
     flex-direction: row;
     justify-content: center;
@@ -487,39 +546,44 @@ body::after {
     margin-top: 0;
     flex-wrap: nowrap;
   }
+
   .gauge-data {
     align-items: flex-start;
     margin-top: 0;
     line-height: 1;
     min-width: 0;
   }
-  /* Chart.js writes inline canvas size; !important keeps the gauge inside the card. */
+
   .gauge-canvas {
     width: 60px !important;
     height: 34px !important;
     flex: 0 0 60px;
   }
+
   .gauge-value { font-size: 1.05rem; }
+
   .gauge-label {
     font-size: 0.66rem;
     letter-spacing: 1px;
     white-space: nowrap;
   }
+
+  .chart-section { margin-bottom: 24px; }
+
+  .section-header h2 { font-size: 0.9rem; letter-spacing: 2px; padding-left: 16px; }
+
+  .chart-container { height: 340px; padding: 16px; }
+
+  .controls { gap: 8px; }
+
+  .controls button { padding: 7px 14px; }
 }
 
-@media (max-width: 768px) {
-  .container { padding: 12px; }
-  .header { flex-direction: column; gap: 12px; }
-  .header-left h1 { font-size: 1.4rem; }
-  .chart-container { height: 280px; }
-  .controls { gap: 6px; }
-}
-
-@media (max-width: 480px) {
-  .gauge-row { gap: 5px; }
-  .gauge-canvas { width: 74px; height: 53px; }
-  .gauge-value { font-size: 0.9rem; }
-  .section-header { flex-direction: column; align-items: flex-start; gap: 6px; }
+/* ===================================================================
+   LARGE DESKTOP - 1200px+
+   =================================================================== */
+@media (min-width: 1200px) {
+  .chart-container { height: 380px; }
 }
 </style>
 </head>
@@ -832,7 +896,6 @@ function createMetricChart(id, yLabel, unitSuffix) {
       },
     },
   });
-  chart.canvas.parentElement.style.height = "300px";
   metricCharts[id] = { chart, unitSuffix };
 }
 
