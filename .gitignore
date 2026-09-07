@@ -46,3 +46,6 @@ backups/
 # IDE/Editor
 .idea/
 .vscode/
+
+# Docker/Postgres runtime data
+data/
