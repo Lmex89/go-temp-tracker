@@ -27,7 +27,7 @@
 - Run default (PostgreSQL): `DB_DRIVER=postgres ./temp-tracker` (or set in `.env`; falls back to docker-compose DSN `postgres://tracker:tracker@localhost:5432/sensors_temp?sslmode=disable`). Requires `docker compose up -d` first.
 - Run with SQLite (fallback): `DB_DRIVER=sqlite ./temp-tracker` (or omit the env var; uses `temps.db` as before)
 - Run custom: `./temp-tracker -port 9090 -interval 60 -retain 48`
-- Start PostgreSQL via Docker Compose: `docker compose up -d` (uses `docker-compose.yml` with image `postgres:17-alpine`, port 5432, user/password/database `tracker`/`tracker`/`sensors_temp`)
+- Start PostgreSQL via Docker Compose: `docker compose up -d` (uses `docker-compose.yml` with image `postgres:17-alpine`, port 5432, user/password/database `tracker`/`tracker`/`sensors_temp`, named volume `pgdata`, resource limits: 1.0 CPU / 2G RAM)
 - Debug logs: `LOG_LEVEL=DEBUG ./temp-tracker`
 - Quick verification: `go test ./...` (currently prints `no test files`)
 - Local helper script: `cleanup-and-build.fish` kills running `temp-tracker` processes, rebuilds, logs to `cleanup-and-build.log`. Defaults to PostgreSQL driver.
@@ -37,7 +37,7 @@
 - Spike report (on-demand analysis): `go build -o spike-report ./cmd/spike-report/ && ./spike-report` (defaults: last 7 days, 30-day baseline, +10C deviation; flags: `-days`, `-baseline-days`, `-deviation`, `-driver`, `-db`, `-format table|json|csv`, `-output`, `-verbose` for debug logs, `LOG_LEVEL=DEBUG` env also works). Reports include per-sensor baseline stats (mean/min/max/stddev), severity classification (mild/moderate/high/severe), correlated system metrics (CPU, memory, swap, disk, load 1m/5m/15m), per-sensor summary table, and aggregate stats (max spike, avg deviation, top sensor). To run against PostgreSQL: add `-driver postgres` or set `DB_DRIVER=postgres`; the `-db` flag accepts a Postgres connection string (defaults to `DATABASE_URL` and the project's docker-compose values).
 - SQLite-to-PostgreSQL migration: `go build -o migrate-to-postgres ./cmd/migrate-to-postgres/ && ./migrate-to-postgres -sqlite temps.db` (defaults to `DATABASE_URL`, then docker-compose DSN; truncates target `readings` and bulk-copies rows with `COPY FROM`).
 - SQLite backup tool (separate): `cd sqlite-backup-tool && python backup.py` (configurable via `config.yaml`).
-- PostgreSQL backup: `./backup-db.sh` (dumps the `sensors_temp` database via `docker exec pg_dump`, gzip-compressed to `backups/<db>_<timestamp>.sql.gz`, auto-deletes backups older than 30 days).
+- PostgreSQL backup: `./backup-db.sh` / `./backup-db.fish` (dumps the `sensors_temp` database via `docker exec pg_dump`, gzip-compressed to `backups/<db>_<timestamp>.sql.gz`, auto-deletes backups older than 30 days).
 - PostgreSQL restore: `./restore-db.sh` (lists backups if no arg; or pass a `.sql.gz` path to restore -- drops/recreates the database, terminates active connections first).
 - Cron example (daily 02:00): `0 2 * * * /full/path/backup-db.sh >> /full/path/backups/cron.log 2>&1`
 
@@ -45,7 +45,7 @@
 - `main.go` reads these env vars at runtime: `LOG_LEVEL`, `CPU_POLL_INTERVAL`, `MEMORY_POLL_INTERVAL`, `SWAP_POLL_INTERVAL`, `DISK_POLL_INTERVAL`, `LOAD_POLL_INTERVAL`, `DB_DRIVER`, `DATABASE_URL`.
 - Polling intervals come from flags (`-interval` for temperature, `*_POLL_INTERVAL` env vars for system metrics).
 - **Retention is unified**: the `-retain` flag controls deletion for ALL metric types (temperature, CPU, memory, swap, disk, load). Default is 8760h (~1 year).
-- `.env.example` includes `PORT`, `TEMP_POLL_INTERVAL`, `TEMP_RETAIN_HOURS`, and `*_RETAIN_HOURS`, but those are not consumed by current Go code.
+- `.env.example` includes `PORT`, `TEMP_POLL_INTERVAL`, `TEMP_RETAIN_HOURS`, `*_RETAIN_HOURS`, `DB_DRIVER`, and `DATABASE_URL`. The `*_RETAIN_HOURS` and `TEMP_*` vars are not consumed by current Go code (retention is unified via `-retain` flag).
 - `static/config.json` is the active dashboard config; `static/config.default.json` is the reference. If sensors appear "missing" on the temperature chart, check `sensorFilter.enabled` and `includePatterns` in `config.json` -- the default config has filtering ON with `["Core", "acpitz"]`. Copy `config.default.json` to `config.json` to show all sensors.
 
 ## Architecture Snapshot
