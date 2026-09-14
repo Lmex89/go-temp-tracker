@@ -20,8 +20,9 @@
   },
 
   "chart": {
-    "lineTension": 0.1,
-    "pointRadius": 3,
+    "lineTension": 0.4,
+    "cubicInterpolationMode": "monotone",
+    "pointRadius": 0,
     "fillArea": true,
     "yAxisMin": null,
     "yAxisMax": null,
