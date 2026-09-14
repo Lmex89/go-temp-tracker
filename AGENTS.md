@@ -35,8 +35,8 @@
 - Manage the service: `./service-manager.fish` / `./service-manager.sh` supports `status`, `start`, `stop`, `restart`, and `logs` (with optional `-f` to follow). Add `--system` to manage the system service.
 - View logs quickly: `./view-logs.fish` / `./view-logs.sh` shows the last 50 lines; add `-f` to follow and `--system` for the system service.
 - Spike report (on-demand analysis): `go build -o spike-report ./cmd/spike-report/ && ./spike-report` (defaults: last 7 days, 30-day baseline, +10C deviation; flags: `-days`, `-baseline-days`, `-deviation`, `-driver`, `-db`, `-format table|json|csv`, `-output`, `-verbose` for debug logs, `LOG_LEVEL=DEBUG` env also works). Reports include per-sensor baseline stats (mean/min/max/stddev), severity classification (mild/moderate/high/severe), correlated system metrics (CPU, memory, swap, disk, load 1m/5m/15m), per-sensor summary table, and aggregate stats (max spike, avg deviation, top sensor). To run against PostgreSQL: add `-driver postgres` or set `DB_DRIVER=postgres`; the `-db` flag accepts a Postgres connection string (defaults to `DATABASE_URL` and the project's docker-compose values).
-- SQLite-to-PostgreSQL migration: `go build -o migrate-to-postgres ./cmd/migrate-to-postgres/ && ./migrate-to-postgres -sqlite temps.db` (defaults to `DATABASE_URL`, then docker-compose DSN; truncates target `readings` and bulk-copies rows with `COPY FROM`).
-- SQLite backup tool (separate): `cd sqlite-backup-tool && python backup.py` (configurable via `config.yaml`).
+- SQLite-to-PostgreSQL migration: `go build -o migrate-to-postgres ./cmd/migrate-to-postgres/ && ./migrate-to-postgres -sqlite temps.db` (flags: `-sqlite` source file, default `temps.db`; `-postgres` target URL; defaults to `DATABASE_URL`, then docker-compose DSN; truncates target `readings` with `TRUNCATE ... RESTART IDENTITY` and bulk-copies rows with `COPY FROM`).
+- SQLite backup tool (separate): `cd sqlite-backup-tool && python backup.py` (configurable via `config.yaml`; dry run: `python backup.py --dry-run --verbose`). It has its own `sqlite-backup-tool/AGENTS.md`.
 - PostgreSQL backup: `./backup-db.sh` / `./backup-db.fish` (dumps the `sensors_temp` database via `docker exec pg_dump`, gzip-compressed to `backups/<db>_<timestamp>.sql.gz`, auto-deletes backups older than 30 days).
 - PostgreSQL restore: `./restore-db.sh` (lists backups if no arg; or pass a `.sql.gz` path to restore -- drops/recreates the database, terminates active connections first).
 - Cron example (daily 02:00): `0 2 * * * /full/path/backup-db.sh >> /full/path/backups/cron.log 2>&1`
@@ -45,12 +45,13 @@
 - `main.go` reads these env vars at runtime: `LOG_LEVEL`, `CPU_POLL_INTERVAL`, `MEMORY_POLL_INTERVAL`, `SWAP_POLL_INTERVAL`, `DISK_POLL_INTERVAL`, `LOAD_POLL_INTERVAL`, `DB_DRIVER`, `DATABASE_URL`.
 - Polling intervals come from flags (`-interval` for temperature, `*_POLL_INTERVAL` env vars for system metrics).
 - **Retention is unified**: the `-retain` flag controls deletion for ALL metric types (temperature, CPU, memory, swap, disk, load). Default is 8760h (~1 year).
-- `.env.example` includes `PORT`, `TEMP_POLL_INTERVAL`, `TEMP_RETAIN_HOURS`, `*_RETAIN_HOURS`, `DB_DRIVER`, and `DATABASE_URL`. The `*_RETAIN_HOURS` and `TEMP_*` vars are not consumed by current Go code (retention is unified via `-retain` flag).
+- `.env.example` includes `PORT`, `TEMP_POLL_INTERVAL`, `TEMP_RETAIN_HOURS`, `*_RETAIN_HOURS`, `DB_DRIVER`, and `DATABASE_URL`. The `*_RETAIN_HOURS`, `TEMP_*`, and `PORT` vars are not consumed by current Go code (retention is unified via `-retain` flag; the HTTP port comes only from the `-port` flag, default 8080).
+- `getEnvInt` (in `main.go`) silently falls back to the default and logs a warning when a `*_POLL_INTERVAL` value is not a valid integer.
 - `static/config.json` is the active dashboard config; `static/config.default.json` is the reference. If sensors appear "missing" on the temperature chart, check `sensorFilter.enabled` and `includePatterns` in `config.json` -- the default config has filtering ON with `["Core", "acpitz"]`. Copy `config.default.json` to `config.json` to show all sensors.
 
 ## Architecture Snapshot
-- Entrypoint `main.go`: creates `SensorReader` (temperature via hwmon/thermal zones) + `SystemMetrics` (CPU/mem/swap/disk/load via gopsutil v3). Database backend is selected by `-db-driver` flag or `DB_DRIVER` env (`sqlite` or `postgres`; defaults to `sqlite` for backward compatibility, but the service and helper scripts use `postgres`). SQLite uses WAL mode + busy timeout + `SetMaxOpenConns(1)`; PostgreSQL uses the default `pgx` connection pool. Starts 6 goroutines (1 `Poller.Run` for temperature, 5 `RunMetricPoller` for system metrics), registers HTTP handlers, serves `static/`.
-- Two polling mechanisms: `Poller` struct (temperature) calls `store.Insert` + `store.Prune`; standalone `RunMetricPoller` (system metrics) calls `store.Insert` + `store.PruneByType`. Both read -> insert -> prune -> sleep in an infinite loop.
+- Entrypoint `main.go`: creates `SensorReader` (temperature via hwmon/thermal zones) + `SystemMetrics` (CPU/mem/swap/disk/load via gopsutil v3). Database backend is selected by `-db-driver` flag or `DB_DRIVER` env (`sqlite` or `postgres`; defaults to `sqlite` for backward compatibility, but the service and helper scripts use `postgres`). SQLite uses WAL mode + busy timeout (`db.go`) and forces `SetMaxOpenConns(1)`/`SetMaxIdleConns(1)` in `main.go`; PostgreSQL uses the default `pgx` connection pool. Starts 6 goroutines (1 `Poller.Run` for temperature, 5 `RunMetricPoller` for system metrics), registers HTTP handlers, serves `static/`.
+- Two polling mechanisms: `Poller` struct (temperature) calls `store.Insert` + `store.Prune`; standalone `RunMetricPoller` (system metrics) calls `store.Insert` + `store.PruneByType`. Both read -> insert -> prune -> sleep in an infinite loop. The 6 goroutines are staggered by 3s each (`main.go`) to avoid a thundering herd against SQLite's single writer.
 - `Store` interface + `SQLiteStore` / `PostgresStore` implementations with methods: `Insert`, `Query`/`QueryByRange` (temperature only, backward compat), `QueryByType`/`QueryByRangeAndType` (any metric), `QueryLatestPerSensor`/`QueryLatestByType`, `Prune`/`PruneByType`. **PostgresStore uses recursive CTE "loose index scan"** for `QueryLatestByType`/`QueryLatestPerSensor` to avoid full table scans -- the query hops through the partial index `(sensor, id DESC) WHERE metric_type = '...'` to find the latest row per sensor in ~2-5ms instead of scanning all 250K-480K rows (which took 1-5 seconds with `MAX(id) GROUP BY`). `QueryLatestPerSensor` delegates to `QueryLatestByType(db, "temperature")`.
 - Data model: single `readings` table with `sensor`, `temp_c` (legacy value field), `metric_type`, `unit`, `created_at`. Metric identity is in `metric_type` + `unit`. SQLite schema migration auto-adds `metric_type` and `unit` when missing; PostgreSQL schema includes them from the start.
 - `MetricPoint` struct in `metrics.go` is the intermediate representation from system metric readers (_sensor_, _value_, _unit_) before insertion.
@@ -59,10 +60,15 @@
 ## CodeGraphContext (CGC)
 - Binary at `/home/lmex89/go/bin/codegraph` (not on PATH; use full path in scripts/configs).
 - Index this repo: `codegraph index .`
-- MCP server runs automatically via opencode config (`codegraph` server in `~/.config/opencode/opencode.json`).
-- Ignore patterns in `.codegraphignore` at repo root.
+- MCP server runs automatically via opencode config (`codegraph` server in `~/.config/opencode/opencode.json`); the repo also ships a project-level `.mcp.json` with the same server.
+- Ignore patterns in `.codegraphignore` at repo root (excludes `data/`, `temps.db*`, `*.log`, and built binaries `temp-tracker`/`spike-report`).
 - Use `codegraph help` to see all CLI commands (analyze, find, list, etc.).
 - Use `codegraph find-callers . --symbol <name>` or `codegraph find-callees . --symbol <name>` for graph queries.
+
+## Skills
+- Installed skills live in `.agents/skills/` and are tracked (source repo + hash) in `skills-lock.json`. Load one with the `skill` tool when the task matches.
+- Relevant here: `golang-patterns` and `golang-testing` (Go code/tests), `bash-defensive-patterns` (the `*.sh` helpers), `frontend-design` / `accessibility` / `seo` (the `static/` dashboard).
+- There are currently no `*_test.go` files (`go test ./...` prints `no test files`); use the `golang-testing` skill when asked to add tests.
 
 ## API/Dashboard Notes
 - Historical endpoints exist for `temps`, `cpu`, `memory`, `swap`, `disk`, `load`; current-value endpoints exist under `/api/current/*`.
