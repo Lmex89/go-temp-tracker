@@ -98,6 +98,7 @@ func handleCurrent(store Store, db *sql.DB) http.HandlerFunc {
 // handleMetricByType returns an HTTP handler for querying historical data of a specific metric type.
 // This is a generic factory -- used for cpu, memory, disk, load, swap.
 // In Python: def make_metric_handler(metric_type): return lambda request: ...
+// For CPU metrics, supports ?view=total|per-core|both to filter by sensor type.
 func handleMetricByType(store Store, db *sql.DB, metricType string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
@@ -145,10 +146,49 @@ func handleMetricByType(store Store, db *sql.DB, metricType string) http.Handler
 			readings = store.QueryByType(db, metricType, hours)
 		}
 
+		// For CPU metrics, apply view filter if specified.
+		// view=total: only cpu/total sensor
+		// view=per-core: only cpu/Core N sensors
+		// view=both or invalid/missing: all sensors (backward compat)
+		if metricType == "cpu" {
+			view := q.Get("view")
+			readings = filterCPUReadingsByView(readings, view)
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(readings); err != nil {
 			Logger.Error("Failed to encode JSON response: %v", err)
 		}
+	}
+}
+
+// filterCPUReadingsByView filters CPU readings based on the view parameter.
+// This is like Python's list comprehension with a conditional filter.
+// view=total keeps only cpu/total, view=per-core keeps only cpu/Core N,
+// anything else (including empty/invalid) returns all readings unchanged.
+func filterCPUReadingsByView(readings []Reading, view string) []Reading {
+	switch view {
+	case "total":
+		// Keep only the total sensor.
+		filtered := make([]Reading, 0, 1)
+		for _, r := range readings {
+			if r.Sensor == "cpu/total" {
+				filtered = append(filtered, r)
+			}
+		}
+		return filtered
+	case "per-core":
+		// Keep only per-core sensors (cpu/Core 0, cpu/Core 1, etc.).
+		filtered := make([]Reading, 0, len(readings))
+		for _, r := range readings {
+			if strings.HasPrefix(r.Sensor, "cpu/Core ") {
+				filtered = append(filtered, r)
+			}
+		}
+		return filtered
+	default:
+		// view=both, empty, or invalid: return all readings unchanged.
+		return readings
 	}
 }
 
