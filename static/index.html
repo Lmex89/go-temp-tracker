@@ -426,6 +426,64 @@ body::after {
   letter-spacing: 0.5px;
 }
 
+.cpu-view-toggle {
+  display: flex;
+  gap: 0;
+  margin: 12px 0 8px 0;
+  border: 1px solid var(--border-glow);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--bg-secondary);
+  max-width: fit-content;
+}
+
+.cpu-view-toggle .view-btn {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.75rem;
+  padding: 8px 16px;
+  background: transparent;
+  color: var(--text-secondary);
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  letter-spacing: 0.5px;
+  position: relative;
+}
+
+.cpu-view-toggle .view-btn:not(:last-child) {
+  border-right: 1px solid var(--border-glow);
+}
+
+.cpu-view-toggle .view-btn:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.cpu-view-toggle .view-btn.active {
+  background: var(--accent-cyan);
+  color: var(--bg-primary);
+  font-weight: 600;
+}
+
+.cpu-view-toggle .view-btn.active:hover {
+  background: var(--accent-cyan);
+}
+
+/* Mobile: ensure buttons are touch-friendly (min 44px height) */
+@media (max-width: 599px) {
+  .cpu-view-toggle {
+    width: 100%;
+    max-width: 100%;
+  }
+  
+  .cpu-view-toggle .view-btn {
+    flex: 1;
+    padding: 10px 12px;
+    font-size: 0.8rem;
+    min-height: 44px;
+  }
+}
+
 .chart-container {
   height: 260px;
   background: var(--bg-secondary);
@@ -687,6 +745,11 @@ body::after {
       <h2>CPU Usage</h2>
       <span class="current-label" id="cpu-current">Current: --</span>
     </div>
+    <div class="cpu-view-toggle" id="cpu-view-toggle">
+      <button class="view-btn" data-view="per-core" title="Show individual CPU cores">Per-Core</button>
+      <button class="view-btn" data-view="average" title="Show average CPU usage">Average</button>
+      <button class="view-btn" data-view="both" title="Show all CPU data">Both</button>
+    </div>
     <div class="chart-container"><canvas id="chart-cpu"></canvas></div>
   </div>
 
@@ -724,6 +787,7 @@ const defaultConfig = {
   sensorFilter: { enabled: false, includePatterns: [] },
   gauge: { cpuMax: 100, ramMax: 100, swapMax: 100, diskMax: 100 },
   gaugeRefreshMs: { cpu: 60000, ram: 60000, swap: 60000, disk: 60000 },
+  cpuChart: { defaultView: "average" },
 };
 
 let config = defaultConfig;
@@ -975,7 +1039,17 @@ function setRangeLabel(label) { activeRangeLabel.textContent = label; }
 function apiUrlForMetric(metricEndpoint) {
   const bounds = currentRangeBounds();
   if (!bounds.from || !bounds.to) return null;
-  return `/api/${metricEndpoint}?from=${encodeURIComponent(new Date(bounds.from).toISOString())}&to=${encodeURIComponent(new Date(bounds.to).toISOString())}`;
+  let url = `/api/${metricEndpoint}?from=${encodeURIComponent(new Date(bounds.from).toISOString())}&to=${encodeURIComponent(new Date(bounds.to).toISOString())}`;
+  
+  // Add view parameter for CPU metrics
+  if (metricEndpoint === 'cpu') {
+    const viewMode = getCPUViewMode();
+    // Map UI "average" to API "total"
+    const apiViewMode = viewMode === 'average' ? 'total' : viewMode;
+    url += `&view=${apiViewMode}`;
+  }
+  
+  return url;
 }
 
 function loadAllCharts() {
@@ -1074,6 +1148,75 @@ function fetchCurrentTemp() {
 }
 
 // =============================================================================
+// CPU VIEW MODE
+// =============================================================================
+const CPU_VIEW_MODES = ['per-core', 'average', 'both'];
+const CPU_VIEW_STORAGE_KEY = 'cpuViewMode';
+
+function getCPUViewMode() {
+  // Try localStorage first
+  try {
+    const stored = localStorage.getItem(CPU_VIEW_STORAGE_KEY);
+    if (stored && CPU_VIEW_MODES.includes(stored)) {
+      return stored;
+    } else if (stored) {
+      console.warn(`[CPU View] Invalid value in localStorage: "${stored}". Falling back to config default.`);
+    }
+  } catch (e) {
+    console.warn('[CPU View] Cannot access localStorage:', e);
+  }
+
+  // Fall back to config default
+  const configDefault = config.cpuChart?.defaultView;
+  if (configDefault && CPU_VIEW_MODES.includes(configDefault)) {
+    return configDefault;
+  } else if (configDefault) {
+    console.warn(`[CPU View] Invalid config default: "${configDefault}". Falling back to "average".`);
+  }
+
+  // Hardcoded fallback
+  return 'average';
+}
+
+function setCPUViewMode(mode) {
+  if (!CPU_VIEW_MODES.includes(mode)) {
+    console.error(`[CPU View] Invalid mode: "${mode}"`);
+    return;
+  }
+
+  try {
+    localStorage.setItem(CPU_VIEW_STORAGE_KEY, mode);
+  } catch (e) {
+    console.warn('[CPU View] Cannot write to localStorage:', e);
+  }
+
+  // Update button active states
+  document.querySelectorAll('#cpu-view-toggle .view-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.view === mode);
+  });
+
+  // Reload the CPU chart with the new view mode
+  const url = apiUrlForMetric('cpu');
+  if (url) {
+    loadMetricData('chart-cpu', url);
+  }
+}
+
+function initCPUViewToggle() {
+  const currentMode = getCPUViewMode();
+  
+  // Set active button
+  document.querySelectorAll('#cpu-view-toggle .view-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.view === currentMode);
+    
+    // Add click handler
+    btn.addEventListener('click', () => {
+      setCPUViewMode(btn.dataset.view);
+    });
+  });
+}
+
+// =============================================================================
 // EVENT HANDLERS
 // =============================================================================
 function setPresetRange(rangeKey) {
@@ -1115,6 +1258,7 @@ async function initialize() {
   createMetricChart('chart-load', 'Load Average', '');
 
   setActivePresetButton(state.preset);
+  initCPUViewToggle();
   loadAllCharts();
   fetchCurrentTemp();
   fetchGaugeCPUFetch();

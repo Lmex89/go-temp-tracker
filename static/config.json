@@ -61,5 +61,10 @@
   "sensorFilter": {
     "enabled": true,
     "includePatterns": ["Core", "acpitz"]
+  },
+
+  "cpuChart": {
+    "_comment": "CPU chart view mode: 'per-core' (individual cores), 'average' (total CPU), or 'both' (all data)",
+    "defaultView": "average"
   }
 }
