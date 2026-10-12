@@ -69,7 +69,7 @@ set -g POSTGRES_USER "tracker"
 set -g POSTGRES_PASSWORD "tracker"
 set -g POSTGRES_DB "sensors_temp"
 set -g DB_SERVICE "postgres"
-set -g RETENTION_DAYS 30
+set -g RETENTION_DAYS 3
 
 # ============================================================
 # Leveled logger -- identical pattern across all *.fish scripts

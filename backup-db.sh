@@ -67,7 +67,7 @@ BACKUP_DIR="${SCRIPT_DIR}/backups"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 FILENAME="${POSTGRES_DB}_${TIMESTAMP}.sql.gz"
 OUTPUT_PATH="${BACKUP_DIR}/${FILENAME}"
-RETENTION_DAYS=30
+RETENTION_DAYS=3
 
 # mkdir -p -> create directory (and parents) if it doesn't exist;
 #            no error if it already exists.  Like os.makedirs(..., exist_ok=True)

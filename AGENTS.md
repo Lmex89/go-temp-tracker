@@ -76,3 +76,17 @@
 - `static/index.html` loads `/config.json` with in-code fallback defaults if fetch/parse fails.
 - Active dashboard settings live in `static/config.json` (not `static/config.default.json`). If sensors appear "missing", check `sensorFilter` first.
 - **Mobile-first responsive CSS**: base styles target mobile (stacked header, 2-column gauges, full-width inputs, 260px charts). Progressive enhancement breakpoints: 600px (tablet: horizontal header, 300px charts), 768px (desktop: 4-column gauges, 340px charts), 1200px (large: 380px charts). All colors, fonts (Orbitron, IBM Plex Mono), CRT effects, and animations preserved.
+
+## Agent skills
+
+### Issue tracker
+
+Issues are tracked in GitHub Issues at Lmex89/go-temp-tracker. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Uses the five canonical triage labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context layout: one `GLOSSARY.md` and one `docs/adr/` at the repo root. See `docs/agents/domain.md`.
