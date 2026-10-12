@@ -972,15 +972,38 @@ function loadMetricData(chartId, apiUrl, sensorFilter) {
       const palette = config.colors.palette;
       const filtered = sensorFilter ? data.filter(d => sensorFilter.includes(d.sensor)) : data;
       const allSensors = [...new Set(filtered.map(d => d.sensor))];
+      
+      // Determine if we're in "Both" mode for CPU chart
+      const isCPUBoth = chartId === 'chart-cpu' && getCPUViewMode() === 'both';
+      
       const datasets = allSensors.map((sensor, i) => {
         const points = filtered.filter(d => d.sensor === sensor);
         const color = palette[i % palette.length];
+        
+        // Apply visual hierarchy for CPU chart in "Both" mode
+        let borderWidth = 2;
+        let borderColor = color;
+        let fill = config.chart.fillArea || false;
+        
+        if (isCPUBoth) {
+          if (sensor === 'cpu/total') {
+            // Total CPU line: thick and prominent
+            borderWidth = 3;
+            // borderColor stays as-is (full opacity)
+          } else if (sensor.startsWith('cpu/Core')) {
+            // Per-core lines: thin and semi-transparent
+            borderWidth = 1;
+            borderColor = color + '4D'; // 4D hex = 77 decimal = ~30% opacity
+            fill = false; // Disable fill for per-core lines in Both mode
+          }
+        }
+        
         return {
           label: sensor,
           data: points.map(p => ({ x: new Date(p.created_at).getTime(), y: p.temp_c })),
-          borderColor: color,
+          borderColor: borderColor,
           backgroundColor: color + "22",
-          fill: config.chart.fillArea || false,
+          fill: fill,
           tension: config.chart.lineTension,
           cubicInterpolationMode: config.chart.cubicInterpolationMode || "monotone",
           pointRadius: config.chart.pointRadius,
@@ -988,7 +1011,7 @@ function loadMetricData(chartId, apiUrl, sensorFilter) {
           pointBackgroundColor: color,
           pointBorderColor: "#050a15",
           pointBorderWidth: 2,
-          borderWidth: 2,
+          borderWidth: borderWidth,
         };
       });
       mc.chart.data.datasets = datasets;
