@@ -8,7 +8,7 @@
 #   2. Locates the running postgres container through docker compose.
 #   3. Runs pg_dump inside the container and pipes the output through gzip.
 #   4. Saves the compressed dump to ./backups/<db>_<YYYYMMDD_HHMMSS>.sql.gz
-#   5. Deletes backups older than RETENTION_DAYS (default 30).
+#   5. Deletes backups older than RETENTION_DAYS (hardcoded 3).
 #
 # USAGE
 #   ./backup-db.sh
@@ -106,7 +106,7 @@ fi
 
 # -- Retention cleanup ---------------------------------------------------------
 # find ... -mtime +N -delete removes files modified more than N days ago.
-# Think of it as: Path.glob("*.sql.gz") filtered by mtime > now - 30 days.
+# Think of it as: Path.glob("*.sql.gz") filtered by mtime > now - 3 days (RETENTION_DAYS).
 DELETED_COUNT=0
 while IFS= read -r old_file; do
   log_debug "Removing expired backup: $(basename "$old_file")"

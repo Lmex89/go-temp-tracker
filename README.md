@@ -7,15 +7,15 @@ A lightweight Go application that monitors CPU temperatures, system metrics (CPU
 - **Temperature sensors**: Reads from all available `/sys/class/thermal/thermal_zone*` and `/sys/class/hwmon/hwmon*` sensors
 - **System metrics**: CPU usage per core, RAM usage, swap usage, disk usage, and load averages via gopsutil v3
 - **Gauges**: Semicircular visual indicators for CPU, RAM, Swap, and Disk at a glance
-- **Historical data**: Stored in PostgreSQL (default) or SQLite (`temps.db` fallback)
-- **Auto-pruning**: Configurable retention per metric type (default 1 year for all metrics)
+- **Historical data**: Stored in PostgreSQL (default for the service scripts) or SQLite (binary default; `temps.db` fallback)
+- **Auto-pruning**: Uniform retention for all metric types via the `-retain` flag (default 1 year; the `*_RETAIN_HOURS` vars in `.env.example` are not consumed by the code)
 - **REST API**: Query historical data by metric type with relative hours or absolute date range
 - **Interactive dashboard**: Multiple Chart.js line charts with zoom/pan, stacked vertically
 
 ## Requirements
 
 - Linux (reads `/proc` and `/sys` for system metrics)
-- Go 1.21+
+- Go 1.25+
 - Docker (for PostgreSQL backend)
 - PostgreSQL 17+ (via `docker compose up -d`)
 
@@ -26,14 +26,14 @@ git clone <repo-url> sensors-temp
 cd sensors-temp
 go build -o temp-tracker .
 
-# Start PostgreSQL (required for default backend)
+# Start PostgreSQL (required when DB_DRIVER=postgres)
 docker compose up -d
 ```
 
 ## Usage
 
 ```bash
-# Run with PostgreSQL (default)
+# Run with PostgreSQL (default for helper scripts; the binary defaults to sqlite)
 DB_DRIVER=postgres ./temp-tracker -port 9091
 
 # Run with SQLite (fallback, no Docker needed)
@@ -147,7 +147,7 @@ tmux new -s temp-tracker
 The backup script:
 - Runs `pg_dump` inside the `sensors-temp-db` Docker container
 - Compresses to `backups/<database>_<timestamp>.sql.gz`
-- Auto-deletes backups older than 30 days
+- Auto-deletes backups older than 3 days (`RETENTION_DAYS` hardcoded in both scripts)
 
 ### Scheduled backup (cron)
 
@@ -216,6 +216,7 @@ All endpoints support `?hours=N` (relative) or `?from=ISO&to=ISO` (absolute rang
 | `GET /api/cpu` | `[]Reading` | CPU usage per core + total |
 | `GET /api/memory` | `[]Reading` | Memory usage (used_percent, total/used/free bytes) |
 | `GET /api/swap` | `[]Reading` | Swap usage (used_percent, total/used/free bytes) |
+| `GET /api/disk` | `[]Reading` | Disk usage (root partition, gauge only) |
 | `GET /api/load` | `[]Reading` | Load averages (1m, 5m, 15m) |
 
 ### Current values

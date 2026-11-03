@@ -1,17 +1,16 @@
 # Sensor Temperature Tracker - Agent Notes
 
 ## Tool preference MANDATORY (non-negotiable)
-**ALWAYS use codegraph_* tools FIRST for all code search and navigation.** This includes:
-- `codegraph_find_symbol` - Find function/struct definitions
-- `codegraph_context_for_task` - Get relevant context for a task
-- `codegraph_search_symbols` - Search symbol names and signatures
-- `codegraph_find_callers` / `codegraph_find_callees` - Trace call chains
-- `codegraph_trace_dependencies` - Find dependency chains
-- `codegraph_search_semantic` - Semantic code search
+**ALWAYS use codegraph tools FIRST for all code search and navigation.** They are configured via `CODEGRAPH_MCP_TOOLS` in the repo's `.mcp.json` (enabling: `explore`, `node`, `search`, `callers`, `callees`, `impact`, `files`, `status`):
+- `codegraph_explore` — primary tool: verbatim source + call paths + blast radius from a natural-language question or symbol names. ONE call usually answers the whole question.
+- `codegraph_callees` — list functions that a symbol calls.
+- `codegraph_impact` — list symbols affected by changing a symbol (use before refactors).
+- `codegraph_status` — index health check.
 
 **ONLY fall back to built-in tools (grep, read, glob) when codegraph tools cannot satisfy the query.** Never use grep/read as the first choice for code exploration.
 
 ## Non-negotiables
+- **Language**: All agent responses, reports, and documentation MUST be in Spanish for this repository. This applies to all skills including `improve-codebase-architecture`, `code-review`, `ponytail-review`, and any other agent output. Code comments and identifiers remain in English (ASCII only), but explanations, suggestions, and reports are in Spanish.
 - Do not delete or truncate `temps.db` (or `temps.db-shm` / `temps.db-wal` while app is running). Schema migration is automatic in `db.go`; data loss is irreversible.
 - Keep code/comments ASCII only; no emojis in code, logs, strings, or comments.
 - For Go edits, keep the existing teaching style comments for Python developers (compare Go behavior to Python where helpful).
@@ -29,7 +28,7 @@
 - Run custom: `./temp-tracker -port 9090 -interval 60 -retain 48`
 - Start PostgreSQL via Docker Compose: `docker compose up -d` (uses `docker-compose.yml` with image `postgres:17-alpine`, port 5432, user/password/database `tracker`/`tracker`/`sensors_temp`, named volume `pgdata`, resource limits: 1.0 CPU / 2G RAM)
 - Debug logs: `LOG_LEVEL=DEBUG ./temp-tracker`
-- Quick verification: `go test ./...` (currently prints `no test files`)
+- Quick verification: `go test ./...` (runs `handler_test.go` table-driven tests)
 - Local helper script: `cleanup-and-build.fish` kills running `temp-tracker` processes, rebuilds, logs to `cleanup-and-build.log`. Defaults to PostgreSQL driver.
 - Install systemd service: `./setup-systemd-service.fish` (or `./setup-systemd-service.sh`) creates the unit file, enables it, and starts it immediately. Defaults to a user service (`~/.config/systemd/user/temp-tracker.service`) with PostgreSQL. Add `--system` to install a system service (`/etc/systemd/system/temp-tracker.service`) that starts at boot and uses sudo. Add `--sqlite` to use SQLite instead. Uses port 9091, 60s intervals.
 - Manage the service: `./service-manager.fish` / `./service-manager.sh` supports `status`, `start`, `stop`, `restart`, and `logs` (with optional `-f` to follow). Add `--system` to manage the system service.
@@ -37,7 +36,7 @@
 - Spike report (on-demand analysis): `go build -o spike-report ./cmd/spike-report/ && ./spike-report` (defaults: last 7 days, 30-day baseline, +10C deviation; flags: `-days`, `-baseline-days`, `-deviation`, `-driver`, `-db`, `-format table|json|csv`, `-output`, `-verbose` for debug logs, `LOG_LEVEL=DEBUG` env also works). Reports include per-sensor baseline stats (mean/min/max/stddev), severity classification (mild/moderate/high/severe), correlated system metrics (CPU, memory, swap, disk, load 1m/5m/15m), per-sensor summary table, and aggregate stats (max spike, avg deviation, top sensor). To run against PostgreSQL: add `-driver postgres` or set `DB_DRIVER=postgres`; the `-db` flag accepts a Postgres connection string (defaults to `DATABASE_URL` and the project's docker-compose values).
 - SQLite-to-PostgreSQL migration: `go build -o migrate-to-postgres ./cmd/migrate-to-postgres/ && ./migrate-to-postgres -sqlite temps.db` (flags: `-sqlite` source file, default `temps.db`; `-postgres` target URL; defaults to `DATABASE_URL`, then docker-compose DSN; truncates target `readings` with `TRUNCATE ... RESTART IDENTITY` and bulk-copies rows with `COPY FROM`).
 - SQLite backup tool (separate): `cd sqlite-backup-tool && python backup.py` (configurable via `config.yaml`; dry run: `python backup.py --dry-run --verbose`). It has its own `sqlite-backup-tool/AGENTS.md`.
-- PostgreSQL backup: `./backup-db.sh` / `./backup-db.fish` (dumps the `sensors_temp` database via `docker exec pg_dump`, gzip-compressed to `backups/<db>_<timestamp>.sql.gz`, auto-deletes backups older than 30 days).
+- PostgreSQL backup: `./backup-db.sh` / `./backup-db.fish` (dumps the `sensors_temp` database via `docker exec pg_dump`, gzip-compressed to `backups/<db>_<timestamp>.sql.gz`, auto-deletes backups older than `RETENTION_DAYS` (3 days, hardcoded in both scripts).
 - PostgreSQL restore: `./restore-db.sh` (lists backups if no arg; or pass a `.sql.gz` path to restore -- drops/recreates the database, terminates active connections first).
 - Cron example (daily 02:00): `0 2 * * * /full/path/backup-db.sh >> /full/path/backups/cron.log 2>&1`
 
@@ -58,23 +57,20 @@
 - Time handling: `TimeConverter` interface + `MeridaTimeConverter`; SQLite stores UTC strings (`2006-01-02 15:04:05`), PostgreSQL stores `TIMESTAMPTZ` and formats it back to the same UTC string for responses; `ParseTimestampInput` tries RFC3339Nano, RFC3339, db format, then frontend formats (assumed Merida local); responses converted to `America/Merida`.
 
 ## CodeGraphContext (CGC)
-- Binary at `/home/lmex89/go/bin/codegraph` (not on PATH; use full path in scripts/configs).
-- Index this repo: `codegraph index .`
-- MCP server runs automatically via opencode config (`codegraph` server in `~/.config/opencode/opencode.json`); the repo also ships a project-level `.mcp.json` with the same server.
-- Ignore patterns in `.codegraphignore` at repo root (excludes `data/`, `temps.db*`, `*.log`, and built binaries `temp-tracker`/`spike-report`).
-- Use `codegraph help` to see all CLI commands (analyze, find, list, etc.).
-- Use `codegraph find-callers . --symbol <name>` or `codegraph find-callees . --symbol <name>` for graph queries.
+- Binary at `/home/lmex89/.local/bin/codegraph`, served over MCP by the repo's `.mcp.json` (also registered in `~/.config/opencode/opencode.json`).
+- Re-index the repo with `codegraph index .`. Ignore patterns live in `.codegraphignore` at repo root (excludes `data/`, `temps.db*`, `*.log`, and built binaries `temp-tracker`/`spike-report`).
+- `codegraph help` lists all CLI commands (analyze, find, list, etc.).
 
 ## Skills
 - Installed skills live in `.agents/skills/` and are tracked (source repo + hash) in `skills-lock.json`. Load one with the `skill` tool when the task matches.
 - Relevant here: `golang-patterns` and `golang-testing` (Go code/tests), `bash-defensive-patterns` (the `*.sh` helpers), `frontend-design` / `accessibility` / `seo` (the `static/` dashboard).
-- There are currently no `*_test.go` files (`go test ./...` prints `no test files`); use the `golang-testing` skill when asked to add tests.
+- Tests live in `handler_test.go`: table-driven integration tests for the `/api/cpu` endpoint using `httptest` + a SQLite store. **CARE: they use the real `temps.db`** -- `InitDB()` hardcodes `temps.db` and `seedCPUData` inserts `cpu/*` rows without cleanup, so `go test ./...` appends test rows to the production database. Use the `golang-testing` skill when adding more tests.
 
 ## API/Dashboard Notes
 - Historical endpoints exist for `temps`, `cpu`, `memory`, `swap`, `disk`, `load`; current-value endpoints exist under `/api/current/*`.
 - All historical endpoints support `?hours=N` (relative, default 1) OR `?from=ISO&to=ISO` (absolute range).
 - `static/index.html` loads `/config.json` with in-code fallback defaults if fetch/parse fails.
-- Active dashboard settings live in `static/config.json` (not `static/config.default.json`). If sensors appear "missing", check `sensorFilter` first.
+- Active dashboard settings live in `static/config.json` (not `static/config.default.json`); sensor filtering is covered in the Config Quirks section above.
 - **Mobile-first responsive CSS**: base styles target mobile (stacked header, 2-column gauges, full-width inputs, 260px charts). Progressive enhancement breakpoints: 600px (tablet: horizontal header, 300px charts), 768px (desktop: 4-column gauges, 340px charts), 1200px (large: 380px charts). All colors, fonts (Orbitron, IBM Plex Mono), CRT effects, and animations preserved.
 
 ## Agent skills
