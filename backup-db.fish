@@ -6,7 +6,7 @@
 #   2. Locates the running postgres container through docker compose.
 #   3. Runs pg_dump inside the container and pipes the output through gzip.
 #   4. Saves the compressed dump to ./backups/<db>_<YYYYMMDD_HHMMSS>.sql.gz
-#   5. Deletes backups older than RETENTION_DAYS (default 30).
+#   5. Deletes backups older than RETENTION_DAYS (hardcoded 3).
 #
 # USAGE
 #   ./backup-db.fish
