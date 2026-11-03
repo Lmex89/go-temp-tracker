@@ -147,7 +147,7 @@ tmux new -s temp-tracker
 The backup script:
 - Runs `pg_dump` inside the `sensors-temp-db` Docker container
 - Compresses to `backups/<database>_<timestamp>.sql.gz`
-- Auto-deletes backups older than 30 days
+- Auto-deletes backups older than 3 days (`RETENTION_DAYS` hardcoded in both scripts)
 
 ### Scheduled backup (cron)
 
