@@ -1,8 +1,11 @@
 {
   "mcpServers": {
     "codegraph": {
-      "command": "/home/lmex89/go/bin/codegraph",
-      "args": ["serve"]
+      "command": "/home/lmex89/.local/bin/codegraph",
+      "args": ["serve", "--mcp"],
+      "env": {
+        "CODEGRAPH_MCP_TOOLS": "explore,node,search,callers,callees,impact,files,status"
+      }
     }
   }
 }
