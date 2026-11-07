@@ -132,7 +132,12 @@ func (s *PostgresStore) QueryWindow(db *sql.DB, window TimeWindow, metricType st
 		args = append(args, window.Hours)
 		conds = append(conds, fmt.Sprintf("created_at >= NOW() - INTERVAL '1 hour' * $%d", len(args)))
 	} else {
-		args = append(args, window.From.UTC().Format(dbTimeLayout), window.To.UTC().Format(dbTimeLayout))
+		// Pass time.Time (not a formatted string): pgx sends an unambiguous
+		// instant, so the session TimeZone cannot shift the range. A string
+		// like "2024-01-15 12:00:00" cast to TIMESTAMPTZ would be read in the
+		// session timezone (a classic Postgres gotcha, unlike Python's
+		// explicit tzinfo).
+		args = append(args, window.From.UTC(), window.To.UTC())
 		conds = append(conds, fmt.Sprintf("created_at >= $%d::TIMESTAMPTZ AND created_at <= $%d::TIMESTAMPTZ", len(args)-1, len(args)))
 	}
 
