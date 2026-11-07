@@ -11,10 +11,10 @@
 #   5. Deletes backups older than RETENTION_DAYS (hardcoded 3).
 #
 # USAGE
-#   ./backup-db.sh
+#   ./scripts/backup-db.sh
 #
 # CRON EXAMPLE  (daily at 02:00, logs to backups/cron.log)
-#   0 2 * * * /full/path/backup-db.sh >> /full/path/backups/cron.log 2>&1
+#   0 2 * * * /full/path/scripts/backup-db.sh >> /full/path/backups/cron.log 2>&1
 #
 # DEPENDENCIES
 #   docker, docker compose, gzip, find
@@ -41,6 +41,11 @@ log_error()   { echo "[$(_ts)] [ERROR]   $*" >&2; }
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 log_debug "Script directory: ${SCRIPT_DIR}"
 
+# This script lives in scripts/, so the project root (docker-compose.yml,
+# backups/) is one level up. Like Path(__file__).resolve().parent.parent.
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+log_debug "Project root: ${PROJECT_ROOT}"
+
 # -- Database configuration ----------------------------------------------------
 # These values match docker-compose.yml. They are hardcoded here so the script
 # can run from cron without depending on an .env file being present.
@@ -52,7 +57,7 @@ DB_SERVICE="postgres"
 
 # -- Locate the DB container ---------------------------------------------------
 # docker compose ps -q <service> returns the container ID of the service.
-COMPOSE_FILE="${SCRIPT_DIR}/docker-compose.yml"
+COMPOSE_FILE="${PROJECT_ROOT}/docker-compose.yml"
 CONTAINER_NAME=$(docker compose -f "$COMPOSE_FILE" ps -q "$DB_SERVICE" 2>/dev/null)
 
 if [[ -z "$CONTAINER_NAME" ]]; then
@@ -63,7 +68,7 @@ fi
 log_info "Target container: ${CONTAINER_NAME}"
 
 # -- Build output path ---------------------------------------------------------
-BACKUP_DIR="${SCRIPT_DIR}/backups"
+BACKUP_DIR="${PROJECT_ROOT}/backups"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 FILENAME="${POSTGRES_DB}_${TIMESTAMP}.sql.gz"
 OUTPUT_PATH="${BACKUP_DIR}/${FILENAME}"

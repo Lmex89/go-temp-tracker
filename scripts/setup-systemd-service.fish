@@ -2,9 +2,9 @@
 # setup-systemd-service.fish -- Install temp-tracker as a systemd service.
 #
 # Usage:
-#   ./setup-systemd-service.fish          # user service with PostgreSQL (starts on login, no sudo)
-#   ./setup-systemd-service.fish --system # system service (starts at boot, uses sudo)
-#   ./setup-systemd-service.fish --sqlite # use SQLite backend instead of PostgreSQL
+#   ./scripts/setup-systemd-service.fish          # user service with PostgreSQL (starts on login, no sudo)
+#   ./scripts/setup-systemd-service.fish --system # system service (starts at boot, uses sudo)
+#   ./scripts/setup-systemd-service.fish --sqlite # use SQLite backend instead of PostgreSQL
 #
 # Like a Python script that:
 #   - writes a systemd unit file
@@ -20,6 +20,11 @@
 # ============================================================
 
 # LOG_LEVEL env var controls verbosity. Like Python's logging.getLogger(__name__).
+# Project root and log directory. This script lives in scripts/, so the root is
+# one level up. Like Python: ROOT = Path(__file__).resolve().parent.parent.
+# "status filename" is Fish's __file__ (there is no $argv[0] for the script path).
+set -g PROJECT_ROOT (cd (dirname (status filename))/..; and pwd)
+set -g LOG_DIR "$PROJECT_ROOT/logs"
 set -g LOG_LEVEL (string upper (echo $LOG_LEVEL | string trim))
 test -z "$LOG_LEVEL"; and set LOG_LEVEL "INFO"
 
@@ -75,7 +80,7 @@ test -z "$DATABASE_URL"; and set DATABASE_URL "postgres://tracker:tracker@localh
 # log -- write a timestamped, leveled message to console and log file.
 #
 # Usage: log INFO "message"
-# Logs to setup-systemd-service.log in the current directory.
+# Logs to setup-systemd-service.log in logs/ at the project root.
 #
 # In Python:
 #   def log(level_name, message):
@@ -107,7 +112,8 @@ function log
     end
 
     set -l log_line "[$timestamp] [$level_name] $message"
-    echo "$log_line" >> setup-systemd-service.log
+    mkdir -p "$LOG_DIR"
+    echo "$log_line" >> "$LOG_DIR/setup-systemd-service.log"
 
     set -l color
     switch "$level_name"
@@ -180,7 +186,8 @@ end
 #       target = "default.target"
 function init_paths
     # Resolve project directory -- like os.path.dirname(os.path.abspath(__file__)) in Python.
-    set PROJECT_DIR (cd (dirname (status -f)); and pwd)
+    # The script lives in scripts/, so go one level up: that is where bin/ and temps.db live.
+    set PROJECT_DIR (cd (dirname (status -f))/..; and pwd)
     log DEBUG "Project directory: $PROJECT_DIR"
 
     if test "$SYSTEM_MODE" -eq 1
@@ -272,7 +279,7 @@ function build_unit_file
         set -a lines "Environment=DB_DRIVER=postgres"
         set -a lines "Environment=DATABASE_URL=$DATABASE_URL"
     end
-    set -a lines "ExecStart=$PROJECT_DIR/temp-tracker -port $PORT -interval $INTERVAL"
+    set -a lines "ExecStart=$PROJECT_DIR/bin/temp-tracker -port $PORT -interval $INTERVAL"
     set -a lines "Restart=on-failure"
     set -a lines "RestartSec=5"
     set -a lines ""
@@ -328,7 +335,7 @@ end
 function kill_leftover_processes
     log INFO "Checking for leftover temp-tracker processes..."
 
-    set -l pids (pgrep -f "$PROJECT_DIR/temp-tracker" 2>/dev/null; or echo "")
+    set -l pids (pgrep -f "$PROJECT_DIR/bin/temp-tracker" 2>/dev/null; or echo "")
     if test -z "$pids"
         log DEBUG "No leftover processes found"
         return
@@ -378,9 +385,9 @@ function print_summary
     end
     echo ""
     echo "To switch backend, re-run with --sqlite (default is postgres):"
-    echo "  ./setup-systemd-service.fish                   # user service (postgres)"
-    echo "  ./setup-systemd-service.fish --sqlite          # user service (sqlite)"
-    echo "  ./setup-systemd-service.fish --system --sqlite # system service (sqlite)"
+    echo "  ./scripts/setup-systemd-service.fish                   # user service (postgres)"
+    echo "  ./scripts/setup-systemd-service.fish --sqlite          # user service (sqlite)"
+    echo "  ./scripts/setup-systemd-service.fish --system --sqlite # system service (sqlite)"
     echo ""
 
     echo "Useful commands:"

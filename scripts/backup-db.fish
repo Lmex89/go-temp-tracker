@@ -9,10 +9,10 @@
 #   5. Deletes backups older than RETENTION_DAYS (hardcoded 3).
 #
 # USAGE
-#   ./backup-db.fish
+#   ./scripts/backup-db.fish
 #
 # CRON EXAMPLE  (daily at 02:00, logs to backups/cron.log)
-#   0 2 * * * /full/path/backup-db.fish >> /full/path/backups/cron.log 2>&1
+#   0 2 * * * /full/path/scripts/backup-db.fish >> /full/path/backups/cron.log 2>&1
 #
 # DEPENDENCIES
 #   docker, docker compose, gzip, find
@@ -26,6 +26,11 @@
 # ============================================================
 
 # Logging configuration -- like Python's logging.basicConfig(level=logging.INFO).
+# Project root and log directory. This script lives in scripts/, so the root is
+# one level up. Like Python: ROOT = Path(__file__).resolve().parent.parent.
+# "status filename" is Fish's __file__ (there is no $argv[0] for the script path).
+set -g PROJECT_ROOT (cd (dirname (status filename))/..; and pwd)
+set -g LOG_DIR "$PROJECT_ROOT/logs"
 set -g LOG_LEVEL (string upper (echo $LOG_LEVEL | string trim))
 test -z "$LOG_LEVEL"; and set LOG_LEVEL "INFO"
 
@@ -116,7 +121,8 @@ function log
 
     # Append to log file (plain text, no colors).
     # Like Python's with open('backup-db.log', 'a') as f: f.write(...)
-    echo "$log_line" >> backup-db.log
+    mkdir -p "$LOG_DIR"
+    echo "$log_line" >> "$LOG_DIR/backup-db.log"
 
     # Print to console with ANSI colors.
     # printf %b interprets backslash escapes (like \033 for colors).
@@ -151,7 +157,9 @@ function resolve_project_root
     # returns the canonical directory.
     set -l script_path (status filename)
     set -l script_dir (dirname "$script_path")
-    realpath -s "$script_dir"
+    # The script lives in scripts/, so the project root (docker-compose.yml,
+    # backups/) is one level up. Like Path(__file__).resolve().parent.parent.
+    realpath -s "$script_dir/.."
 end
 
 # locate_container -- find the running postgres container ID.

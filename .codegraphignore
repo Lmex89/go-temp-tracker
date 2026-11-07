@@ -7,4 +7,6 @@ temps.db*
 *.db-wal
 spike-report
 temp-tracker
+bin/
+logs/
 *.log

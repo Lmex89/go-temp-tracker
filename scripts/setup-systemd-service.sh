@@ -2,8 +2,8 @@
 # setup-systemd-service.sh -- Install temp-tracker as a systemd service.
 #
 # Usage:
-#   ./setup-systemd-service.sh          # user service (starts on login, no sudo)
-#   ./setup-systemd-service.sh --system # system service (starts at boot, uses sudo)
+#   ./scripts/setup-systemd-service.sh          # user service (starts on login, no sudo)
+#   ./scripts/setup-systemd-service.sh --system # system service (starts at boot, uses sudo)
 #
 # Like a Python script that:
 #   - writes a systemd unit file
@@ -28,7 +28,8 @@ fi
 # Resolve the project directory (where this script lives).
 # Like Python: os.path.dirname(os.path.abspath(__file__))
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="${SCRIPT_DIR}"
+# scripts/ lives one level below the project root, which holds bin/ and temps.db.
+PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 # Service identity.
 SERVICE_NAME="temp-tracker.service"
@@ -96,7 +97,7 @@ echo "Writing ${SERVICE_PATH}..."
     echo "Environment=SWAP_POLL_INTERVAL=${SWAP_POLL_INTERVAL}"
     echo "Environment=DISK_POLL_INTERVAL=${DISK_POLL_INTERVAL}"
     echo "Environment=LOAD_POLL_INTERVAL=${LOAD_POLL_INTERVAL}"
-    echo "ExecStart=${PROJECT_DIR}/temp-tracker -port ${PORT} -interval ${INTERVAL}"
+    echo "ExecStart=${PROJECT_DIR}/bin/temp-tracker -port ${PORT} -interval ${INTERVAL}"
     echo "Restart=on-failure"
     echo "RestartSec=5"
     echo ""
@@ -117,7 +118,7 @@ ${SYSTEMCTL} enable "${SERVICE_NAME}"
 
 # Kill any leftover temp-tracker process on the configured port.
 # This prevents "address already in use" when starting the service.
-for pid in $(pgrep -f "${PROJECT_DIR}/temp-tracker" 2>/dev/null || true); do
+for pid in $(pgrep -f "${PROJECT_DIR}/bin/temp-tracker" 2>/dev/null || true); do
     echo "Stopping leftover temp-tracker PID ${pid}..."
     if [[ "$SYSTEM_MODE" -eq 1 ]]; then
         sudo kill -15 "${pid}" 2>/dev/null || true
