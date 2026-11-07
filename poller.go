@@ -5,6 +5,28 @@ import (
 	"time"
 )
 
+// pollSpec bundles the three per-goroutine variables of a polling loop.
+// In Python this would be a dataclass(metric_type, interval, read_func).
+type pollSpec struct {
+	metricType string
+	interval   time.Duration
+	readFunc   func() []MetricPoint
+}
+
+// wrapSensorReader adapts SensorReader.Read() (a map) to func() []MetricPoint,
+// so temperature looks like every other metric. Like a Python
+// [MetricPoint(s, v, "celsius") for s, v in reader.read().items()].
+func wrapSensorReader(reader SensorReader) func() []MetricPoint {
+	return func() []MetricPoint {
+		readings := reader.Read()
+		points := make([]MetricPoint, 0, len(readings))
+		for sensor, value := range readings {
+			points = append(points, MetricPoint{Sensor: sensor, Value: value, Unit: "celsius"})
+		}
+		return points
+	}
+}
+
 // Poller is a struct that ties together a sensor reader, a database store, and a db connection.
 // It runs an infinite loop: read -> insert -> prune -> sleep.
 // In Python you'd write a class with __init__ setting self.sensor, self.store, self.db.
