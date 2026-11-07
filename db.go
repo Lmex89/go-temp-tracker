@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"fmt"
+	"sensors-temp/internal/logging"
 	"strings"
 	"time"
 )
@@ -84,36 +85,36 @@ func NewSQLiteStore() *SQLiteStore {
 // Also runs schema migration to add metric_type and unit columns if needed.
 // In Python with sqlite3 you'd do: conn = sqlite3.connect("temps.db") then conn.execute(CREATE TABLE...).
 func (s *SQLiteStore) InitDB() *sql.DB {
-	Logger.Info("Initializing SQLite database (temps.db)")
+	logging.Logger.Info("Initializing SQLite database (temps.db)")
 
 	// sql.Open opens a database driver -- it doesn't actually connect yet (like Python's sqlite3.connect).
 	db, err := sql.Open("sqlite", "temps.db")
 	if err != nil {
-		Logger.Error("Failed to open database: %v", err)
+		logging.Logger.Error("Failed to open database: %v", err)
 		return nil
 	}
 
 	// Ping actually tests the connection -- similar to conn = sqlite3.connect() which connects immediately.
 	if err := db.Ping(); err != nil {
-		Logger.Error("Failed to ping database: %v", err)
+		logging.Logger.Error("Failed to ping database: %v", err)
 		return nil
 	}
 
-	Logger.Debug("Database connection established")
+	logging.Logger.Debug("Database connection established")
 
 	// Enable WAL (Write-Ahead Logging) mode for concurrent read/write access.
 	// Multiple goroutines write to the DB simultaneously (CPU poll, mem poll, etc.).
 	// WAL allows a writer to proceed while readers read the old snapshot -- no locks.
 	// In Python: conn.execute("PRAGMA journal_mode=WAL")
 	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		Logger.Warn("Failed to enable WAL mode: %v", err)
+		logging.Logger.Warn("Failed to enable WAL mode: %v", err)
 	}
 
 	// Set busy timeout to 5 seconds -- when SQLITE_BUSY, wait and retry instead of failing.
 	// This gives time for other writers to finish before giving up.
 	// In Python: conn.execute("PRAGMA busy_timeout=5000")
 	if _, err := db.Exec("PRAGMA busy_timeout=5000"); err != nil {
-		Logger.Warn("Failed to set busy timeout: %v", err)
+		logging.Logger.Warn("Failed to set busy timeout: %v", err)
 	}
 
 	// SQL schema: CREATE TABLE IF NOT EXISTS is like Python's "CREATE TABLE IF NOT EXISTS".
@@ -129,7 +130,7 @@ func (s *SQLiteStore) InitDB() *sql.DB {
 	CREATE INDEX IF NOT EXISTS idx_readings_metric_type_sensor_id ON readings(metric_type, sensor, id);`
 
 	if _, err := db.Exec(schema); err != nil {
-		Logger.Error("Failed to create schema: %v", err)
+		logging.Logger.Error("Failed to create schema: %v", err)
 		return nil
 	}
 
@@ -138,7 +139,7 @@ func (s *SQLiteStore) InitDB() *sql.DB {
 	// We check if the column exists first to make migration idempotent.
 	s.migrateSchema(db)
 
-	Logger.Info("Database schema ready")
+	logging.Logger.Info("Database schema ready")
 	return db
 }
 
@@ -152,13 +153,13 @@ func (s *SQLiteStore) migrateSchema(db *sql.DB) {
 	var count int
 	err := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('readings') WHERE name='metric_type'").Scan(&count)
 	if err != nil {
-		Logger.Warn("Migration check failed (metric_type): %v", err)
+		logging.Logger.Warn("Migration check failed (metric_type): %v", err)
 	}
 	if count == 0 {
-		Logger.Info("Migrating schema: adding metric_type column")
+		logging.Logger.Info("Migrating schema: adding metric_type column")
 		// NOT NULL DEFAULT 'temperature' -- existing temp rows get the correct type.
 		if _, err := db.Exec("ALTER TABLE readings ADD COLUMN metric_type TEXT NOT NULL DEFAULT 'temperature'"); err != nil {
-			Logger.Error("Migration failed (metric_type): %v", err)
+			logging.Logger.Error("Migration failed (metric_type): %v", err)
 		}
 	}
 
@@ -166,12 +167,12 @@ func (s *SQLiteStore) migrateSchema(db *sql.DB) {
 	count = 0
 	err = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('readings') WHERE name='unit'").Scan(&count)
 	if err != nil {
-		Logger.Warn("Migration check failed (unit): %v", err)
+		logging.Logger.Warn("Migration check failed (unit): %v", err)
 	}
 	if count == 0 {
-		Logger.Info("Migrating schema: adding unit column")
+		logging.Logger.Info("Migrating schema: adding unit column")
 		if _, err := db.Exec("ALTER TABLE readings ADD COLUMN unit TEXT NOT NULL DEFAULT 'C'"); err != nil {
-			Logger.Error("Migration failed (unit): %v", err)
+			logging.Logger.Error("Migration failed (unit): %v", err)
 		}
 	}
 }
@@ -198,7 +199,7 @@ func execWithRetry(db *sql.DB, query string, args ...interface{}) (sql.Result, e
 			return nil, err
 		}
 
-		Logger.Debug("DB busy, retrying in %v (attempt %d/%d)", backoff, i+1, maxRetries)
+		logging.Logger.Debug("DB busy, retrying in %v (attempt %d/%d)", backoff, i+1, maxRetries)
 		time.Sleep(backoff)
 		backoff *= 2
 	}
@@ -228,9 +229,9 @@ func (s *SQLiteStore) Insert(db *sql.DB, sensor string, temp float64, metricType
 		sensor, temp, metricType, unit,
 	)
 	if err != nil {
-		Logger.Error("Failed to insert reading (sensor=%s, type=%s, value=%.2f): %v", sensor, metricType, temp, err)
+		logging.Logger.Error("Failed to insert reading (sensor=%s, type=%s, value=%.2f): %v", sensor, metricType, temp, err)
 	} else {
-		Logger.Debug("Inserted reading: %s [%s] = %.2f%s", sensor, metricType, temp, unit)
+		logging.Logger.Debug("Inserted reading: %s [%s] = %.2f%s", sensor, metricType, temp, unit)
 	}
 }
 
@@ -241,7 +242,7 @@ func (s *SQLiteStore) Query(db *sql.DB, window TimeWindow, metricType string) ([
 	if err := window.Validate(); err != nil {
 		return nil, err
 	}
-	Logger.Debug("Query window=%+v metric=%q", window, metricType)
+	logging.Logger.Debug("Query window=%+v metric=%q", window, metricType)
 
 	// Build the WHERE clause piece by piece; args line up with the "?" marks.
 	var conds []string
@@ -264,12 +265,12 @@ func (s *SQLiteStore) Query(db *sql.DB, window TimeWindow, metricType string) ([
 		args...,
 	)
 	if err != nil {
-		Logger.Error("Query failed: %v", err)
+		logging.Logger.Error("Query failed: %v", err)
 		return nil, nil
 	}
 	readings := s.scanRows(rows)
 
-	Logger.Info("Query returned %d reading(s)", len(readings))
+	logging.Logger.Info("Query returned %d reading(s)", len(readings))
 	return readings, nil
 }
 
@@ -280,7 +281,7 @@ func (s *SQLiteStore) QueryLatest(db *sql.DB, metricType string) ([]Reading, err
 	if metricType == AllMetrics {
 		return nil, fmt.Errorf("QueryLatest: metricType is required")
 	}
-	Logger.Debug("Querying latest [%s] per sensor", metricType)
+	logging.Logger.Debug("Querying latest [%s] per sensor", metricType)
 
 	rows, err := db.Query(
 		`SELECT sensor, temp_c, metric_type, unit, created_at FROM readings
@@ -290,7 +291,7 @@ func (s *SQLiteStore) QueryLatest(db *sql.DB, metricType string) ([]Reading, err
 		metricType, metricType,
 	)
 	if err != nil {
-		Logger.Error("QueryLatest failed: %v", err)
+		logging.Logger.Error("QueryLatest failed: %v", err)
 		return nil, nil
 	}
 	return s.scanRows(rows), nil
@@ -302,7 +303,7 @@ func (s *SQLiteStore) QueryLatest(db *sql.DB, metricType string) ([]Reading, err
 func (s *SQLiteStore) scanRows(rows *sql.Rows) []Reading {
 	defer func() {
 		if err := rows.Close(); err != nil {
-			Logger.Error("Failed to close rows: %v", err)
+			logging.Logger.Error("Failed to close rows: %v", err)
 		}
 	}()
 
@@ -310,14 +311,14 @@ func (s *SQLiteStore) scanRows(rows *sql.Rows) []Reading {
 	for rows.Next() {
 		var r Reading
 		if err := rows.Scan(&r.Sensor, &r.TempC, &r.MetricType, &r.Unit, &r.CreatedAt); err != nil {
-			Logger.Error("Failed to scan row: %v", err)
+			logging.Logger.Error("Failed to scan row: %v", err)
 			continue
 		}
 		r.CreatedAt = s.converter.ToLocal(r.CreatedAt)
 		readings = append(readings, r)
 	}
 	if err := rows.Err(); err != nil {
-		Logger.Error("Row iteration error: %v", err)
+		logging.Logger.Error("Row iteration error: %v", err)
 	}
 	return readings
 }
@@ -327,7 +328,7 @@ func (s *SQLiteStore) scanRows(rows *sql.Rows) []Reading {
 // otherwise only that type is pruned, so metric types can have their own
 // retention. Python analogy: a DELETE with an optional extra WHERE clause.
 func (s *SQLiteStore) Prune(db *sql.DB, metricType string, hours int) {
-	Logger.Debug("Pruning [%s] readings older than %d hour(s)", metricType, hours)
+	logging.Logger.Debug("Pruning [%s] readings older than %d hour(s)", metricType, hours)
 
 	query := "DELETE FROM readings WHERE created_at < datetime('now', ?)"
 	args := []any{fmt.Sprintf("-%d hours", hours)}
@@ -338,14 +339,14 @@ func (s *SQLiteStore) Prune(db *sql.DB, metricType string, hours int) {
 
 	result, err := execWithRetry(db, query, args...)
 	if err != nil {
-		Logger.Error("Prune failed for [%s]: %v", metricType, err)
+		logging.Logger.Error("Prune failed for [%s]: %v", metricType, err)
 		return
 	}
 
 	deleted, _ := result.RowsAffected()
 	if deleted > 0 {
-		Logger.Info("Pruned %d old [%s] reading(s) (>%dh)", deleted, metricType, hours)
+		logging.Logger.Info("Pruned %d old [%s] reading(s) (>%dh)", deleted, metricType, hours)
 	} else {
-		Logger.Debug("No old readings to prune")
+		logging.Logger.Debug("No old readings to prune")
 	}
 }

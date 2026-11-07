@@ -78,41 +78,41 @@ func correlateMetrics(db *sql.DB, spikes []Spike, loc *time.Location) ([]ReportR
 			maxTime = s.Timestamp
 		}
 	}
-	logger.debug("correlating %d spikes, time range %s to %s",
+	logger.Debug("correlating %d spikes, time range %s to %s",
 		len(spikes), minTime.Format("2006-01-02 15:04:05"), maxTime.Format("2006-01-02 15:04:05"))
 
 	padding := time.Minute
-	logger.debug("querying correlated metrics with +/- %v padding", padding)
+	logger.Debug("querying correlated metrics with +/- %v padding", padding)
 
 	cpuReadings, err := queryMetricRange(db, "cpu", minTime.Add(-padding), maxTime.Add(padding))
 	if err != nil {
 		return nil, fmt.Errorf("CPU query failed: %w", err)
 	}
-	logger.debug("  cpu: %d readings", len(cpuReadings))
+	logger.Debug("  cpu: %d readings", len(cpuReadings))
 
 	memReadings, err := queryMetricRange(db, "memory", minTime.Add(-padding), maxTime.Add(padding))
 	if err != nil {
 		return nil, fmt.Errorf("memory query failed: %w", err)
 	}
-	logger.debug("  memory: %d readings", len(memReadings))
+	logger.Debug("  memory: %d readings", len(memReadings))
 
 	swapReadings, err := queryMetricRange(db, "swap", minTime.Add(-padding), maxTime.Add(padding))
 	if err != nil {
 		return nil, fmt.Errorf("swap query failed: %w", err)
 	}
-	logger.debug("  swap: %d readings", len(swapReadings))
+	logger.Debug("  swap: %d readings", len(swapReadings))
 
 	diskReadings, err := queryMetricRange(db, "disk", minTime.Add(-padding), maxTime.Add(padding))
 	if err != nil {
 		return nil, fmt.Errorf("disk query failed: %w", err)
 	}
-	logger.debug("  disk: %d readings", len(diskReadings))
+	logger.Debug("  disk: %d readings", len(diskReadings))
 
 	loadReadings, err := queryMetricRange(db, "load", minTime.Add(-padding), maxTime.Add(padding))
 	if err != nil {
 		return nil, fmt.Errorf("load query failed: %w", err)
 	}
-	logger.debug("  load: %d readings", len(loadReadings))
+	logger.Debug("  load: %d readings", len(loadReadings))
 
 	cpuByTime := make(map[string]float64)
 	for _, r := range cpuReadings {
@@ -179,7 +179,7 @@ func correlateMetrics(db *sql.DB, spikes []Spike, loc *time.Location) ([]ReportR
 		})
 	}
 
-	logger.debug("built %d correlated report rows", len(rows))
+	logger.Debug("built %d correlated report rows", len(rows))
 	return rows, nil
 }
 

@@ -21,7 +21,7 @@ func setDBDriver(driver string) {
 	case "sqlite":
 		dbDriver = "sqlite"
 	default:
-		logger.warn("unknown driver %q, falling back to postgres", driver)
+		logger.Warn("unknown driver %q, falling back to postgres", driver)
 		dbDriver = "postgres"
 	}
 }

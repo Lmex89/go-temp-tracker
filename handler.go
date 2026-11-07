@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sensors-temp/internal/logging"
 	"strconv"
 	"strings"
 )
@@ -30,18 +31,18 @@ func handleTemps(store Store, db *sql.DB) http.HandlerFunc {
 				return
 			}
 
-			Logger.Info("GET /api/temps range from=%s to=%s", from, to)
+			logging.Logger.Info("GET /api/temps range from=%s to=%s", from, to)
 
 			fromTime, err := ParseTimestampInput(from)
 			if err != nil {
-				Logger.Warn("Invalid from timestamp: %s -> %v", from, err)
+				logging.Logger.Warn("Invalid from timestamp: %s -> %v", from, err)
 				http.Error(w, fmt.Sprintf("invalid from timestamp: %v", err), http.StatusBadRequest)
 				return
 			}
 
 			toTime, err := ParseTimestampInput(to)
 			if err != nil {
-				Logger.Warn("Invalid to timestamp: %s -> %v", to, err)
+				logging.Logger.Warn("Invalid to timestamp: %s -> %v", to, err)
 				http.Error(w, fmt.Sprintf("invalid to timestamp: %v", err), http.StatusBadRequest)
 				return
 			}
@@ -51,7 +52,7 @@ func handleTemps(store Store, db *sql.DB) http.HandlerFunc {
 				return
 			}
 
-			Logger.Debug("Querying range UTC from=%s to=%s", fromTime.UTC().Format(dbTimeLayout), toTime.UTC().Format(dbTimeLayout))
+			logging.Logger.Debug("Querying range UTC from=%s to=%s", fromTime.UTC().Format(dbTimeLayout), toTime.UTC().Format(dbTimeLayout))
 			readings, err = store.Query(
 				db,
 				TimeWindow{From: fromTime, To: toTime},
@@ -67,10 +68,10 @@ func handleTemps(store Store, db *sql.DB) http.HandlerFunc {
 				if v, err := strconv.Atoi(h); err == nil && v > 0 {
 					hours = v
 				} else {
-					Logger.Warn("Invalid hours parameter: %s", h)
+					logging.Logger.Warn("Invalid hours parameter: %s", h)
 				}
 			}
-			Logger.Debug("GET /api/temps?hours=%d from %s", hours, r.RemoteAddr)
+			logging.Logger.Debug("GET /api/temps?hours=%d from %s", hours, r.RemoteAddr)
 			var err error
 			readings, err = store.Query(db, TimeWindow{Hours: hours}, "temperature")
 			if err != nil {
@@ -81,17 +82,17 @@ func handleTemps(store Store, db *sql.DB) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(readings); err != nil {
-			Logger.Error("Failed to encode JSON response: %v", err)
+			logging.Logger.Error("Failed to encode JSON response: %v", err)
 		}
 
-		Logger.Debug("Returned %d temperature reading(s)", len(readings))
+		logging.Logger.Debug("Returned %d temperature reading(s)", len(readings))
 	}
 }
 
 // handleCurrent returns the latest temperature reading per sensor as JSON.
 func handleCurrent(store Store, db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		Logger.Debug("GET /api/current from %s", r.RemoteAddr)
+		logging.Logger.Debug("GET /api/current from %s", r.RemoteAddr)
 
 		readings, err := store.QueryLatest(db, "temperature")
 		if err != nil {
@@ -101,10 +102,10 @@ func handleCurrent(store Store, db *sql.DB) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(readings); err != nil {
-			Logger.Error("Failed to encode JSON response: %v", err)
+			logging.Logger.Error("Failed to encode JSON response: %v", err)
 		}
 
-		Logger.Debug("Returned %d current temperature reading(s)", len(readings))
+		logging.Logger.Debug("Returned %d current temperature reading(s)", len(readings))
 	}
 }
 
@@ -178,7 +179,7 @@ func handleMetricByType(store Store, db *sql.DB, metricType string) http.Handler
 
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(readings); err != nil {
-			Logger.Error("Failed to encode JSON response: %v", err)
+			logging.Logger.Error("Failed to encode JSON response: %v", err)
 		}
 	}
 }
@@ -224,7 +225,7 @@ func handleCurrentByType(store Store, db *sql.DB, metricType string) http.Handle
 
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(readings); err != nil {
-			Logger.Error("Failed to encode JSON response: %v", err)
+			logging.Logger.Error("Failed to encode JSON response: %v", err)
 		}
 	}
 }

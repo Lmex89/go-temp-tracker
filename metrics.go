@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"sensors-temp/internal/logging"
 	"strings"
 	"time"
 
@@ -43,7 +44,7 @@ func (sm *SystemMetrics) ReadCPU() []MetricPoint {
 	// Let's call with percpu=true and compute total manually.
 	percents, err := cpu.Percent(time.Second, true)
 	if err != nil {
-		Logger.Warn("Failed to read CPU: %v", err)
+		logging.Logger.Warn("Failed to read CPU: %v", err)
 		return nil
 	}
 	// Build MetricPoint slice -- like a list comprehension in Python.
@@ -83,7 +84,7 @@ func (sm *SystemMetrics) ReadCPU() []MetricPoint {
 func (sm *SystemMetrics) ReadMemory() []MetricPoint {
 	v, err := mem.VirtualMemory()
 	if err != nil {
-		Logger.Warn("Failed to read memory: %v", err)
+		logging.Logger.Warn("Failed to read memory: %v", err)
 		return nil
 	}
 	// Calculate "real" used bytes and percent matching htop/free -h behavior.
@@ -116,7 +117,7 @@ func clampPercent(val float64) float64 {
 func (sm *SystemMetrics) ReadSwap() []MetricPoint {
 	v, err := mem.SwapMemory()
 	if err != nil {
-		Logger.Warn("Failed to read swap: %v", err)
+		logging.Logger.Warn("Failed to read swap: %v", err)
 		return nil
 	}
 	return []MetricPoint{
@@ -136,7 +137,7 @@ func (sm *SystemMetrics) ReadDisk() []MetricPoint {
 	// In Python: psutil.disk_partitions()
 	partitions, err := disk.Partitions(false)
 	if err != nil {
-		Logger.Warn("Failed to list partitions: %v", err)
+		logging.Logger.Warn("Failed to list partitions: %v", err)
 		return nil
 	}
 	var points []MetricPoint
@@ -152,7 +153,7 @@ func (sm *SystemMetrics) ReadDisk() []MetricPoint {
 		// In Python: psutil.disk_usage(mountpoint)
 		usage, err := disk.Usage(p.Mountpoint)
 		if err != nil {
-			Logger.Debug("Cannot read disk usage for %s: %v", p.Mountpoint, err)
+			logging.Logger.Debug("Cannot read disk usage for %s: %v", p.Mountpoint, err)
 			continue
 		}
 		// Sensor name: "disk//" for root, "disk//home" for /home, etc.
@@ -188,7 +189,7 @@ func (sm *SystemMetrics) ReadDisk() []MetricPoint {
 func (sm *SystemMetrics) ReadLoad() []MetricPoint {
 	avg, err := load.Avg()
 	if err != nil {
-		Logger.Warn("Failed to read load: %v", err)
+		logging.Logger.Warn("Failed to read load: %v", err)
 		return nil
 	}
 	return []MetricPoint{

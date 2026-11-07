@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"sensors-temp/internal/logging"
 	"strconv"
 	"strings"
 )
@@ -38,13 +39,13 @@ func (s *LinuxThermalSensor) Read() map[string]float64 {
 	// If hwmon returned sensors, use them
 	// In Python: if temps: return temps
 	if len(temps) > 0 {
-		Logger.Debug("Using hwmon sensors (%d found)", len(temps))
+		logging.Logger.Debug("Using hwmon sensors (%d found)", len(temps))
 		return temps
 	}
 
 	// Fallback to thermal zones -- works on ALL Linux systems
 	// Like a Python fallback: return read_thermal_zones() if not temps
-	Logger.Debug("No hwmon sensors found, falling back to thermal zones")
+	logging.Logger.Debug("No hwmon sensors found, falling back to thermal zones")
 	return s.readThermalZones()
 }
 
@@ -61,16 +62,16 @@ func (s *LinuxThermalSensor) readHwmonSensors() map[string]float64 {
 	// Go returns TWO values: result AND error. This is Go's error handling instead of try/except.
 	hwmons, err := filepath.Glob("/sys/class/hwmon/hwmon*")
 	if err != nil {
-		Logger.Debug("Failed to glob hwmon directories: %v", err)
+		logging.Logger.Debug("Failed to glob hwmon directories: %v", err)
 		return temps
 	}
 
 	if len(hwmons) == 0 {
-		Logger.Debug("No hwmon directories found")
+		logging.Logger.Debug("No hwmon directories found")
 		return temps
 	}
 
-	Logger.Debug("Found %d hwmon directorie(s)", len(hwmons))
+	logging.Logger.Debug("Found %d hwmon directorie(s)", len(hwmons))
 
 	// Iterate over each hwmon device -- like Python's for hwmon in hwmons:
 	// We use _ for the index because Go doesn't allow unused variables.
@@ -81,17 +82,17 @@ func (s *LinuxThermalSensor) readHwmonSensors() map[string]float64 {
 		// This identifies what hardware this hwmon represents.
 		nameRaw, err := os.ReadFile(filepath.Join(hwmon, "name"))
 		if err != nil {
-			Logger.Debug("Cannot read %s/name: %v", hwmonName, err)
+			logging.Logger.Debug("Cannot read %s/name: %v", hwmonName, err)
 			continue
 		}
 		deviceName := strings.TrimSpace(string(nameRaw))
-		Logger.Debug("Found hwmon device: %s (%s)", hwmonName, deviceName)
+		logging.Logger.Debug("Found hwmon device: %s (%s)", hwmonName, deviceName)
 
 		// Look for temperature input files: temp1_input, temp2_input, etc.
 		// filepath.Glob returns matching files sorted alphabetically.
 		tempInputs, err := filepath.Glob(filepath.Join(hwmon, "temp*_input"))
 		if err != nil {
-			Logger.Debug("Failed to glob temp inputs in %s: %v", hwmonName, err)
+			logging.Logger.Debug("Failed to glob temp inputs in %s: %v", hwmonName, err)
 			continue
 		}
 
@@ -108,14 +109,14 @@ func (s *LinuxThermalSensor) readHwmonSensors() map[string]float64 {
 			// Value is in millidegrees Celsius (e.g., 45000 = 45C).
 			raw, err := os.ReadFile(tempInput)
 			if err != nil {
-				Logger.Debug("Cannot read %s: %v", baseName, err)
+				logging.Logger.Debug("Cannot read %s: %v", baseName, err)
 				continue
 			}
 
 			// strconv.ParseFloat converts string to float64 -- like Python's float().
 			val, err := strconv.ParseFloat(strings.TrimSpace(string(raw)), 64)
 			if err != nil {
-				Logger.Debug("Cannot parse temperature from %s: %v", baseName, err)
+				logging.Logger.Debug("Cannot parse temperature from %s: %v", baseName, err)
 				continue
 			}
 
@@ -138,8 +139,8 @@ func (s *LinuxThermalSensor) readHwmonSensors() map[string]float64 {
 				sensorName = deviceName + "/" + label
 			}
 
-			Logger.Debug("Sensor %s: %.2fC", sensorName, tempC)
-			temps[sensorName] = tempC  // Like Python: temps[sensor_name] = temp_c
+			logging.Logger.Debug("Sensor %s: %.2fC", sensorName, tempC)
+			temps[sensorName] = tempC // Like Python: temps[sensor_name] = temp_c
 		}
 	}
 
@@ -159,16 +160,16 @@ func (s *LinuxThermalSensor) readThermalZones() map[string]float64 {
 	// instead of try/except. You ALWAYS check if err != nil before using the result.
 	zones, err := filepath.Glob("/sys/class/thermal/thermal_zone*")
 	if err != nil {
-		Logger.Warn("Failed to glob thermal zones: %v", err)
+		logging.Logger.Warn("Failed to glob thermal zones: %v", err)
 		return temps
 	}
 
 	if len(zones) == 0 {
-		Logger.Warn("No thermal zones found at /sys/class/thermal/thermal_zone*")
+		logging.Logger.Warn("No thermal zones found at /sys/class/thermal/thermal_zone*")
 		return temps
 	}
 
-	Logger.Debug("Found %d thermal zone(s)", len(zones))
+	logging.Logger.Debug("Found %d thermal zone(s)", len(zones))
 
 	// range over a slice (like Python's list) gives you (index, value) pairs.
 	// We use _ for the index because Go doesn't let you declare variables you don't use.
@@ -180,7 +181,7 @@ func (s *LinuxThermalSensor) readThermalZones() map[string]float64 {
 		// Returns []byte (byte slice, similar to Python's bytes) and error.
 		raw, err := os.ReadFile(filepath.Join(zone, "temp"))
 		if err != nil {
-			Logger.Warn("Cannot read %s/temp: %v", zoneName, err)
+			logging.Logger.Warn("Cannot read %s/temp: %v", zoneName, err)
 			continue
 		}
 
@@ -188,7 +189,7 @@ func (s *LinuxThermalSensor) readThermalZones() map[string]float64 {
 		// TrimSpace removes whitespace -- like Python's .strip().
 		val, err := strconv.ParseFloat(strings.TrimSpace(string(raw)), 64)
 		if err != nil {
-			Logger.Warn("Cannot parse temperature from %s: %v", zoneName, err)
+			logging.Logger.Warn("Cannot parse temperature from %s: %v", zoneName, err)
 			continue
 		}
 
@@ -198,14 +199,14 @@ func (s *LinuxThermalSensor) readThermalZones() map[string]float64 {
 		if err == nil {
 			name = strings.TrimSpace(string(nameRaw))
 		} else {
-			Logger.Warn("Cannot read %s/type, using zone name: %v", zoneName, err)
+			logging.Logger.Warn("Cannot read %s/type, using zone name: %v", zoneName, err)
 		}
 
 		// Linux reports temperature in millidegrees (e.g. 45000 = 45C).
 		tempC := val / 1000.0
-		Logger.Debug("Sensor %s (%s): %.2fC", zoneName, name, tempC)
-		temps[name] = tempC  // Assigning to a map -- like Python dict: temps[name] = tempC
+		logging.Logger.Debug("Sensor %s (%s): %.2fC", zoneName, name, tempC)
+		temps[name] = tempC // Assigning to a map -- like Python dict: temps[name] = tempC
 	}
 
-	return temps  // Returns the map (Go passes maps by reference, like Python dicts)
+	return temps // Returns the map (Go passes maps by reference, like Python dicts)
 }
