@@ -1,6 +1,8 @@
 package main
 
 import (
+	"sensors-temp/internal/timeutil"
+
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -33,14 +35,14 @@ func handleTemps(store Store, db *sql.DB) http.HandlerFunc {
 
 			logging.Logger.Info("GET /api/temps range from=%s to=%s", from, to)
 
-			fromTime, err := ParseTimestampInput(from)
+			fromTime, err := timeutil.ParseTimestampInput(from)
 			if err != nil {
 				logging.Logger.Warn("Invalid from timestamp: %s -> %v", from, err)
 				http.Error(w, fmt.Sprintf("invalid from timestamp: %v", err), http.StatusBadRequest)
 				return
 			}
 
-			toTime, err := ParseTimestampInput(to)
+			toTime, err := timeutil.ParseTimestampInput(to)
 			if err != nil {
 				logging.Logger.Warn("Invalid to timestamp: %s -> %v", to, err)
 				http.Error(w, fmt.Sprintf("invalid to timestamp: %v", err), http.StatusBadRequest)
@@ -52,7 +54,7 @@ func handleTemps(store Store, db *sql.DB) http.HandlerFunc {
 				return
 			}
 
-			logging.Logger.Debug("Querying range UTC from=%s to=%s", fromTime.UTC().Format(dbTimeLayout), toTime.UTC().Format(dbTimeLayout))
+			logging.Logger.Debug("Querying range UTC from=%s to=%s", fromTime.UTC().Format(timeutil.DBLayout), toTime.UTC().Format(timeutil.DBLayout))
 			readings, err = store.Query(
 				db,
 				TimeWindow{From: fromTime, To: toTime},
@@ -127,13 +129,13 @@ func handleMetricByType(store Store, db *sql.DB, metricType string) http.Handler
 				return
 			}
 
-			fromTime, err := ParseTimestampInput(from)
+			fromTime, err := timeutil.ParseTimestampInput(from)
 			if err != nil {
 				http.Error(w, fmt.Sprintf("invalid from timestamp: %v", err), http.StatusBadRequest)
 				return
 			}
 
-			toTime, err := ParseTimestampInput(to)
+			toTime, err := timeutil.ParseTimestampInput(to)
 			if err != nil {
 				http.Error(w, fmt.Sprintf("invalid to timestamp: %v", err), http.StatusBadRequest)
 				return

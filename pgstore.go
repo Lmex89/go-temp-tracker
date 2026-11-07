@@ -1,6 +1,8 @@
 package main
 
 import (
+	"sensors-temp/internal/timeutil"
+
 	"database/sql"
 	"fmt"
 	"os"
@@ -17,7 +19,7 @@ import (
 // It holds a TimeConverter for converting UTC timestamps to local time,
 // just like SQLiteStore.
 type PostgresStore struct {
-	converter TimeConverter
+	converter timeutil.TimeConverter
 	dsn       string // connection string, e.g. postgres://user:pass@host/db?sslmode=disable
 }
 
@@ -33,7 +35,7 @@ func NewPostgresStore() *PostgresStore {
 		dsn = "postgres://tracker:tracker@localhost:5432/sensors_temp?sslmode=disable"
 	}
 	return &PostgresStore{
-		converter: NewMeridaTimeConverter(),
+		converter: timeutil.NewMeridaTimeConverter(),
 		dsn:       dsn,
 	}
 }
