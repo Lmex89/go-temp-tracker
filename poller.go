@@ -27,6 +27,23 @@ func wrapSensorReader(reader SensorReader) func() []MetricPoint {
 	}
 }
 
+// buildPollSpecs returns the six polling specs in start order (index * 3s is
+// the stagger delay). Temperature uses the -interval flag; the system metrics
+// read their *_POLL_INTERVAL env vars (default 60s). Extracted from main() so
+// tests can check it. Python analogy: a factory returning a list of dataclasses.
+func buildPollSpecs(sensor SensorReader, metrics *SystemMetrics, tempIntervalSec int) []pollSpec {
+	const defaultSec = 60
+	sec := func(d int) time.Duration { return time.Duration(d) * time.Second }
+	return []pollSpec{
+		{"temperature", sec(tempIntervalSec), wrapSensorReader(sensor)},
+		{"cpu", sec(getEnvInt("CPU_POLL_INTERVAL", defaultSec)), metrics.ReadCPU},
+		{"memory", sec(getEnvInt("MEMORY_POLL_INTERVAL", defaultSec)), metrics.ReadMemory},
+		{"swap", sec(getEnvInt("SWAP_POLL_INTERVAL", defaultSec)), metrics.ReadSwap},
+		{"disk", sec(getEnvInt("DISK_POLL_INTERVAL", defaultSec)), metrics.ReadDisk},
+		{"load", sec(getEnvInt("LOAD_POLL_INTERVAL", defaultSec)), metrics.ReadLoad},
+	}
+}
+
 // Poller is a struct that ties together a sensor reader, a database store, and a db connection.
 // It runs an infinite loop: read -> insert -> prune -> sleep.
 // In Python you'd write a class with __init__ setting self.sensor, self.store, self.db.
