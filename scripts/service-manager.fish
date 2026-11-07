@@ -2,18 +2,18 @@
 # service-manager.fish -- Manage the temp-tracker systemd service.
 #
 # Usage:
-#   ./service-manager.fish status              # user service status
-#   ./service-manager.fish start               # user service start
-#   ./service-manager.fish stop                # user service stop
-#   ./service-manager.fish restart             # user service restart
-#   ./service-manager.fish logs                # user service logs (last 50 lines)
-#   ./service-manager.fish logs -f             # user service logs (follow)
+#   ./scripts/service-manager.fish status              # user service status
+#   ./scripts/service-manager.fish start               # user service start
+#   ./scripts/service-manager.fish stop                # user service stop
+#   ./scripts/service-manager.fish restart             # user service restart
+#   ./scripts/service-manager.fish logs                # user service logs (last 50 lines)
+#   ./scripts/service-manager.fish logs -f             # user service logs (follow)
 #
 # Add --system anywhere for system service (requires sudo):
-#   ./service-manager.fish --system status
-#   ./service-manager.fish --system stop
-#   ./service-manager.fish --system restart
-#   ./service-manager.fish --system logs -f
+#   ./scripts/service-manager.fish --system status
+#   ./scripts/service-manager.fish --system stop
+#   ./scripts/service-manager.fish --system restart
+#   ./scripts/service-manager.fish --system logs -f
 #
 # In Fish (unlike Bash), variables use $var without braces, and command substitution is (cmd).
 # In Fish (unlike Python), there is no return statement; functions return exit status ($status).
@@ -31,6 +31,11 @@ set -g COMMAND ""
 set -g FOLLOW 0
 
 # Logging configuration -- like Python's logging.basicConfig(level=logging.INFO).
+# Project root and log directory. This script lives in scripts/, so the root is
+# one level up. Like Python: ROOT = Path(__file__).resolve().parent.parent.
+# "status filename" is Fish's __file__ (there is no $argv[0] for the script path).
+set -g PROJECT_ROOT (cd (dirname (status filename))/..; and pwd)
+set -g LOG_DIR "$PROJECT_ROOT/logs"
 set -g LOG_LEVEL (string upper (echo $LOG_LEVEL | string trim))
 test -z "$LOG_LEVEL"; and set LOG_LEVEL "INFO"
 
@@ -107,7 +112,8 @@ function log
 
     # Append to log file (plain text, no colors).
     # Like Python's with open('service-manager.log', 'a') as f: f.write(...)
-    echo "$log_line" >> service-manager.log
+    mkdir -p "$LOG_DIR"
+    echo "$log_line" >> "$LOG_DIR/service-manager.log"
 
     # Print to console with ANSI colors.
     # printf %b interprets backslash escapes (like \033 for colors).

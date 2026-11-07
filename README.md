@@ -24,7 +24,7 @@ A lightweight Go application that monitors CPU temperatures, system metrics (CPU
 ```bash
 git clone <repo-url> sensors-temp
 cd sensors-temp
-go build -o temp-tracker .
+mkdir -p bin && go build -o bin/temp-tracker .
 
 # Start PostgreSQL (required when DB_DRIVER=postgres)
 docker compose up -d
@@ -34,13 +34,13 @@ docker compose up -d
 
 ```bash
 # Run with PostgreSQL (default for helper scripts; the binary defaults to sqlite)
-DB_DRIVER=postgres ./temp-tracker -port 9091
+DB_DRIVER=postgres ./bin/temp-tracker -port 9091
 
 # Run with SQLite (fallback, no Docker needed)
-DB_DRIVER=sqlite ./temp-tracker -port 9091
+DB_DRIVER=sqlite ./bin/temp-tracker -port 9091
 
 # Custom configuration
-./temp-tracker -port 9090 -interval 60 -retain 48
+./bin/temp-tracker -port 9090 -interval 60 -retain 48
 ```
 
 Open `http://localhost:9091` in your browser.
@@ -51,10 +51,11 @@ Open `http://localhost:9091` in your browser.
 
 ```bash
 cd /home/lmex89/Documentos/probe/sensors-temp
-nohup ./temp-tracker -port 9091 -interval 30 > tracker.log 2>&1 &
+mkdir -p logs
+nohup ./bin/temp-tracker -port 9091 -interval 30 > logs/tracker.log 2>&1 &
 ```
 
-- Logs go to `tracker.log`
+- Logs go to `logs/tracker.log`
 - To stop: `pkill temp-tracker`
 
 ### systemd service (survives reboots)
@@ -64,32 +65,32 @@ The project includes helper scripts that create, enable, and start the service f
 #### User service (starts on login, no sudo)
 
 ```bash
-./setup-systemd-service.sh
+./scripts/setup-systemd-service.sh
 # or, if you prefer Fish:
-./setup-systemd-service.fish
+./scripts/setup-systemd-service.fish
 ```
 
 This installs `~/.config/systemd/user/temp-tracker.service` and uses the same settings as `cleanup-and-build.fish` (port **9091**, 60s polling intervals).
 
 - Check status: `systemctl --user status temp-tracker`
-- Stop: `systemctl --user stop temp-tracker` (or `./service-manager.sh stop`)
-- Restart: `systemctl --user restart temp-tracker` (or `./service-manager.sh restart`)
-- View logs: `journalctl --user -u temp-tracker -f` (or `./view-logs.sh -f`)
+- Stop: `systemctl --user stop temp-tracker` (or `./scripts/service-manager.sh stop`)
+- Restart: `systemctl --user restart temp-tracker` (or `./scripts/service-manager.sh restart`)
+- View logs: `journalctl --user -u temp-tracker -f` (or `./scripts/view-logs.sh -f`)
 
 #### System service (starts at boot, requires sudo)
 
 ```bash
-./setup-systemd-service.sh --system
+./scripts/setup-systemd-service.sh --system
 # or, if you prefer Fish:
-./setup-systemd-service.fish --system
+./scripts/setup-systemd-service.fish --system
 ```
 
 This installs `/etc/systemd/system/temp-tracker.service`, runs as your user, and starts automatically at boot.
 
 - Check status: `sudo systemctl status temp-tracker`
-- Stop: `sudo systemctl stop temp-tracker` (or `./service-manager.sh --system stop`)
-- Restart: `sudo systemctl restart temp-tracker` (or `./service-manager.sh --system restart`)
-- View logs: `sudo journalctl -u temp-tracker -f` (or `./view-logs.sh --system -f`)
+- Stop: `sudo systemctl stop temp-tracker` (or `./scripts/service-manager.sh --system stop`)
+- Restart: `sudo systemctl restart temp-tracker` (or `./scripts/service-manager.sh --system restart`)
+- View logs: `sudo journalctl -u temp-tracker -f` (or `./scripts/view-logs.sh --system -f`)
 
 #### Manual setup
 
@@ -124,7 +125,7 @@ sudo systemctl enable --now temp-tracker
 
 ```bash
 tmux new -s temp-tracker
-./temp-tracker -port 9091 -interval 30
+./bin/temp-tracker -port 9091 -interval 30
 # Detach: Ctrl+B, D
 # Reattach: tmux attach -t temp-tracker
 ```
@@ -135,13 +136,13 @@ tmux new -s temp-tracker
 
 ```bash
 # Create a gzip-compressed backup (saved to backups/)
-./backup-db.sh
+./scripts/backup-db.sh
 
 # List available backups
-./restore-db.sh
+./scripts/restore-db.sh
 
 # Restore from a specific backup file
-./restore-db.sh backups/sensors_temp_20260725_020000.sql.gz
+./scripts/restore-db.sh backups/sensors_temp_20260725_020000.sql.gz
 ```
 
 The backup script:
@@ -157,12 +158,12 @@ To run a daily backup at 02:00:
 # Add to crontab interactively
 crontab -e
 # Add this line:
-0 2 * * * /home/lmex89/Documentos/probe/sensors-temp/backup-db.sh >> /home/lmex89/Documentos/probe/sensors-temp/backups/cron.log 2>&1
+0 2 * * * /home/lmex89/Documentos/probe/sensors-temp/scripts/backup-db.sh >> /home/lmex89/Documentos/probe/sensors-temp/backups/cron.log 2>&1
 ```
 
 ```bash
 # Or add it in one command (no editor needed)
-(crontab -l 2>/dev/null; echo "0 2 * * * /home/lmex89/Documentos/probe/sensors-temp/backup-db.sh >> /home/lmex89/Documentos/probe/sensors-temp/backups/cron.log 2>&1") | crontab -
+(crontab -l 2>/dev/null; echo "0 2 * * * /home/lmex89/Documentos/probe/sensors-temp/scripts/backup-db.sh >> /home/lmex89/Documentos/probe/sensors-temp/backups/cron.log 2>&1") | crontab -
 
 # Verify it was added
 crontab -l
@@ -198,10 +199,10 @@ Examples:
 
 ```bash
 # Debug logging
-LOG_LEVEL=DEBUG ./temp-tracker
+LOG_LEVEL=DEBUG ./bin/temp-tracker
 
 # Override all intervals from env file
-source .env.example && ./temp-tracker
+source .env.example && ./bin/temp-tracker
 ```
 
 ## API endpoints
@@ -277,11 +278,13 @@ sensors-temp/
 |-- timeutil.go     TimeConverter + MeridaTimeConverter (UTC -> America/Merida)
 |-- handler.go      REST API endpoints
 |-- docker-compose.yml  PostgreSQL 17 Alpine container (port 5432)
-|-- setup-systemd-service.fish  Create/enable systemd user or system service
-|-- service-manager.fish       Start/stop/restart/status/logs for the service
-|-- cleanup-and-build.fish     Kill old process, rebuild, restart service
-|-- backup-db.sh          PostgreSQL backup via docker exec pg_dump
-|-- restore-db.sh         Restore from a gzip-compressed backup
+|-- scripts/
+|   |-- setup-systemd-service.fish/.sh  Create/enable systemd user or system service
+|   |-- service-manager.fish/.sh        Start/stop/restart/status/logs for the service
+|   |-- view-logs.fish/.sh              Show service logs
+|   |-- cleanup-and-build.fish          Kill old process, rebuild into bin/, restart
+|   |-- backup-db.fish/.sh              PostgreSQL backup via docker exec pg_dump
+|   `-- restore-db.sh                   Restore from a gzip-compressed backup
 |-- cmd/
 |   |-- spike-report/       On-demand spike analysis tool
 |   `-- migrate-to-postgres/ SQLite-to-PostgreSQL bulk migration tool
@@ -294,7 +297,9 @@ sensors-temp/
 |-- README.md       This file
 |-- go.mod / go.sum Go module files
 |-- temps.db        SQLite database (fallback backend, created at runtime)
-`-- temp-tracker    Compiled binary
+|-- bin/            Compiled binaries (ignored)
+|-- logs/           Script and server logs (ignored)
+`-- backups/        Database dumps (ignored)
 ```
 
 ## Log levels

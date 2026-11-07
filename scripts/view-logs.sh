@@ -2,10 +2,10 @@
 # view-logs.sh -- Show temp-tracker service logs.
 #
 # Usage:
-#   ./view-logs.sh          # user service logs (last 50 lines)
-#   ./view-logs.sh -f       # user service logs (follow)
-#   ./view-logs.sh --system # system service logs (last 50 lines)
-#   ./view-logs.sh --system -f # system service logs (follow)
+#   ./scripts/view-logs.sh          # user service logs (last 50 lines)
+#   ./scripts/view-logs.sh -f       # user service logs (follow)
+#   ./scripts/view-logs.sh --system # system service logs (last 50 lines)
+#   ./scripts/view-logs.sh --system -f # system service logs (follow)
 #
 # In Bash (unlike Fish), variable substitution uses ${var} or $var,
 # and command substitution is $(cmd).

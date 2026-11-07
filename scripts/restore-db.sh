@@ -12,15 +12,15 @@
 #      container, replacing all existing data in the target database.
 #
 # USAGE
-#   ./restore-db.sh                                           # list available backups
-#   ./restore-db.sh backups/sensors_temp_20260725_020000.sql.gz  # restore from file
+#   ./scripts/restore-db.sh                                           # list available backups
+#   ./scripts/restore-db.sh backups/sensors_temp_20260725_020000.sql.gz  # restore from file
 #
 # WARNINGS
 #   - This is a DESTRUCTIVE operation. All current data in the database will be
 #     replaced by the contents of the backup file.
 #   - The script asks for interactive confirmation before proceeding.
 #   - When running from cron or CI, pipe `yes` into stdin:
-#       yes | ./restore-db.sh backups/sensors_temp_20260725_020000.sql.gz
+#       yes | ./scripts/restore-db.sh backups/sensors_temp_20260725_020000.sql.gz
 #
 # DEPENDENCIES
 #   docker, docker compose, gunzip
@@ -40,6 +40,11 @@ log_error()   { echo "[$(_ts)] [ERROR]   $*" >&2; }
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 log_debug "Script directory: ${SCRIPT_DIR}"
 
+# This script lives in scripts/, so the project root (docker-compose.yml,
+# backups/) is one level up. Like Path(__file__).resolve().parent.parent.
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+log_debug "Project root: ${PROJECT_ROOT}"
+
 # -- Database configuration ----------------------------------------------------
 # These values match docker-compose.yml.
 POSTGRES_USER="tracker"
@@ -48,7 +53,7 @@ POSTGRES_DB="sensors_temp"
 DB_SERVICE="postgres"
 
 # -- Locate the DB container ---------------------------------------------------
-COMPOSE_FILE="${SCRIPT_DIR}/docker-compose.yml"
+COMPOSE_FILE="${PROJECT_ROOT}/docker-compose.yml"
 CONTAINER_NAME=$(docker compose -f "$COMPOSE_FILE" ps -q "$DB_SERVICE" 2>/dev/null)
 
 if [[ -z "$CONTAINER_NAME" ]]; then
@@ -59,7 +64,7 @@ fi
 log_debug "Target container: ${CONTAINER_NAME}"
 
 # -- List mode: no arguments -> show available backups --------------------------
-BACKUP_DIR="${SCRIPT_DIR}/backups"
+BACKUP_DIR="${PROJECT_ROOT}/backups"
 
 if [[ $# -eq 0 ]]; then
   log_info "Available backups in ${BACKUP_DIR}:"
@@ -89,15 +94,15 @@ fi
 # $1 is the first CLI argument (like sys.argv[1] in Python).
 BACKUP_FILE="$1"
 
-# If the path is relative, make it absolute relative to the script directory.
+# If the path is relative, make it absolute relative to the project root.
 # This makes the script safe to run from cron where cwd may differ.
 if [[ ! "$BACKUP_FILE" = /* ]]; then
-  BACKUP_FILE="${SCRIPT_DIR}/${BACKUP_FILE}"
+  BACKUP_FILE="${PROJECT_ROOT}/${BACKUP_FILE}"
 fi
 
 if [[ ! -f "$BACKUP_FILE" ]]; then
   log_error "Backup file not found: ${BACKUP_FILE}"
-  log_error "Run ./restore-db.sh with no arguments to list available backups."
+  log_error "Run ./scripts/restore-db.sh with no arguments to list available backups."
   exit 1
 fi
 
