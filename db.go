@@ -1,6 +1,8 @@
 package main
 
 import (
+	"sensors-temp/internal/timeutil"
+
 	"database/sql"
 	"fmt"
 	"strings"
@@ -73,11 +75,11 @@ type Store interface {
 // SQLiteStore implements the Store interface using SQLite.
 // It holds a TimeConverter for converting UTC timestamps to local time.
 type SQLiteStore struct {
-	converter TimeConverter
+	converter timeutil.TimeConverter
 }
 
 func NewSQLiteStore() *SQLiteStore {
-	return &SQLiteStore{converter: NewMeridaTimeConverter()}
+	return &SQLiteStore{converter: timeutil.NewMeridaTimeConverter()}
 }
 
 // InitDB opens (or creates) the temps.db SQLite file and ensures the readings table exists.
@@ -255,7 +257,7 @@ func (s *SQLiteStore) Query(db *sql.DB, window TimeWindow, metricType string) ([
 		args = append(args, fmt.Sprintf("-%d hours", window.Hours))
 	} else {
 		conds = append(conds, "created_at >= ? AND created_at <= ?")
-		args = append(args, window.From.UTC().Format(dbTimeLayout), window.To.UTC().Format(dbTimeLayout))
+		args = append(args, window.From.UTC().Format(timeutil.DBLayout), window.To.UTC().Format(timeutil.DBLayout))
 	}
 
 	rows, err := db.Query(

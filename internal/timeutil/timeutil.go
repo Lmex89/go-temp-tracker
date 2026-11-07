@@ -1,7 +1,8 @@
-package main
+package timeutil
 
 import (
 	"fmt"
+	"log"
 	"strings"
 	"time"
 )
@@ -11,9 +12,9 @@ import (
 // The reference is: Mon Jan 2 15:04:05 MST 2006 -> "2006-01-02 15:04:05"
 // Think of it as: YYYY-MM-DD HH:MM:SS but with specific numbers (01/02 03:04:05PM '06 -0700).
 const (
-	dbTimeLayout        = "2006-01-02 15:04:05"   // Format stored in SQLite (UTC)
-	frontendTimeLayout  = "2006-01-02T15:04"      // Format from HTML datetime-local input (with T separator)
-	frontendTimeLayout2 = "2006-01-02 15:04"      // Alternative format (with space separator)
+	DBLayout            = "2006-01-02 15:04:05" // Format stored in SQLite (UTC)
+	frontendTimeLayout  = "2006-01-02T15:04"    // Format from HTML datetime-local input (with T separator)
+	frontendTimeLayout2 = "2006-01-02 15:04"    // Alternative format (with space separator)
 )
 
 // TimeConverter is an interface for converting UTC timestamps to a local timezone.
@@ -34,7 +35,8 @@ type MeridaTimeConverter struct {
 func NewMeridaTimeConverter() *MeridaTimeConverter {
 	loc, err := time.LoadLocation("America/Merida")
 	if err != nil {
-		Logger.Error("Failed to load America/Merida timezone: %v", err)
+		// Uses stdlib log: internal/logging does not exist yet (ticket #24).
+		log.Printf("Failed to load America/Merida timezone: %v", err)
 		loc = time.UTC
 	}
 	return &MeridaTimeConverter{location: loc}
@@ -53,17 +55,17 @@ func meridaLocation() *time.Location {
 
 // ParseTimestampInput accepts frontend date-time strings or database timestamps
 // and normalizes them to UTC for SQLite queries.
-// 
+//
 // This is like Python's datetime.fromisoformat() or dateutil.parser.parse(),
 // but Go doesn't have a universal parser -- we try multiple formats explicitly.
-// 
+//
 // Supported formats (tried in order):
 // 1. RFC3339Nano -- ISO 8601 with nanoseconds (e.g., "2024-01-15T10:30:00.000Z")
 // 2. RFC3339 -- ISO 8601 without nanoseconds (e.g., "2024-01-15T10:30:00Z")
-// 3. dbTimeLayout -- Database format (e.g., "2024-01-15 10:30:00")
+// 3. DBLayout -- Database format (e.g., "2024-01-15 10:30:00")
 // 4. frontendTimeLayout -- HTML datetime-local with T (e.g., "2024-01-15T10:30")
 // 5. frontendTimeLayout2 -- HTML datetime-local with space (e.g., "2024-01-15 10:30")
-// 
+//
 // Returns (time.Time, error) -- Go's error handling pattern instead of exceptions.
 // You MUST check err != nil before using the time value.
 func ParseTimestampInput(raw string) (time.Time, error) {
@@ -73,34 +75,27 @@ func ParseTimestampInput(raw string) (time.Time, error) {
 		return time.Time{}, fmt.Errorf("empty timestamp")
 	}
 
-	Logger.Debug("ParseTimestampInput raw=%q", raw)
-
 	// Try RFC3339Nano first (most precise, includes timezone like "Z" for UTC).
 	// time.Parse returns (time.Time, error) -- like Python's datetime.fromisoformat() but with explicit error.
 	if t, err := time.Parse(time.RFC3339Nano, raw); err == nil {
-		Logger.Debug("Parsed as RFC3339Nano -> UTC=%s", t.UTC().Format(dbTimeLayout))
-		return t.UTC(), nil  // Convert to UTC for consistent database queries.
+		return t.UTC(), nil // Convert to UTC for consistent database queries.
 	}
 	// Try RFC3339 (ISO 8601 without nanoseconds).
 	if t, err := time.Parse(time.RFC3339, raw); err == nil {
-		Logger.Debug("Parsed as RFC3339 -> UTC=%s", t.UTC().Format(dbTimeLayout))
 		return t.UTC(), nil
 	}
 	// Try database format (assumed to be UTC).
 	// ParseInLocation parses as if the time is in the given location -- like Python's .replace(tzinfo=...).
-	if t, err := time.ParseInLocation(dbTimeLayout, raw, time.UTC); err == nil {
-		Logger.Debug("Parsed as dbTimeLayout(UTC) -> UTC=%s", t.UTC().Format(dbTimeLayout))
+	if t, err := time.ParseInLocation(DBLayout, raw, time.UTC); err == nil {
 		return t.UTC(), nil
 	}
 
 	// Try frontend formats (assumed to be in Merida local time).
 	loc := meridaLocation()
 	if t, err := time.ParseInLocation(frontendTimeLayout, raw, loc); err == nil {
-		Logger.Debug("Parsed as frontendTimeLayout(Merida) -> UTC=%s", t.UTC().Format(dbTimeLayout))
 		return t.UTC(), nil
 	}
 	if t, err := time.ParseInLocation(frontendTimeLayout2, raw, loc); err == nil {
-		Logger.Debug("Parsed as frontendTimeLayout2(Merida) -> UTC=%s", t.UTC().Format(dbTimeLayout))
 		return t.UTC(), nil
 	}
 

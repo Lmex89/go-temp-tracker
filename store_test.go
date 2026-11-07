@@ -1,6 +1,8 @@
 package main
 
 import (
+	"sensors-temp/internal/timeutil"
+
 	"database/sql"
 	"sort"
 	"strings"
@@ -55,7 +57,7 @@ func TestSQLiteQuery(t *testing.T) {
 	for _, s := range seed {
 		_, err := db.Exec(
 			`INSERT INTO readings (sensor, temp_c, metric_type, unit, created_at) VALUES (?, 1.0, ?, ?, ?)`,
-			s.sensor, s.metric, s.unit, s.at.Format(dbTimeLayout),
+			s.sensor, s.metric, s.unit, s.at.Format(timeutil.DBLayout),
 		)
 		if err != nil {
 			t.Fatalf("seed: %v", err)
@@ -143,7 +145,7 @@ func TestSQLiteQueryLatest(t *testing.T) {
 	for _, s := range seed {
 		_, err := db.Exec(
 			`INSERT INTO readings (sensor, temp_c, metric_type, unit, created_at) VALUES (?, ?, ?, 'x', ?)`,
-			s.sensor, s.val, s.metric, base.Add(s.at).Format(dbTimeLayout),
+			s.sensor, s.val, s.metric, base.Add(s.at).Format(timeutil.DBLayout),
 		)
 		if err != nil {
 			t.Fatalf("seed: %v", err)
@@ -204,7 +206,7 @@ func TestSQLitePrune(t *testing.T) {
 			for _, s := range seed {
 				if _, err := db.Exec(
 					`INSERT INTO readings (sensor, temp_c, metric_type, unit, created_at) VALUES (?, 1, ?, 'x', ?)`,
-					s.sensor, s.metric, s.at.Format(dbTimeLayout),
+					s.sensor, s.metric, s.at.Format(timeutil.DBLayout),
 				); err != nil {
 					t.Fatalf("seed: %v", err)
 				}
