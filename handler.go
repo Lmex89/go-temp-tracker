@@ -52,10 +52,10 @@ func handleTemps(store Store, db *sql.DB) http.HandlerFunc {
 			}
 
 			Logger.Debug("Querying range UTC from=%s to=%s", fromTime.UTC().Format(dbTimeLayout), toTime.UTC().Format(dbTimeLayout))
-			readings = store.QueryByRange(
+			readings = store.QueryWindow(
 				db,
-				fromTime.UTC().Format(dbTimeLayout),
-				toTime.UTC().Format(dbTimeLayout),
+				TimeWindow{From: fromTime, To: toTime},
+				"temperature",
 			)
 		} else {
 			hours := 1
@@ -67,7 +67,7 @@ func handleTemps(store Store, db *sql.DB) http.HandlerFunc {
 				}
 			}
 			Logger.Debug("GET /api/temps?hours=%d from %s", hours, r.RemoteAddr)
-			readings = store.Query(db, hours)
+			readings = store.QueryWindow(db, TimeWindow{Hours: hours}, "temperature")
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -84,7 +84,7 @@ func handleCurrent(store Store, db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		Logger.Debug("GET /api/current from %s", r.RemoteAddr)
 
-		readings := store.QueryLatestPerSensor(db)
+		readings := store.QueryLatest(db, "temperature")
 
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(readings); err != nil {
@@ -130,10 +130,9 @@ func handleMetricByType(store Store, db *sql.DB, metricType string) http.Handler
 				return
 			}
 
-			readings = store.QueryByRangeAndType(
+			readings = store.QueryWindow(
 				db,
-				fromTime.UTC().Format(dbTimeLayout),
-				toTime.UTC().Format(dbTimeLayout),
+				TimeWindow{From: fromTime, To: toTime},
 				metricType,
 			)
 		} else {
@@ -143,7 +142,7 @@ func handleMetricByType(store Store, db *sql.DB, metricType string) http.Handler
 					hours = v
 				}
 			}
-			readings = store.QueryByType(db, metricType, hours)
+			readings = store.QueryWindow(db, TimeWindow{Hours: hours}, metricType)
 		}
 
 		// For CPU metrics, apply view filter if specified.
@@ -195,7 +194,7 @@ func filterCPUReadingsByView(readings []Reading, view string) []Reading {
 // handleCurrentByType returns an HTTP handler for getting the latest reading of a specific metric type.
 func handleCurrentByType(store Store, db *sql.DB, metricType string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		readings := store.QueryLatestByType(db, metricType)
+		readings := store.QueryLatest(db, metricType)
 
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(readings); err != nil {
