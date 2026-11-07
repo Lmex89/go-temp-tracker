@@ -37,20 +37,13 @@ type TimeWindow struct {
 type Store interface {
 	InitDB() *sql.DB
 	Insert(db *sql.DB, sensor string, temp float64, metricType string, unit string)
-	// QueryWindow is the new orthogonal query (window x metricType). It is not
-	// called "Query" yet because Go has no overloading and the old Query stays
-	// for now. An empty metricType returns every metric.
-	QueryWindow(db *sql.DB, window TimeWindow, metricType string) []Reading
-	Query(db *sql.DB, hours int) []Reading
-	QueryByRange(db *sql.DB, from, to string) []Reading
+	// Query returns readings inside a TimeWindow (relative Hours or absolute
+	// From/To), optionally filtered by metric type (empty = every metric).
+	Query(db *sql.DB, window TimeWindow, metricType string) []Reading
 	// QueryLatest: newest reading per sensor for one (required) metric type.
 	QueryLatest(db *sql.DB, metricType string) []Reading
-	QueryLatestPerSensor(db *sql.DB) []Reading
-	QueryByType(db *sql.DB, metricType string, hours int) []Reading
-	QueryByRangeAndType(db *sql.DB, from, to, metricType string) []Reading
-	QueryLatestByType(db *sql.DB, metricType string) []Reading
-	Prune(db *sql.DB, hours int)
-	PruneByType(db *sql.DB, metricType string, hours int)
+	// Prune deletes readings older than retainHours; empty metricType = all types.
+	Prune(db *sql.DB, metricType string, retainHours int)
 }
 
 // SQLiteStore implements the Store interface using SQLite.
@@ -217,10 +210,10 @@ func (s *SQLiteStore) Insert(db *sql.DB, sensor string, temp float64, metricType
 	}
 }
 
-// QueryWindow returns readings inside a TimeWindow, optionally filtered by
-// metric type (empty string = all metrics). One scan loop handles every case.
-func (s *SQLiteStore) QueryWindow(db *sql.DB, window TimeWindow, metricType string) []Reading {
-	Logger.Debug("QueryWindow window=%+v metric=%q", window, metricType)
+// Query returns readings inside a TimeWindow, optionally filtered by
+// metric type (empty string = all metrics).
+func (s *SQLiteStore) Query(db *sql.DB, window TimeWindow, metricType string) []Reading {
+	Logger.Debug("Query window=%+v metric=%q", window, metricType)
 
 	// Build the WHERE clause piece by piece; args line up with the "?" marks.
 	var conds []string
@@ -243,244 +236,19 @@ func (s *SQLiteStore) QueryWindow(db *sql.DB, window TimeWindow, metricType stri
 		args...,
 	)
 	if err != nil {
-		Logger.Error("QueryWindow failed: %v", err)
-		return nil
-	}
-	defer func() {
-		if err := rows.Close(); err != nil {
-			Logger.Error("Failed to close rows: %v", err)
-		}
-	}()
-
-	var readings []Reading
-	for rows.Next() {
-		var r Reading
-		if err := rows.Scan(&r.Sensor, &r.TempC, &r.MetricType, &r.Unit, &r.CreatedAt); err != nil {
-			Logger.Error("Failed to scan row: %v", err)
-			continue
-		}
-		r.CreatedAt = s.converter.ToLocal(r.CreatedAt)
-		readings = append(readings, r)
-	}
-	if err := rows.Err(); err != nil {
-		Logger.Error("Row iteration error: %v", err)
-	}
-
-	Logger.Info("QueryWindow returned %d reading(s)", len(readings))
-	return readings
-}
-
-// Query retrieves temperature readings from the last N hours (backward compat -- temperature only).
-// Now filters by metric_type = 'temperature' so it doesn't mix in CPU/memory/etc.
-func (s *SQLiteStore) Query(db *sql.DB, hours int) []Reading {
-	Logger.Debug("Querying temperature readings from last %d hour(s)", hours)
-
-	rows, err := db.Query(
-		`SELECT sensor, temp_c, metric_type, unit, created_at FROM readings
-		 WHERE metric_type = 'temperature' AND created_at >= datetime('now', ?)
-		 ORDER BY created_at ASC`,
-		fmt.Sprintf("-%d hours", hours),
-	)
-	if err != nil {
 		Logger.Error("Query failed: %v", err)
 		return nil
 	}
-	defer func() {
-		if err := rows.Close(); err != nil {
-			Logger.Error("Failed to close rows: %v", err)
-		}
-	}()
+	readings := s.scanRows(rows)
 
-	var readings []Reading
-	for rows.Next() {
-		var r Reading
-		if err := rows.Scan(&r.Sensor, &r.TempC, &r.MetricType, &r.Unit, &r.CreatedAt); err != nil {
-			Logger.Error("Failed to scan row: %v", err)
-			continue
-		}
-		r.CreatedAt = s.converter.ToLocal(r.CreatedAt)
-		readings = append(readings, r)
-	}
-
-	if err := rows.Err(); err != nil {
-		Logger.Error("Row iteration error: %v", err)
-	}
-
-	Logger.Info("Queried %d temperature reading(s) from last %d hour(s)", len(readings), hours)
-	return readings
-}
-
-// QueryByRange retrieves temperature readings between two UTC timestamps (backward compat).
-func (s *SQLiteStore) QueryByRange(db *sql.DB, from, to string) []Reading {
-	Logger.Debug("Querying temperature readings from %s to %s", from, to)
-
-	rows, err := db.Query(
-		`SELECT sensor, temp_c, metric_type, unit, created_at FROM readings
-		 WHERE metric_type = 'temperature' AND created_at >= ? AND created_at <= ?
-		 ORDER BY created_at ASC`,
-		from, to,
-	)
-	if err != nil {
-		Logger.Error("Query by range failed: %v", err)
-		return nil
-	}
-	defer func() {
-		if err := rows.Close(); err != nil {
-			Logger.Error("Failed to close rows: %v", err)
-		}
-	}()
-
-	var readings []Reading
-	for rows.Next() {
-		var r Reading
-		if err := rows.Scan(&r.Sensor, &r.TempC, &r.MetricType, &r.Unit, &r.CreatedAt); err != nil {
-			Logger.Error("Failed to scan row: %v", err)
-			continue
-		}
-		r.CreatedAt = s.converter.ToLocal(r.CreatedAt)
-		readings = append(readings, r)
-	}
-
-	if err := rows.Err(); err != nil {
-		Logger.Error("Row iteration error: %v", err)
-	}
-
-	Logger.Info("Queried %d temperature reading(s) from %s to %s", len(readings), from, to)
-	return readings
-}
-
-// QueryLatestPerSensor gets the most recent temperature reading for each unique sensor (backward compat).
-func (s *SQLiteStore) QueryLatestPerSensor(db *sql.DB) []Reading {
-	Logger.Debug("Querying latest temperature per sensor")
-
-	rows, err := db.Query(
-		`SELECT sensor, temp_c, metric_type, unit, created_at FROM readings
-		 WHERE metric_type = 'temperature'
-		 AND id IN (SELECT MAX(id) FROM readings WHERE metric_type = 'temperature' GROUP BY sensor)
-		 ORDER BY sensor`,
-	)
-	if err != nil {
-		Logger.Error("Query latest per sensor failed: %v", err)
-		return nil
-	}
-	defer func() {
-		if err := rows.Close(); err != nil {
-			Logger.Error("Failed to close rows: %v", err)
-		}
-	}()
-
-	var readings []Reading
-	for rows.Next() {
-		var r Reading
-		if err := rows.Scan(&r.Sensor, &r.TempC, &r.MetricType, &r.Unit, &r.CreatedAt); err != nil {
-			Logger.Error("Failed to scan row: %v", err)
-			continue
-		}
-		r.CreatedAt = s.converter.ToLocal(r.CreatedAt)
-		readings = append(readings, r)
-	}
-
-	if err := rows.Err(); err != nil {
-		Logger.Error("Row iteration error: %v", err)
-	}
-
-	for _, r := range readings {
-		Logger.Debug("Latest %s: %.2fC at %s", r.Sensor, r.TempC, r.CreatedAt)
-	}
-
-	return readings
-}
-
-// QueryByType retrieves readings for a specific metric type from the last N hours.
-// Like Query() but filters by metric_type.
-func (s *SQLiteStore) QueryByType(db *sql.DB, metricType string, hours int) []Reading {
-	Logger.Debug("Querying [%s] readings from last %d hour(s)", metricType, hours)
-
-	rows, err := db.Query(
-		`SELECT sensor, temp_c, metric_type, unit, created_at FROM readings
-		 WHERE metric_type = ? AND created_at >= datetime('now', ?)
-		 ORDER BY created_at ASC`,
-		metricType, fmt.Sprintf("-%d hours", hours),
-	)
-	if err != nil {
-		Logger.Error("QueryByType failed: %v", err)
-		return nil
-	}
-	defer func() {
-		if err := rows.Close(); err != nil {
-			Logger.Error("Failed to close rows: %v", err)
-		}
-	}()
-
-	var readings []Reading
-	for rows.Next() {
-		var r Reading
-		if err := rows.Scan(&r.Sensor, &r.TempC, &r.MetricType, &r.Unit, &r.CreatedAt); err != nil {
-			Logger.Error("Failed to scan row: %v", err)
-			continue
-		}
-		r.CreatedAt = s.converter.ToLocal(r.CreatedAt)
-		readings = append(readings, r)
-	}
-
-	if err := rows.Err(); err != nil {
-		Logger.Error("Row iteration error: %v", err)
-	}
-
-	Logger.Info("Queried %d [%s] reading(s) from last %d hour(s)", len(readings), metricType, hours)
-	return readings
-}
-
-// QueryByRangeAndType retrieves readings for a specific metric type between two timestamps.
-func (s *SQLiteStore) QueryByRangeAndType(db *sql.DB, from, to, metricType string) []Reading {
-	Logger.Debug("Querying [%s] readings from %s to %s", metricType, from, to)
-
-	rows, err := db.Query(
-		`SELECT sensor, temp_c, metric_type, unit, created_at FROM readings
-		 WHERE metric_type = ? AND created_at >= ? AND created_at <= ?
-		 ORDER BY created_at ASC`,
-		metricType, from, to,
-	)
-	if err != nil {
-		Logger.Error("QueryByRangeAndType failed: %v", err)
-		return nil
-	}
-	defer func() {
-		if err := rows.Close(); err != nil {
-			Logger.Error("Failed to close rows: %v", err)
-		}
-	}()
-
-	var readings []Reading
-	for rows.Next() {
-		var r Reading
-		if err := rows.Scan(&r.Sensor, &r.TempC, &r.MetricType, &r.Unit, &r.CreatedAt); err != nil {
-			Logger.Error("Failed to scan row: %v", err)
-			continue
-		}
-		r.CreatedAt = s.converter.ToLocal(r.CreatedAt)
-		readings = append(readings, r)
-	}
-
-	if err := rows.Err(); err != nil {
-		Logger.Error("Row iteration error: %v", err)
-	}
-
-	Logger.Info("Queried %d [%s] reading(s)", len(readings), metricType)
+	Logger.Info("Query returned %d reading(s)", len(readings))
 	return readings
 }
 
 // QueryLatest returns the newest reading per sensor for ONE metric type.
-// metricType is required (no "all metrics" variant). It will replace
-// QueryLatestByType/QueryLatestPerSensor; for now it delegates so the SQL
-// (group by sensor, take MAX(id)) lives in a single place. Python analogy: a
-// new public name that wraps the old function until the callers are migrated.
+// metricType is required (no "all metrics" variant). The SQL groups by sensor
+// and takes MAX(id).
 func (s *SQLiteStore) QueryLatest(db *sql.DB, metricType string) []Reading {
-	return s.QueryLatestByType(db, metricType)
-}
-
-// QueryLatestByType gets the most recent reading per unique sensor for a specific metric type.
-func (s *SQLiteStore) QueryLatestByType(db *sql.DB, metricType string) []Reading {
 	Logger.Debug("Querying latest [%s] per sensor", metricType)
 
 	rows, err := db.Query(
@@ -491,9 +259,16 @@ func (s *SQLiteStore) QueryLatestByType(db *sql.DB, metricType string) []Reading
 		metricType, metricType,
 	)
 	if err != nil {
-		Logger.Error("QueryLatestByType failed: %v", err)
+		Logger.Error("QueryLatest failed: %v", err)
 		return nil
 	}
+	return s.scanRows(rows)
+}
+
+// scanRows drains rows into Reading values (written once, shared by every
+// query). It closes rows itself, like Python's "with cursor:" block, and
+// converts created_at from UTC to local time.
+func (s *SQLiteStore) scanRows(rows *sql.Rows) []Reading {
 	defer func() {
 		if err := rows.Close(); err != nil {
 			Logger.Error("Failed to close rows: %v", err)
@@ -510,55 +285,36 @@ func (s *SQLiteStore) QueryLatestByType(db *sql.DB, metricType string) []Reading
 		r.CreatedAt = s.converter.ToLocal(r.CreatedAt)
 		readings = append(readings, r)
 	}
-
 	if err := rows.Err(); err != nil {
 		Logger.Error("Row iteration error: %v", err)
 	}
-
 	return readings
 }
 
-// Prune removes ALL readings older than the specified number of hours (any metric type).
-// Like Python: cursor.execute("DELETE FROM readings WHERE created_at < datetime('now', '-6 hours')").
-func (s *SQLiteStore) Prune(db *sql.DB, hours int) {
-	Logger.Debug("Pruning all readings older than %d hour(s)", hours)
-
-	result, err := execWithRetry(
-		db,
-		"DELETE FROM readings WHERE created_at < datetime('now', ?)",
-		fmt.Sprintf("-%d hours", hours),
-	)
-	if err != nil {
-		Logger.Error("Prune failed: %v", err)
-		return
-	}
-
-	deleted, _ := result.RowsAffected()
-	if deleted > 0 {
-		Logger.Info("Pruned %d old reading(s) (>%dh)", deleted, hours)
-	} else {
-		Logger.Debug("No old readings to prune")
-	}
-}
-
-// PruneByType removes readings older than N hours for a specific metric type.
-// Different metric types can have different retention periods.
-// CPU data might only need 24h, while temperature data is kept for a year.
-func (s *SQLiteStore) PruneByType(db *sql.DB, metricType string, hours int) {
+// Prune removes readings older than the given number of hours. An empty
+// metricType prunes every metric type (what the temperature Poller needs);
+// otherwise only that type is pruned, so metric types can have their own
+// retention. Python analogy: a DELETE with an optional extra WHERE clause.
+func (s *SQLiteStore) Prune(db *sql.DB, metricType string, hours int) {
 	Logger.Debug("Pruning [%s] readings older than %d hour(s)", metricType, hours)
 
-	result, err := execWithRetry(
-		db,
-		"DELETE FROM readings WHERE metric_type = ? AND created_at < datetime('now', ?)",
-		metricType, fmt.Sprintf("-%d hours", hours),
-	)
+	query := "DELETE FROM readings WHERE created_at < datetime('now', ?)"
+	args := []any{fmt.Sprintf("-%d hours", hours)}
+	if metricType != "" {
+		query += " AND metric_type = ?"
+		args = append(args, metricType)
+	}
+
+	result, err := execWithRetry(db, query, args...)
 	if err != nil {
-		Logger.Error("PruneByType failed for %s: %v", metricType, err)
+		Logger.Error("Prune failed for [%s]: %v", metricType, err)
 		return
 	}
 
 	deleted, _ := result.RowsAffected()
 	if deleted > 0 {
 		Logger.Info("Pruned %d old [%s] reading(s) (>%dh)", deleted, metricType, hours)
+	} else {
+		Logger.Debug("No old readings to prune")
 	}
 }

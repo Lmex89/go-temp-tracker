@@ -9,7 +9,7 @@ import (
 )
 
 // TestTempsAndCurrentHandlers checks the HTTP contract of /api/temps and
-// /api/current/* after the handlers moved to QueryWindow / QueryLatest.
+// /api/current/* after the handlers moved to Query / QueryLatest.
 // Same style as handler_test.go (SQLite via InitDB), but it cleans up its
 // own rows with a deferred DELETE (like a pytest fixture with teardown).
 func TestTempsAndCurrentHandlers(t *testing.T) {

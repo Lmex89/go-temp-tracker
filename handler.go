@@ -52,7 +52,7 @@ func handleTemps(store Store, db *sql.DB) http.HandlerFunc {
 			}
 
 			Logger.Debug("Querying range UTC from=%s to=%s", fromTime.UTC().Format(dbTimeLayout), toTime.UTC().Format(dbTimeLayout))
-			readings = store.QueryWindow(
+			readings = store.Query(
 				db,
 				TimeWindow{From: fromTime, To: toTime},
 				"temperature",
@@ -67,7 +67,7 @@ func handleTemps(store Store, db *sql.DB) http.HandlerFunc {
 				}
 			}
 			Logger.Debug("GET /api/temps?hours=%d from %s", hours, r.RemoteAddr)
-			readings = store.QueryWindow(db, TimeWindow{Hours: hours}, "temperature")
+			readings = store.Query(db, TimeWindow{Hours: hours}, "temperature")
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -130,7 +130,7 @@ func handleMetricByType(store Store, db *sql.DB, metricType string) http.Handler
 				return
 			}
 
-			readings = store.QueryWindow(
+			readings = store.Query(
 				db,
 				TimeWindow{From: fromTime, To: toTime},
 				metricType,
@@ -142,7 +142,7 @@ func handleMetricByType(store Store, db *sql.DB, metricType string) http.Handler
 					hours = v
 				}
 			}
-			readings = store.QueryWindow(db, TimeWindow{Hours: hours}, metricType)
+			readings = store.Query(db, TimeWindow{Hours: hours}, metricType)
 		}
 
 		// For CPU metrics, apply view filter if specified.

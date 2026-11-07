@@ -65,8 +65,8 @@ func newPGTestStore(t *testing.T) (*PostgresStore, *sql.DB) {
 	return store, db
 }
 
-// TestPostgresQueryWindow checks every TimeWindow x metricType combination.
-func TestPostgresQueryWindow(t *testing.T) {
+// TestPostgresQuery checks every TimeWindow x metricType combination.
+func TestPostgresQuery(t *testing.T) {
 	store, db := newPGTestStore(t)
 
 	now := time.Now().UTC()
@@ -111,7 +111,7 @@ func TestPostgresQueryWindow(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var sensors []string
-			for _, r := range store.QueryWindow(db, tt.window, tt.metricType) {
+			for _, r := range store.Query(db, tt.window, tt.metricType) {
 				sensors = append(sensors, r.Sensor)
 			}
 			sort.Strings(sensors)
@@ -175,6 +175,51 @@ func TestPostgresQueryLatest(t *testing.T) {
 				if v, ok := tt.want[r.Sensor]; !ok || r.TempC != v {
 					t.Errorf("sensor %s value %v, want %v (present=%v)", r.Sensor, r.TempC, v, ok)
 				}
+			}
+		})
+	}
+}
+
+// TestPostgresPrune mirrors TestSQLitePrune: typed prune and empty = all types.
+func TestPostgresPrune(t *testing.T) {
+	tests := []struct {
+		name       string
+		metricType string
+		want       []string
+	}{
+		{"one metric", "cpu", []string{"cpu/new", "temp/new", "temp/old"}},
+		{"all metrics", "", []string{"cpu/new", "temp/new"}},
+		{"unknown metric", "disk", []string{"cpu/new", "cpu/old", "temp/new", "temp/old"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store, db := newPGTestStore(t)
+			now := time.Now().UTC()
+			seed := []struct {
+				sensor, metric string
+				at             time.Time
+			}{
+				{"temp/new", "temperature", now.Add(-time.Hour)},
+				{"temp/old", "temperature", now.Add(-5 * time.Hour)},
+				{"cpu/new", "cpu", now.Add(-time.Hour)},
+				{"cpu/old", "cpu", now.Add(-5 * time.Hour)},
+			}
+			for _, s := range seed {
+				if _, err := db.Exec(
+					`INSERT INTO readings (sensor, temp_c, metric_type, unit, created_at) VALUES ($1, 1, $2, 'x', $3)`,
+					s.sensor, s.metric, s.at,
+				); err != nil {
+					t.Fatalf("seed: %v", err)
+				}
+			}
+			store.Prune(db, tt.metricType, 3)
+			var left []string
+			for _, r := range store.Query(db, TimeWindow{Hours: 100}, "") {
+				left = append(left, r.Sensor)
+			}
+			sort.Strings(left)
+			if strings.Join(left, ",") != strings.Join(tt.want, ",") {
+				t.Fatalf("got %v, want %v", left, tt.want)
 			}
 		})
 	}
