@@ -16,8 +16,14 @@
 # ============================================================
 
 # LOG_LEVEL env var controls verbosity. Like Python's logging.getLogger(__name__).
+# Project root and log directory. This script lives in scripts/, so the root is
+# one level up. Like Python: ROOT = Path(__file__).resolve().parent.parent.
+# "status filename" is Fish's __file__ (there is no $argv[0] for the script path).
+set -g PROJECT_ROOT (cd (dirname (status filename))/..; and pwd)
+set -g LOG_DIR "$PROJECT_ROOT/logs"
 set -g LOG_LEVEL (string upper (echo $LOG_LEVEL | string trim))
-set -g LOG_FILE "cleanup-and-build.log"
+set -g LOG_FILE "$LOG_DIR/cleanup-and-build.log"
+set -g BIN_DIR "$PROJECT_ROOT/bin"
 # Shared poll interval default (seconds).
 # Like a Python module-level constant: DEFAULT_INTERVAL = 60.
 set -g DEFAULT_INTERVAL 60
@@ -104,6 +110,7 @@ function log
 
     # Append to log file (plain text, no colors).
     # Like Python's with open('cleanup-and-build.log', 'a') as f: f.write(...).
+    mkdir -p "$LOG_DIR"
     echo "$log_line" >> $LOG_FILE
 
     # Print to console with ANSI colors.
@@ -138,8 +145,8 @@ end
 function remove_binary
     log INFO "Step 1: Removing binary"
     # test -f is like Python's os.path.isfile() or pathlib.Path.exists().
-    if test -f ./temp-tracker
-        rm ./temp-tracker
+    if test -f $BIN_DIR/temp-tracker
+        rm $BIN_DIR/temp-tracker
         log INFO "Binary removed successfully"
     else
         log WARN "No binary found to remove"
@@ -205,17 +212,18 @@ end
 # build_and_start -- rebuild the binary and launch the server in the background.
 #
 # In Python:
-#   result = subprocess.run(["go", "build", "-o", "temp-tracker", "."])
+#   result = subprocess.run(["go", "build", "-o", "bin/temp-tracker", "."])
 #   if result.returncode == 0:
 #       subprocess.Popen(["./temp-tracker", "-port", "9091", ...],
-#                        stdout=open("tracker.log", "w"),
+#                        stdout=open("logs/tracker.log", "w"),
 #                        start_new_session=True)
 function build_and_start
     log INFO "Step 3: Building binary"
 
-    # go build -- like Python's subprocess.run(['go', 'build', '-o', 'temp-tracker', '.']).
+    # go build -- like Python's subprocess.run(['go', 'build', '-o', 'bin/temp-tracker', '.']).
     # Check exit status with $status -- like subprocess.run().returncode.
-    go build -o temp-tracker .
+    mkdir -p $BIN_DIR
+    go build -o $BIN_DIR/temp-tracker .
     set -l build_status $status
 
     if test $build_status -eq 0
@@ -232,7 +240,7 @@ function build_and_start
             log INFO "Starting PostgreSQL via docker compose"
             docker compose up -d
         end
-        nohup env CPU_POLL_INTERVAL=$DEFAULT_INTERVAL MEMORY_POLL_INTERVAL=$DEFAULT_INTERVAL SWAP_POLL_INTERVAL=$DEFAULT_INTERVAL DISK_POLL_INTERVAL=$DEFAULT_INTERVAL LOAD_POLL_INTERVAL=$DEFAULT_INTERVAL DB_DRIVER=$DB_DRIVER DATABASE_URL=$DATABASE_URL ./temp-tracker -port 9091 -interval $DEFAULT_INTERVAL > tracker.log 2>&1 &
+        nohup env CPU_POLL_INTERVAL=$DEFAULT_INTERVAL MEMORY_POLL_INTERVAL=$DEFAULT_INTERVAL SWAP_POLL_INTERVAL=$DEFAULT_INTERVAL DISK_POLL_INTERVAL=$DEFAULT_INTERVAL LOAD_POLL_INTERVAL=$DEFAULT_INTERVAL DB_DRIVER=$DB_DRIVER DATABASE_URL=$DATABASE_URL $BIN_DIR/temp-tracker -port 9091 -interval $DEFAULT_INTERVAL > $LOG_DIR/tracker.log 2>&1 &
         log INFO "Server PID: $last_pid"
         log INFO "Dashboard: http://localhost:9091"
     else
@@ -256,6 +264,11 @@ function dispatch
     log INFO "Starting cleanup-and-build"
     log INFO "LOG_LEVEL=$LOG_LEVEL"
     log INFO "========================================"
+
+    # Run from the project root regardless of where the script was launched:
+    # go build, docker compose and temps.db all expect it.
+    # Like Python's os.chdir(PROJECT_ROOT).
+    cd $PROJECT_ROOT
 
     remove_binary
     kill_processes

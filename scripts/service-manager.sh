@@ -2,18 +2,18 @@
 # service-manager.sh -- Manage the temp-tracker systemd service.
 #
 # Usage:
-#   ./service-manager.sh status              # user service status
-#   ./service-manager.sh start               # user service start
-#   ./service-manager.sh stop                # user service stop
-#   ./service-manager.sh restart             # user service restart
-#   ./service-manager.sh logs                # user service logs (last 50 lines)
-#   ./service-manager.sh logs -f             # user service logs (follow)
+#   ./scripts/service-manager.sh status              # user service status
+#   ./scripts/service-manager.sh start               # user service start
+#   ./scripts/service-manager.sh stop                # user service stop
+#   ./scripts/service-manager.sh restart             # user service restart
+#   ./scripts/service-manager.sh logs                # user service logs (last 50 lines)
+#   ./scripts/service-manager.sh logs -f             # user service logs (follow)
 #
 # Add --system anywhere for system service (requires sudo):
-#   ./service-manager.sh --system status
-#   ./service-manager.sh --system stop
-#   ./service-manager.sh --system restart
-#   ./service-manager.sh --system logs -f
+#   ./scripts/service-manager.sh --system status
+#   ./scripts/service-manager.sh --system stop
+#   ./scripts/service-manager.sh --system restart
+#   ./scripts/service-manager.sh --system logs -f
 #
 # In Bash (unlike Fish), variable substitution uses ${var} or $var,
 # and command substitution is $(cmd).

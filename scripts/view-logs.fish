@@ -2,10 +2,10 @@
 # view-logs.fish -- Show temp-tracker service logs.
 #
 # Usage:
-#   ./view-logs.fish          # user service logs (last 50 lines)
-#   ./view-logs.fish -f       # user service logs (follow)
-#   ./view-logs.fish --system # system service logs (last 50 lines)
-#   ./view-logs.fish --system -f # system service logs (follow)
+#   ./scripts/view-logs.fish          # user service logs (last 50 lines)
+#   ./scripts/view-logs.fish -f       # user service logs (follow)
+#   ./scripts/view-logs.fish --system # system service logs (last 50 lines)
+#   ./scripts/view-logs.fish --system -f # system service logs (follow)
 #
 # In Fish (unlike Bash), variables use $var without braces, and command substitution is (cmd)
 # not $(cmd) or `cmd`.
@@ -15,6 +15,11 @@
 # ============================================================
 
 # LOG_LEVEL env var controls verbosity. Like Python's logging.getLogger(__name__).
+# Project root and log directory. This script lives in scripts/, so the root is
+# one level up. Like Python: ROOT = Path(__file__).resolve().parent.parent.
+# "status filename" is Fish's __file__ (there is no $argv[0] for the script path).
+set -g PROJECT_ROOT (cd (dirname (status filename))/..; and pwd)
+set -g LOG_DIR "$PROJECT_ROOT/logs"
 set -g LOG_LEVEL (string upper (echo $LOG_LEVEL | string trim))
 test -z "$LOG_LEVEL"; and set LOG_LEVEL "INFO"
 
@@ -59,7 +64,7 @@ set -g FOLLOW 0
 # log -- write a timestamped, leveled message to console and log file.
 #
 # Usage: log INFO "message"
-# Logs to view-logs.log in the current directory.
+# Logs to view-logs.log in logs/ at the project root.
 #
 # In Python:
 #   def log(level_name, message):
@@ -91,7 +96,8 @@ function log
     end
 
     set -l log_line "[$timestamp] [$level_name] $message"
-    echo "$log_line" >> view-logs.log
+    mkdir -p "$LOG_DIR"
+    echo "$log_line" >> "$LOG_DIR/view-logs.log"
 
     set -l color
     switch "$level_name"
