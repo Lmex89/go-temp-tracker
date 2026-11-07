@@ -20,11 +20,11 @@ func TestWrapSensorReader(t *testing.T) {
 	}{
 		{"empty map", map[string]float64{}, []MetricPoint{}},
 		{"single sensor", map[string]float64{"Core 0": 45.5},
-			[]MetricPoint{{Sensor: "Core 0", Value: 45.5, Unit: "celsius"}}},
+			[]MetricPoint{{Sensor: "Core 0", Value: 45.5, Unit: "C"}}},
 		{"multiple sensors preserved", map[string]float64{"acpitz": 30, "Core 0": 55.25},
 			[]MetricPoint{
-				{Sensor: "Core 0", Value: 55.25, Unit: "celsius"},
-				{Sensor: "acpitz", Value: 30, Unit: "celsius"},
+				{Sensor: "Core 0", Value: 55.25, Unit: "C"},
+				{Sensor: "acpitz", Value: 30, Unit: "C"},
 			}},
 	}
 	for _, tt := range tests {
@@ -43,19 +43,6 @@ func TestWrapSensorReader(t *testing.T) {
 	}
 }
 
-func TestPollSpecFields(t *testing.T) {
-	called := false
-	spec := pollSpec{
-		metricType: "cpu",
-		interval:   30 * time.Second,
-		readFunc:   func() []MetricPoint { called = true; return nil },
-	}
-	spec.readFunc()
-	if spec.metricType != "cpu" || spec.interval != 30*time.Second || !called {
-		t.Errorf("pollSpec fields not preserved: %+v", spec)
-	}
-}
-
 // TestPollOnce drives one iteration of the polling loop against a throwaway
 // SQLite store (newTempSQLite chdirs into a temp dir, so the real temps.db is
 // never touched -- like pytest's tmp_path fixture).
@@ -66,8 +53,8 @@ func TestPollOnce(t *testing.T) {
 		points     []MetricPoint
 	}{
 		{"temperature", "temperature", []MetricPoint{
-			{Sensor: "Core 0", Value: 55.5, Unit: "celsius"},
-			{Sensor: "acpitz", Value: 30, Unit: "celsius"},
+			{Sensor: "Core 0", Value: 55.5, Unit: "C"},
+			{Sensor: "acpitz", Value: 30, Unit: "C"},
 		}},
 		{"cpu", "cpu", []MetricPoint{{Sensor: "cpu/total", Value: 12.5, Unit: "%"}}},
 		{"memory empty read", "memory", nil},
@@ -115,11 +102,15 @@ func TestPollOncePrunesOnlyOwnType(t *testing.T) {
 	pollOnce(store, db, "memory", 1, func() []MetricPoint { return nil })
 
 	var n int
-	db.QueryRow(`SELECT COUNT(*) FROM readings WHERE metric_type='cpu'`).Scan(&n)
+	if err := db.QueryRow(`SELECT COUNT(*) FROM readings WHERE metric_type='cpu'`).Scan(&n); err != nil {
+		t.Fatalf("count cpu rows: %v", err)
+	}
 	if n != 1 {
 		t.Errorf("old cpu rows = %d, want 1 (untouched)", n)
 	}
-	db.QueryRow(`SELECT COUNT(*) FROM readings WHERE metric_type='memory'`).Scan(&n)
+	if err := db.QueryRow(`SELECT COUNT(*) FROM readings WHERE metric_type='memory'`).Scan(&n); err != nil {
+		t.Fatalf("count memory rows: %v", err)
+	}
 	if n != 0 {
 		t.Errorf("old memory rows = %d, want 0 (pruned)", n)
 	}

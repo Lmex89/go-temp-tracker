@@ -14,14 +14,15 @@ type pollSpec struct {
 }
 
 // wrapSensorReader adapts SensorReader.Read() (a map) to func() []MetricPoint,
-// so temperature looks like every other metric. Like a Python
-// [MetricPoint(s, v, "celsius") for s, v in reader.read().items()].
+// so temperature looks like every other metric. Unit is "C" (not "celsius"):
+// the old Poller stored "C" and the schema default is 'C', so rows must match. Like a Python
+// [MetricPoint(s, v, "C") for s, v in reader.read().items()].
 func wrapSensorReader(reader SensorReader) func() []MetricPoint {
 	return func() []MetricPoint {
 		readings := reader.Read()
 		points := make([]MetricPoint, 0, len(readings))
 		for sensor, value := range readings {
-			points = append(points, MetricPoint{Sensor: sensor, Value: value, Unit: "celsius"})
+			points = append(points, MetricPoint{Sensor: sensor, Value: value, Unit: "C"})
 		}
 		return points
 	}
