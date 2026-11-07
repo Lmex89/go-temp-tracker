@@ -42,7 +42,7 @@ func (p *Poller) Run(intervalSec, retainHours int) {
 		}
 
 		Logger.Info("Recorded %d temperature reading(s)", len(temps))
-		p.store.Prune(p.db, "", retainHours)
+		p.store.Prune(p.db, AllMetrics, retainHours)
 
 		Logger.Debug("Sleeping for %d seconds...", intervalSec)
 		time.Sleep(time.Duration(intervalSec) * time.Second)

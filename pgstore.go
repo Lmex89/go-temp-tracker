@@ -120,11 +120,15 @@ func (s *PostgresStore) Insert(db *sql.DB, sensor string, temp float64, metricTy
 }
 
 // Query returns readings inside a TimeWindow, optionally filtered by
-// metric type (empty = all). Postgres placeholders are numbered ($1, $2...).
-func (s *PostgresStore) Query(db *sql.DB, window TimeWindow, metricType string) []Reading {
+// metric type (AllMetrics = all). Postgres placeholders are numbered ($1, $2...).
+// An invalid window returns an error instead of querying year 1.
+func (s *PostgresStore) Query(db *sql.DB, window TimeWindow, metricType string) ([]Reading, error) {
+	if err := window.Validate(); err != nil {
+		return nil, err
+	}
 	var conds []string
 	var args []any
-	if metricType != "" {
+	if metricType != AllMetrics {
 		args = append(args, metricType)
 		conds = append(conds, fmt.Sprintf("metric_type = $%d", len(args)))
 	}
@@ -148,11 +152,11 @@ func (s *PostgresStore) Query(db *sql.DB, window TimeWindow, metricType string) 
 	)
 	if err != nil {
 		Logger.Error("Query failed: %v", err)
-		return nil
+		return nil, nil
 	}
 	defer rows.Close()
 
-	return s.scanRows(rows, "Query", metricType, window.Hours)
+	return s.scanRows(rows, "Query", metricType, window.Hours), nil
 }
 
 // QueryLatest returns the newest reading per sensor for one metric type.
@@ -161,7 +165,11 @@ func (s *PostgresStore) Query(db *sql.DB, window TimeWindow, metricType string) 
 // In Python terms: instead of scanning all 250K rows to find 3 max values,
 // we hop directly to the latest row per sensor via the index -- ~500x faster.
 // The metric type is passed as bind parameter $1 (like a DB-API "%s" placeholder).
-func (s *PostgresStore) QueryLatest(db *sql.DB, metricType string) []Reading {
+// metricType is required: AllMetrics returns an error.
+func (s *PostgresStore) QueryLatest(db *sql.DB, metricType string) ([]Reading, error) {
+	if metricType == AllMetrics {
+		return nil, fmt.Errorf("QueryLatest: metricType is required")
+	}
 	Logger.Debug("Querying latest [%s] per sensor", metricType)
 
 	rows, err := db.Query(
@@ -181,21 +189,21 @@ func (s *PostgresStore) QueryLatest(db *sql.DB, metricType string) []Reading {
 	)
 	if err != nil {
 		Logger.Error("QueryLatest failed: %v", err)
-		return nil
+		return nil, nil
 	}
 	defer rows.Close()
 
-	return s.scanRows(rows, "QueryLatest", metricType)
+	return s.scanRows(rows, "QueryLatest", metricType), nil
 }
 
-// Prune removes readings older than N hours. An empty metricType prunes every
+// Prune removes readings older than N hours. AllMetrics prunes every
 // metric type; otherwise only that type. Placeholders are numbered ($1, $2).
 func (s *PostgresStore) Prune(db *sql.DB, metricType string, hours int) {
 	Logger.Debug("Pruning [%s] readings older than %d hour(s)", metricType, hours)
 
 	query := "DELETE FROM readings WHERE created_at < NOW() - INTERVAL '1 hour' * $1"
 	args := []any{hours}
-	if metricType != "" {
+	if metricType != AllMetrics {
 		query += " AND metric_type = $2"
 		args = append(args, metricType)
 	}

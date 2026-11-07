@@ -21,9 +21,12 @@ type Reading struct {
 	CreatedAt  string  `json:"created_at"`
 }
 
-// Store is the interface for database operations -- like a Python ABC/Protocol.
-// Any type that has all these methods automatically satisfies Store (no "extends" keyword).
-// This lets us swap out SQLite for another DB later without changing other code.
+// AllMetrics is the metricType value meaning "every metric type".
+// Query and Prune accept it as a filter that matches everything; QueryLatest
+// does NOT (it needs one concrete type). Python analogy: a named constant
+// instead of passing a bare "" around.
+const AllMetrics = ""
+
 // TimeWindow describes which slice of time a query covers.
 // Python analogy: a small dataclass where unset fields keep their zero value.
 // If Hours > 0 the window is relative ("last N hours"); otherwise From/To
@@ -34,15 +37,36 @@ type TimeWindow struct {
 	To    time.Time
 }
 
+// Validate reports whether the window is usable: either Hours > 0, or both
+// From and To set with From not after To. Without it a zero window would
+// silently query year 1. Python analogy: raising ValueError in __post_init__.
+func (w TimeWindow) Validate() error {
+	if w.Hours > 0 {
+		return nil
+	}
+	if w.From.IsZero() || w.To.IsZero() {
+		return fmt.Errorf("invalid time window: need Hours > 0 or both From and To")
+	}
+	if w.From.After(w.To) {
+		return fmt.Errorf("invalid time window: From is after To")
+	}
+	return nil
+}
+
+// Store is the interface for database operations -- like a Python ABC/Protocol.
+// Any type that has all these methods automatically satisfies Store (no "extends" keyword).
+// This lets us swap out SQLite for another DB later without changing other code.
 type Store interface {
 	InitDB() *sql.DB
 	Insert(db *sql.DB, sensor string, temp float64, metricType string, unit string)
 	// Query returns readings inside a TimeWindow (relative Hours or absolute
-	// From/To), optionally filtered by metric type (empty = every metric).
-	Query(db *sql.DB, window TimeWindow, metricType string) []Reading
-	// QueryLatest: newest reading per sensor for one (required) metric type.
-	QueryLatest(db *sql.DB, metricType string) []Reading
-	// Prune deletes readings older than retainHours; empty metricType = all types.
+	// From/To), optionally filtered by metric type (AllMetrics = every metric).
+	// Returns an error for an invalid window (see TimeWindow.Validate).
+	Query(db *sql.DB, window TimeWindow, metricType string) ([]Reading, error)
+	// QueryLatest: newest reading per sensor for one metric type. metricType
+	// is required: AllMetrics (empty) returns an error.
+	QueryLatest(db *sql.DB, metricType string) ([]Reading, error)
+	// Prune deletes readings older than retainHours; AllMetrics = all types.
 	Prune(db *sql.DB, metricType string, retainHours int)
 }
 
@@ -211,14 +235,18 @@ func (s *SQLiteStore) Insert(db *sql.DB, sensor string, temp float64, metricType
 }
 
 // Query returns readings inside a TimeWindow, optionally filtered by
-// metric type (empty string = all metrics).
-func (s *SQLiteStore) Query(db *sql.DB, window TimeWindow, metricType string) []Reading {
+// metric type (AllMetrics = all metrics). Go returns errors as values, like a
+// Python function that raises ValueError for a bad window.
+func (s *SQLiteStore) Query(db *sql.DB, window TimeWindow, metricType string) ([]Reading, error) {
+	if err := window.Validate(); err != nil {
+		return nil, err
+	}
 	Logger.Debug("Query window=%+v metric=%q", window, metricType)
 
 	// Build the WHERE clause piece by piece; args line up with the "?" marks.
 	var conds []string
 	var args []any
-	if metricType != "" {
+	if metricType != AllMetrics {
 		conds = append(conds, "metric_type = ?")
 		args = append(args, metricType)
 	}
@@ -237,18 +265,21 @@ func (s *SQLiteStore) Query(db *sql.DB, window TimeWindow, metricType string) []
 	)
 	if err != nil {
 		Logger.Error("Query failed: %v", err)
-		return nil
+		return nil, nil
 	}
 	readings := s.scanRows(rows)
 
 	Logger.Info("Query returned %d reading(s)", len(readings))
-	return readings
+	return readings, nil
 }
 
 // QueryLatest returns the newest reading per sensor for ONE metric type.
-// metricType is required (no "all metrics" variant). The SQL groups by sensor
-// and takes MAX(id).
-func (s *SQLiteStore) QueryLatest(db *sql.DB, metricType string) []Reading {
+// metricType is required (no "all metrics" variant): AllMetrics returns an
+// error. The SQL groups by sensor and takes MAX(id).
+func (s *SQLiteStore) QueryLatest(db *sql.DB, metricType string) ([]Reading, error) {
+	if metricType == AllMetrics {
+		return nil, fmt.Errorf("QueryLatest: metricType is required")
+	}
 	Logger.Debug("Querying latest [%s] per sensor", metricType)
 
 	rows, err := db.Query(
@@ -260,9 +291,9 @@ func (s *SQLiteStore) QueryLatest(db *sql.DB, metricType string) []Reading {
 	)
 	if err != nil {
 		Logger.Error("QueryLatest failed: %v", err)
-		return nil
+		return nil, nil
 	}
-	return s.scanRows(rows)
+	return s.scanRows(rows), nil
 }
 
 // scanRows drains rows into Reading values (written once, shared by every
@@ -291,8 +322,8 @@ func (s *SQLiteStore) scanRows(rows *sql.Rows) []Reading {
 	return readings
 }
 
-// Prune removes readings older than the given number of hours. An empty
-// metricType prunes every metric type (what the temperature Poller needs);
+// Prune removes readings older than the given number of hours. AllMetrics
+// as metricType prunes every metric type (what the temperature Poller needs);
 // otherwise only that type is pruned, so metric types can have their own
 // retention. Python analogy: a DELETE with an optional extra WHERE clause.
 func (s *SQLiteStore) Prune(db *sql.DB, metricType string, hours int) {
@@ -300,7 +331,7 @@ func (s *SQLiteStore) Prune(db *sql.DB, metricType string, hours int) {
 
 	query := "DELETE FROM readings WHERE created_at < datetime('now', ?)"
 	args := []any{fmt.Sprintf("-%d hours", hours)}
-	if metricType != "" {
+	if metricType != AllMetrics {
 		query += " AND metric_type = ?"
 		args = append(args, metricType)
 	}

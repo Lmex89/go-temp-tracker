@@ -10,13 +10,11 @@ import (
 
 // TestTempsAndCurrentHandlers checks the HTTP contract of /api/temps and
 // /api/current/* after the handlers moved to Query / QueryLatest.
-// Same style as handler_test.go (SQLite via InitDB), but it cleans up its
-// own rows with a deferred DELETE (like a pytest fixture with teardown).
+// It runs against a throwaway SQLite database (newTempSQLite does
+// t.Chdir(t.TempDir()) and registers t.Cleanup), so the real temps.db is
+// never touched -- like a pytest tmp_path fixture.
 func TestTempsAndCurrentHandlers(t *testing.T) {
-	store := NewSQLiteStore()
-	db := store.InitDB()
-	defer db.Close()
-	defer db.Exec("DELETE FROM readings WHERE sensor LIKE 'zz-test/%'")
+	store, db := newTempSQLite(t)
 
 	store.Insert(db, "zz-test/temp", 55.5, "temperature", "C")
 	store.Insert(db, "zz-test/cpu", 12.0, "cpu", "%")

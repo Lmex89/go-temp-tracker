@@ -111,7 +111,7 @@ func TestPostgresQuery(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var sensors []string
-			for _, r := range store.Query(db, tt.window, tt.metricType) {
+			for _, r := range mustQuery(t, store, db, tt.window, tt.metricType) {
 				sensors = append(sensors, r.Sensor)
 			}
 			sort.Strings(sensors)
@@ -164,7 +164,7 @@ func TestPostgresQueryLatest(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := store.QueryLatest(db, tt.metricType)
+			got := mustLatest(t, store, db, tt.metricType)
 			if len(got) != len(tt.want) {
 				t.Fatalf("got %d readings, want %d: %+v", len(got), len(tt.want), got)
 			}
@@ -214,7 +214,7 @@ func TestPostgresPrune(t *testing.T) {
 			}
 			store.Prune(db, tt.metricType, 3)
 			var left []string
-			for _, r := range store.Query(db, TimeWindow{Hours: 100}, "") {
+			for _, r := range mustQuery(t, store, db, TimeWindow{Hours: 100}, AllMetrics) {
 				left = append(left, r.Sensor)
 			}
 			sort.Strings(left)
@@ -223,4 +223,10 @@ func TestPostgresPrune(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestPostgresInvalidInputs covers window validation and the required metric type.
+func TestPostgresInvalidInputs(t *testing.T) {
+	store, db := newPGTestStore(t)
+	checkInvalidInputs(t, store, db)
 }

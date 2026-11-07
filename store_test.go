@@ -77,7 +77,7 @@ func TestSQLiteQuery(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := store.Query(db, tt.window, tt.metricType)
+			got := mustQuery(t, store, db, tt.window, tt.metricType)
 			var sensors []string
 			for _, r := range got {
 				sensors = append(sensors, r.Sensor)
@@ -162,7 +162,7 @@ func TestSQLiteQueryLatest(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := store.QueryLatest(db, tt.metricType)
+			got := mustLatest(t, store, db, tt.metricType)
 			if len(got) != len(tt.want) {
 				t.Fatalf("got %d rows (%v), want %d", len(got), got, len(tt.want))
 			}
@@ -211,7 +211,7 @@ func TestSQLitePrune(t *testing.T) {
 			}
 			store.Prune(db, tt.metricType, 3)
 			var left []string
-			for _, r := range store.Query(db, TimeWindow{Hours: 100}, "") {
+			for _, r := range mustQuery(t, store, db, TimeWindow{Hours: 100}, AllMetrics) {
 				left = append(left, r.Sensor)
 			}
 			sort.Strings(left)
@@ -220,4 +220,60 @@ func TestSQLitePrune(t *testing.T) {
 			}
 		})
 	}
+}
+
+// mustQuery / mustLatest call the store and fail the test on error, so table
+// tests can keep their one-line style. Python analogy: a small helper that
+// calls the function and does pytest.fail() on exception.
+func mustQuery(t *testing.T, s Store, db *sql.DB, w TimeWindow, metric string) []Reading {
+	t.Helper()
+	got, err := s.Query(db, w, metric)
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	return got
+}
+
+func mustLatest(t *testing.T, s Store, db *sql.DB, metric string) []Reading {
+	t.Helper()
+	got, err := s.QueryLatest(db, metric)
+	if err != nil {
+		t.Fatalf("QueryLatest: %v", err)
+	}
+	return got
+}
+
+// checkInvalidInputs asserts the validation errors shared by both adapters:
+// a zero/half-set/reversed TimeWindow and an empty QueryLatest metric type.
+func checkInvalidInputs(t *testing.T, s Store, db *sql.DB) {
+	t.Helper()
+	now := time.Now()
+	bad := []struct {
+		name string
+		win  TimeWindow
+	}{
+		{"zero window", TimeWindow{}},
+		{"negative hours", TimeWindow{Hours: -1}},
+		{"only From", TimeWindow{From: now}},
+		{"only To", TimeWindow{To: now}},
+		{"From after To", TimeWindow{From: now, To: now.Add(-time.Hour)}},
+	}
+	for _, tt := range bad {
+		t.Run("Query "+tt.name, func(t *testing.T) {
+			if _, err := s.Query(db, tt.win, AllMetrics); err == nil {
+				t.Fatalf("expected error for %+v", tt.win)
+			}
+		})
+	}
+	t.Run("QueryLatest empty metric", func(t *testing.T) {
+		if _, err := s.QueryLatest(db, AllMetrics); err == nil {
+			t.Fatal("expected error for empty metricType")
+		}
+	})
+}
+
+// TestSQLiteInvalidInputs covers window validation and the required metric type.
+func TestSQLiteInvalidInputs(t *testing.T) {
+	store, db := newTempSQLite(t)
+	checkInvalidInputs(t, store, db)
 }
