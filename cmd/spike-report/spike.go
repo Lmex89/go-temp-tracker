@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"fmt"
+	"math"
 	"time"
 )
 
@@ -10,10 +11,14 @@ import (
 // In Python you'd use a @dataclass or NamedTuple.
 type Spike struct {
 	Sensor       string
-	Timestamp    time.Time // Parsed from DB (assumed UTC)
+	Timestamp    time.Time
 	TempC        float64
-	BaselineMean float64 // The sensor's 30-day average
-	Deviation    float64 // How many degrees above baseline (TempC - BaselineMean)
+	BaselineMean float64
+	BaselineMin  float64
+	BaselineMax  float64
+	BaselineStd  float64
+	Deviation    float64
+	Severity     string
 }
 
 // detectSpikes queries the database, computes per-sensor baselines, and returns spike events.
@@ -36,51 +41,92 @@ func detectSpikes(
 	// --- Step 1: Compute per-sensor baseline mean ---
 	// Query all temperature readings in the baseline window.
 	// In Python: df[(df.created_at >= baseline_since) & (df.created_at <= now)]
+	logger.debug("querying baseline readings from %s to %s",
+		baselineSince.Format("2006-01-02 15:04:05"), now.Format("2006-01-02 15:04:05"))
 	baselineRows, err := queryTemperatureRange(db, baselineSince, now)
 	if err != nil {
 		return nil, fmt.Errorf("baseline query failed: %w", err)
 	}
+	logger.debug("loaded %d baseline readings", len(baselineRows))
 
-	// Group by sensor and accumulate values — like Python's collections.defaultdict(list).
+	// Group by sensor and accumulate values -- like Python's collections.defaultdict(list).
 	sensorTemps := make(map[string][]float64)
 	for _, r := range baselineRows {
 		sensorTemps[r.Sensor] = append(sensorTemps[r.Sensor], r.TempC)
 	}
 
-	// Calculate mean per sensor — like np.mean(values) in Python.
-	means := make(map[string]float64)
+	// Calculate stats per sensor.
+	type stats struct {
+		mean float64
+		min  float64
+		max  float64
+		std  float64
+	}
+	means := make(map[string]stats)
 	for sensor, temps := range sensorTemps {
 		if len(temps) == 0 {
 			continue
 		}
 		var sum float64
+		mn, mx := temps[0], temps[0]
 		for _, t := range temps {
 			sum += t
+			if t < mn {
+				mn = t
+			}
+			if t > mx {
+				mx = t
+			}
 		}
-		means[sensor] = sum / float64(len(temps))
+		mean := sum / float64(len(temps))
+		var sqDiff float64
+		for _, t := range temps {
+			d := t - mean
+			sqDiff += d * d
+		}
+		std := math.Sqrt(sqDiff / float64(len(temps)))
+		means[sensor] = stats{mean: mean, min: mn, max: mx, std: std}
+	}
+	logger.debug("computed baseline stats for %d sensor(s)", len(means))
+	for sensor, st := range means {
+		logger.debug("  %s: mean=%.1f min=%.1f max=%.1f std=%.1f", sensor, st.mean, st.min, st.max, st.std)
 	}
 
 	// --- Step 2: Find spikes in the report window ---
+	logger.debug("querying report readings from %s to %s",
+		reportSince.Format("2006-01-02 15:04:05"), now.Format("2006-01-02 15:04:05"))
 	reportRows, err := queryTemperatureRange(db, reportSince, now)
 	if err != nil {
 		return nil, fmt.Errorf("report window query failed: %w", err)
 	}
+	logger.debug("loaded %d report readings, scanning for spikes (threshold=%.1f)", len(reportRows), deviationThreshold)
 
 	var spikes []Spike
 	for _, r := range reportRows {
-		mean, ok := means[r.Sensor]
+		st, ok := means[r.Sensor]
 		if !ok {
-			continue // No baseline for this sensor (shouldn't happen).
+			continue
 		}
-		if r.TempC > mean+deviationThreshold {
+		if r.TempC > st.mean+deviationThreshold {
+			dev := r.TempC - st.mean
 			spikes = append(spikes, Spike{
 				Sensor:       r.Sensor,
 				Timestamp:    r.Timestamp,
 				TempC:        r.TempC,
-				BaselineMean: mean,
-				Deviation:    r.TempC - mean,
+				BaselineMean: st.mean,
+				BaselineMin:  st.min,
+				BaselineMax:  st.max,
+				BaselineStd:  st.std,
+				Deviation:    dev,
+				Severity:     classifySeverity(dev, deviationThreshold),
 			})
 		}
+	}
+
+	logger.debug("detected %d spike(s)", len(spikes))
+	for _, s := range spikes {
+		logger.debug("  %s: %.1fC at %s (dev=+%.1f, severity=%s)",
+			s.Sensor, s.TempC, s.Timestamp.Format("2006-01-02 15:04:05"), s.Deviation, s.Severity)
 	}
 
 	return spikes, nil
@@ -97,22 +143,30 @@ type tempReading struct {
 // queryTemperatureRange fetches temperature readings between two UTC timestamps.
 // This is like Python: cursor.execute("SELECT ... WHERE created_at >= ? AND ...", (since, until))
 func queryTemperatureRange(db *sql.DB, since, until time.Time) ([]tempReading, error) {
-	// SQLite datetime format for the query — "2006-01-02 15:04:05" is Go's reference time layout.
+	// SQLite datetime format for the query -- "2006-01-02 15:04:05" is Go's reference time layout.
 	// In Python you'd use strftime("%Y-%m-%d %H:%M:%S").
-	layout := "2006-01-02 15:04:05"
-	rows, err := db.Query(
-		`SELECT sensor, temp_c, created_at FROM readings
+	var createdAtExpr string
+	if dbDriver == "postgres" {
+		// Force UTC output in the same layout SQLite uses, so parseDBTimestamp works.
+		createdAtExpr = "to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')"
+	} else {
+		createdAtExpr = "created_at"
+	}
+
+	query := fmt.Sprintf(
+		`SELECT sensor, temp_c, %s FROM readings
 		 WHERE metric_type = 'temperature'
-		   AND created_at >= ?
-		   AND created_at <= ?
+		   AND created_at >= %s
+		   AND created_at <= %s
 		 ORDER BY sensor, created_at ASC`,
-		since.Format(layout),
-		until.Format(layout),
+		createdAtExpr, placeholder(1), placeholder(2),
 	)
+
+	rows, err := db.Query(query, formatDBTime(since), formatDBTime(until))
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close() // Ensure rows are closed — like Python's `with cursor:`.
+	defer rows.Close() // Ensure rows are closed -- like Python's `with cursor:`.
 
 	var readings []tempReading
 	for rows.Next() {
@@ -123,7 +177,7 @@ func queryTemperatureRange(db *sql.DB, since, until time.Time) ([]tempReading, e
 		}
 		// Parse the UTC timestamp from DB.
 		// In Python: datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
-		ts, err := time.ParseInLocation(layout, tsStr, time.UTC)
+		ts, err := parseDBTimestamp(tsStr)
 		if err != nil {
 			return nil, err
 		}
@@ -136,4 +190,19 @@ func queryTemperatureRange(db *sql.DB, since, until time.Time) ([]tempReading, e
 	}
 
 	return readings, nil
+}
+
+// classifySeverity categorizes a spike based on how far it exceeds the threshold.
+func classifySeverity(deviation, threshold float64) string {
+	ratio := deviation / threshold
+	switch {
+	case ratio >= 2.0:
+		return "severe"
+	case ratio >= 1.5:
+		return "high"
+	case ratio >= 1.0:
+		return "moderate"
+	default:
+		return "mild"
+	}
 }

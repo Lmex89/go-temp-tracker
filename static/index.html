@@ -6,7 +6,7 @@
 <title>System Monitor</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.2.0/dist/chartjs-plugin-zoom.min.js"></script>
-<!-- Fuentes: IBM Plex Mono para datos técnicos, Orbitron para títulos de sci-fi -->
+<!-- Fonts: IBM Plex Mono for technical data, Orbitron for sci-fi titles -->
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Orbitron:wght@400;700;900&family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
 <style>
 :root {
@@ -39,7 +39,7 @@ body {
   overflow-x: hidden;
 }
 
-/* Grid background pattern - líneas técnicas sutiles */
+/* Grid background pattern - subtle technical lines */
 body::before {
   content: '';
   position: fixed;
@@ -68,24 +68,24 @@ body::after {
   z-index: 9999;
 }
 
-/* Layout container */
+/* Layout container - mobile first */
 .container {
   position: relative;
   z-index: 1;
   max-width: 1400px;
   margin: 0 auto;
-  padding: 20px 24px;
+  padding: 12px;
 }
 
 /* ===================================================================
-   HEADER - Panel de título estilo misión espacial
+   HEADER - Space mission style title panel (mobile first)
    =================================================================== */
 .header {
   display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: 24px;
-  padding-bottom: 16px;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
   border-bottom: 1px solid var(--border-subtle);
   position: relative;
 }
@@ -104,9 +104,9 @@ body::after {
 .header-left h1 {
   font-family: 'Orbitron', sans-serif;
   font-weight: 900;
-  font-size: 1.8rem;
+  font-size: 1.3rem;
   color: var(--text-primary);
-  letter-spacing: 3px;
+  letter-spacing: 2px;
   text-transform: uppercase;
   text-shadow: 0 0 10px rgba(0, 212, 255, 0.5);
   margin-bottom: 4px;
@@ -120,7 +120,7 @@ body::after {
 }
 
 .header-right {
-  text-align: right;
+  text-align: left;
 }
 
 .status-indicator {
@@ -148,18 +148,18 @@ body::after {
 }
 
 /* ===================================================================
-   CONTROL PANEL - Bordes técnicos con esquinas decorativas
+   CONTROL PANEL - Technical borders with decorative corners (mobile first)
    =================================================================== */
 .panel {
   background: var(--bg-secondary);
   border: 1px solid var(--border-subtle);
   border-radius: 0;
-  padding: 16px;
-  margin-bottom: 20px;
+  padding: 12px;
+  margin-bottom: 16px;
   position: relative;
 }
 
-/* Decorative corners - marcas de esquina estilo técnico */
+/* Decorative corners - technical style corner marks */
 .panel::before, .panel::after,
 .panel > .corner-tl::before, .panel > .corner-tl::after {
   content: '';
@@ -191,11 +191,11 @@ body::after {
 }
 
 /* ===================================================================
-   CONTROLS - Botones estilo terminal/retro
+   CONTROLS - Botones estilo terminal/retro (mobile first)
    =================================================================== */
 .controls {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   align-items: center;
   flex-wrap: wrap;
 }
@@ -211,6 +211,7 @@ body::after {
   color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 1px;
+  flex: 0 0 auto;
 }
 
 .controls input, .controls button {
@@ -224,7 +225,10 @@ body::after {
 }
 
 .controls input {
-  padding: 6px 10px;
+  padding: 8px 10px;
+  width: 100%;
+  min-width: 0;
+  flex: 1 1 100%;
 }
 
 .controls input:focus {
@@ -234,13 +238,15 @@ body::after {
 }
 
 .controls button {
-  padding: 7px 14px;
+  padding: 8px 12px;
   cursor: pointer;
   text-transform: uppercase;
   letter-spacing: 1px;
-  font-size: 0.7rem;
+  font-size: 0.65rem;
   position: relative;
   overflow: hidden;
+  flex: 1 1 auto;
+  min-width: 60px;
 }
 
 .controls button::before {
@@ -287,10 +293,10 @@ body::after {
 .error { color: var(--accent-red); font-size: 0.75rem; }
 
 /* ===================================================================
-   GAUGE ROW - Instrumentos estilo panel de avión/nave
+   GAUGE ROW - Aircraft/spacecraft panel style gauges (mobile first)
    =================================================================== */
 .gauge-section {
-  margin-bottom: 24px;
+  margin-bottom: 16px;
 }
 
 .gauge-row {
@@ -302,7 +308,7 @@ body::after {
 .gauge-frame {
   background: var(--bg-secondary);
   border: 1px solid var(--border-subtle);
-  padding: 6px;
+  padding: 8px 6px;
   position: relative;
   overflow: hidden;
 }
@@ -336,8 +342,8 @@ body::after {
 }
 
 .gauge-canvas {
-  width: 68px;
-  height: 48px;
+  width: 70px;
+  height: 50px;
 }
 
 .gauge-data {
@@ -351,7 +357,7 @@ body::after {
 
 .gauge-value {
   font-family: 'Orbitron', sans-serif;
-  font-size: 1rem;
+  font-size: 0.85rem;
   font-weight: 700;
   color: var(--text-primary);
   line-height: 1.1;
@@ -373,29 +379,30 @@ body::after {
 }
 
 /* ===================================================================
-   CHART SECTIONS - Paneles de gráficos estilo monitor técnico
+   CHART SECTIONS - Technical monitor style chart panels (mobile first)
    =================================================================== */
 .chart-section {
-  margin-bottom: 24px;
+  margin-bottom: 16px;
 }
 
 .section-header {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 12px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin-bottom: 10px;
   padding: 0 4px;
 }
 
 .section-header h2 {
   font-family: 'Orbitron', sans-serif;
-  font-size: 0.9rem;
+  font-size: 0.8rem;
   color: var(--text-secondary);
   font-weight: 700;
-  letter-spacing: 2px;
+  letter-spacing: 1.5px;
   text-transform: uppercase;
   position: relative;
-  padding-left: 16px;
+  padding-left: 14px;
 }
 
 /* Decorative line before section title */
@@ -419,11 +426,69 @@ body::after {
   letter-spacing: 0.5px;
 }
 
+.cpu-view-toggle {
+  display: flex;
+  gap: 0;
+  margin: 12px 0 8px 0;
+  border: 1px solid var(--border-glow);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--bg-secondary);
+  max-width: fit-content;
+}
+
+.cpu-view-toggle .view-btn {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.75rem;
+  padding: 8px 16px;
+  background: transparent;
+  color: var(--text-secondary);
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  letter-spacing: 0.5px;
+  position: relative;
+}
+
+.cpu-view-toggle .view-btn:not(:last-child) {
+  border-right: 1px solid var(--border-glow);
+}
+
+.cpu-view-toggle .view-btn:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.cpu-view-toggle .view-btn.active {
+  background: var(--accent-cyan);
+  color: var(--bg-primary);
+  font-weight: 600;
+}
+
+.cpu-view-toggle .view-btn.active:hover {
+  background: var(--accent-cyan);
+}
+
+/* Mobile: ensure buttons are touch-friendly (min 44px height) */
+@media (max-width: 599px) {
+  .cpu-view-toggle {
+    width: 100%;
+    max-width: 100%;
+  }
+  
+  .cpu-view-toggle .view-btn {
+    flex: 1;
+    padding: 10px 12px;
+    font-size: 0.8rem;
+    min-height: 44px;
+  }
+}
+
 .chart-container {
-  height: 340px;
+  height: 260px;
   background: var(--bg-secondary);
   border: 1px solid var(--border-subtle);
-  padding: 16px;
+  padding: 10px;
   position: relative;
 }
 
@@ -469,16 +534,68 @@ body::after {
 .gauge-frame:nth-child(3) { animation-delay: 0.3s; }
 .gauge-frame:nth-child(4) { animation-delay: 0.4s; }
 
-/* Responsive - mobile first */
-@media (min-width: 769px) {
-  .gauge-row { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+/* ===================================================================
+   TABLET - 600px+
+   =================================================================== */
+@media (min-width: 600px) {
+  .container { padding: 16px; }
+
+  .header {
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+    margin-bottom: 20px;
+    padding-bottom: 14px;
+  }
+
+  .header-right { text-align: right; }
+
+  .header-left h1 { font-size: 1.5rem; letter-spacing: 2.5px; }
+
+  .section-header {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .section-header h2 { font-size: 0.85rem; }
+
+  .chart-container { height: 300px; padding: 12px; }
+
+  .controls input { width: auto; flex: 0 1 auto; }
+
+  .controls button { flex: 0 0 auto; font-size: 0.7rem; }
+}
+
+/* ===================================================================
+   DESKTOP - 768px+
+   =================================================================== */
+@media (min-width: 768px) {
+  .container { padding: 20px 24px; }
+
+  .header { margin-bottom: 24px; padding-bottom: 16px; }
+
+  .header-left h1 { font-size: 1.8rem; letter-spacing: 3px; }
+
+  .panel { padding: 16px; margin-bottom: 20px; }
+
+  .gauge-section { margin-bottom: 24px; }
+
+  .gauge-row {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+  }
+
   .gauge-frame {
     padding: 4px 6px;
-    min-height: 44px;
+    min-height: 53px;
     display: flex;
     align-items: center;
     justify-content: center;
   }
+
   .gauge-wrapper {
     flex-direction: row;
     justify-content: center;
@@ -487,39 +604,44 @@ body::after {
     margin-top: 0;
     flex-wrap: nowrap;
   }
+
   .gauge-data {
     align-items: flex-start;
     margin-top: 0;
     line-height: 1;
     min-width: 0;
   }
-  /* Chart.js writes inline canvas size; !important keeps the gauge inside the card. */
+
   .gauge-canvas {
-    width: 50px !important;
-    height: 28px !important;
-    flex: 0 0 50px;
+    width: 60px !important;
+    height: 34px !important;
+    flex: 0 0 60px;
   }
+
   .gauge-value { font-size: 1.05rem; }
+
   .gauge-label {
     font-size: 0.66rem;
     letter-spacing: 1px;
     white-space: nowrap;
   }
+
+  .chart-section { margin-bottom: 24px; }
+
+  .section-header h2 { font-size: 0.9rem; letter-spacing: 2px; padding-left: 16px; }
+
+  .chart-container { height: 340px; padding: 16px; }
+
+  .controls { gap: 8px; }
+
+  .controls button { padding: 7px 14px; }
 }
 
-@media (max-width: 768px) {
-  .container { padding: 12px; }
-  .header { flex-direction: column; gap: 12px; }
-  .header-left h1 { font-size: 1.4rem; }
-  .chart-container { height: 280px; }
-  .controls { gap: 6px; }
-}
-
-@media (max-width: 480px) {
-  .gauge-row { gap: 5px; }
-  .gauge-canvas { width: 62px; height: 44px; }
-  .gauge-value { font-size: 0.9rem; }
-  .section-header { flex-direction: column; align-items: flex-start; gap: 6px; }
+/* ===================================================================
+   LARGE DESKTOP - 1200px+
+   =================================================================== */
+@media (min-width: 1200px) {
+  .chart-container { height: 380px; }
 }
 </style>
 </head>
@@ -623,6 +745,11 @@ body::after {
       <h2>CPU Usage</h2>
       <span class="current-label" id="cpu-current">Current: --</span>
     </div>
+    <div class="cpu-view-toggle" id="cpu-view-toggle">
+      <button class="view-btn" data-view="per-core" title="Show individual CPU cores">Per-Core</button>
+      <button class="view-btn" data-view="average" title="Show average CPU usage">Average</button>
+      <button class="view-btn" data-view="both" title="Show all CPU data">Both</button>
+    </div>
     <div class="chart-container"><canvas id="chart-cpu"></canvas></div>
   </div>
 
@@ -654,12 +781,13 @@ const defaultConfig = {
   defaultTimeRange: { value: "3h" },
   refreshIntervals: { currentTempMs: 60000, chartDataMs: 60000 },
   colors: { palette: ["#00ff88", "#00d4ff", "#ffaa00", "#ff3366", "#a78bfa", "#fb7185", "#22d3ee", "#a3e635"] },
-  chart: { lineTension: 0.1, pointRadius: 3, fillArea: true, yAxisMin: null, yAxisMax: null, showGridLines: true, maxTicksLimit: 8 },
+  chart: { lineTension: 0.4, cubicInterpolationMode: "monotone", pointRadius: 0, fillArea: true, yAxisMin: null, yAxisMax: null, showGridLines: true, maxTicksLimit: 8 },
   display: { decimalPlaces: 1, showLastUpdated: true, timeFormat24h: true },
   zoom: { wheelEnabled: true, dragEnabled: true, pinchEnabled: true },
   sensorFilter: { enabled: false, includePatterns: [] },
   gauge: { cpuMax: 100, ramMax: 100, swapMax: 100, diskMax: 100 },
   gaugeRefreshMs: { cpu: 60000, ram: 60000, swap: 60000, disk: 60000 },
+  cpuChart: { defaultView: "average" },
 };
 
 let config = defaultConfig;
@@ -832,34 +960,58 @@ function createMetricChart(id, yLabel, unitSuffix) {
       },
     },
   });
-  chart.canvas.parentElement.style.height = "300px";
   metricCharts[id] = { chart, unitSuffix };
 }
 
-function loadMetricData(chartId, apiUrl) {
+function loadMetricData(chartId, apiUrl, sensorFilter) {
   fetch(apiUrl)
     .then(r => { if (!r.ok) throw new Error(r.statusText); return r.json(); })
     .then(data => {
       const mc = metricCharts[chartId];
       if (!mc) return;
       const palette = config.colors.palette;
-      const allSensors = [...new Set(data.map(d => d.sensor))];
+      const filtered = sensorFilter ? data.filter(d => sensorFilter.includes(d.sensor)) : data;
+      const allSensors = [...new Set(filtered.map(d => d.sensor))];
+      
+      // Determine if we're in "Both" mode for CPU chart
+      const isCPUBoth = chartId === 'chart-cpu' && getCPUViewMode() === 'both';
+      
       const datasets = allSensors.map((sensor, i) => {
-        const points = data.filter(d => d.sensor === sensor);
+        const points = filtered.filter(d => d.sensor === sensor);
         const color = palette[i % palette.length];
+        
+        // Apply visual hierarchy for CPU chart in "Both" mode
+        let borderWidth = 2;
+        let borderColor = color;
+        let fill = config.chart.fillArea || false;
+        
+        if (isCPUBoth) {
+          if (sensor === 'cpu/total') {
+            // Total CPU line: thick and prominent
+            borderWidth = 3;
+            // borderColor stays as-is (full opacity)
+          } else if (sensor.startsWith('cpu/Core')) {
+            // Per-core lines: thin and semi-transparent
+            borderWidth = 1;
+            borderColor = color + '4D'; // 4D hex = 77 decimal = ~30% opacity
+            fill = false; // Disable fill for per-core lines in Both mode
+          }
+        }
+        
         return {
           label: sensor,
           data: points.map(p => ({ x: new Date(p.created_at).getTime(), y: p.temp_c })),
-          borderColor: color,
+          borderColor: borderColor,
           backgroundColor: color + "22",
-          fill: config.chart.fillArea || false,
+          fill: fill,
           tension: config.chart.lineTension,
+          cubicInterpolationMode: config.chart.cubicInterpolationMode || "monotone",
           pointRadius: config.chart.pointRadius,
-          pointHoverRadius: config.chart.pointRadius + 2,
+          pointHoverRadius: 4,
           pointBackgroundColor: color,
           pointBorderColor: "#050a15",
           pointBorderWidth: 2,
-          borderWidth: 2,
+          borderWidth: borderWidth,
         };
       });
       mc.chart.data.datasets = datasets;
@@ -910,7 +1062,17 @@ function setRangeLabel(label) { activeRangeLabel.textContent = label; }
 function apiUrlForMetric(metricEndpoint) {
   const bounds = currentRangeBounds();
   if (!bounds.from || !bounds.to) return null;
-  return `/api/${metricEndpoint}?from=${encodeURIComponent(new Date(bounds.from).toISOString())}&to=${encodeURIComponent(new Date(bounds.to).toISOString())}`;
+  let url = `/api/${metricEndpoint}?from=${encodeURIComponent(new Date(bounds.from).toISOString())}&to=${encodeURIComponent(new Date(bounds.to).toISOString())}`;
+  
+  // Add view parameter for CPU metrics
+  if (metricEndpoint === 'cpu') {
+    const viewMode = getCPUViewMode();
+    // Map UI "average" to API "total"
+    const apiViewMode = viewMode === 'average' ? 'total' : viewMode;
+    url += `&view=${apiViewMode}`;
+  }
+  
+  return url;
 }
 
 function loadAllCharts() {
@@ -922,12 +1084,12 @@ function loadAllCharts() {
   const charts = [
     { id: 'temp-chart', ep: 'temps' },
     { id: 'chart-cpu', ep: 'cpu' },
-    { id: 'chart-memory', ep: 'memory' },
+    { id: 'chart-memory', ep: 'memory', sensorFilter: ['memory/used_percent'] },
     { id: 'chart-load', ep: 'load' },
   ];
   charts.forEach(c => {
     const url = apiUrlForMetric(c.ep);
-    if (url) loadMetricData(c.id, url);
+    if (url) loadMetricData(c.id, url, c.sensorFilter);
   });
 }
 
@@ -1009,6 +1171,75 @@ function fetchCurrentTemp() {
 }
 
 // =============================================================================
+// CPU VIEW MODE
+// =============================================================================
+const CPU_VIEW_MODES = ['per-core', 'average', 'both'];
+const CPU_VIEW_STORAGE_KEY = 'cpuViewMode';
+
+function getCPUViewMode() {
+  // Try localStorage first
+  try {
+    const stored = localStorage.getItem(CPU_VIEW_STORAGE_KEY);
+    if (stored && CPU_VIEW_MODES.includes(stored)) {
+      return stored;
+    } else if (stored) {
+      console.warn(`[CPU View] Invalid value in localStorage: "${stored}". Falling back to config default.`);
+    }
+  } catch (e) {
+    console.warn('[CPU View] Cannot access localStorage:', e);
+  }
+
+  // Fall back to config default
+  const configDefault = config.cpuChart?.defaultView;
+  if (configDefault && CPU_VIEW_MODES.includes(configDefault)) {
+    return configDefault;
+  } else if (configDefault) {
+    console.warn(`[CPU View] Invalid config default: "${configDefault}". Falling back to "average".`);
+  }
+
+  // Hardcoded fallback
+  return 'average';
+}
+
+function setCPUViewMode(mode) {
+  if (!CPU_VIEW_MODES.includes(mode)) {
+    console.error(`[CPU View] Invalid mode: "${mode}"`);
+    return;
+  }
+
+  try {
+    localStorage.setItem(CPU_VIEW_STORAGE_KEY, mode);
+  } catch (e) {
+    console.warn('[CPU View] Cannot write to localStorage:', e);
+  }
+
+  // Update button active states
+  document.querySelectorAll('#cpu-view-toggle .view-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.view === mode);
+  });
+
+  // Reload the CPU chart with the new view mode
+  const url = apiUrlForMetric('cpu');
+  if (url) {
+    loadMetricData('chart-cpu', url);
+  }
+}
+
+function initCPUViewToggle() {
+  const currentMode = getCPUViewMode();
+  
+  // Set active button
+  document.querySelectorAll('#cpu-view-toggle .view-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.view === currentMode);
+    
+    // Add click handler
+    btn.addEventListener('click', () => {
+      setCPUViewMode(btn.dataset.view);
+    });
+  });
+}
+
+// =============================================================================
 // EVENT HANDLERS
 // =============================================================================
 function setPresetRange(rangeKey) {
@@ -1050,6 +1281,7 @@ async function initialize() {
   createMetricChart('chart-load', 'Load Average', '');
 
   setActivePresetButton(state.preset);
+  initCPUViewToggle();
   loadAllCharts();
   fetchCurrentTemp();
   fetchGaugeCPUFetch();

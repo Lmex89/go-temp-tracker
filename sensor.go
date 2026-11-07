@@ -10,18 +10,18 @@ import (
 // SensorReader is an *interface* (like a Python ABC or Protocol, but implicit).
 // Any type that has a Read() method returning map[string]float64 automatically satisfies it.
 // In Python you'd write "class SensorReader(ABC): @abstractmethod def read() -> dict[str, float]".
-// Here, you just define the method set — no explicit "implements" keyword needed.
+// Here, you just define the method set -- no explicit "implements" keyword needed.
 type SensorReader interface {
 	Read() map[string]float64
 }
 
 // LinuxThermalSensor is a *struct* (like a Python class with only attributes, no methods defined inline).
-// Struct{} means it has no fields — just an empty "bag". Methods are attached separately below.
+// Struct{} means it has no fields -- just an empty "bag". Methods are attached separately below.
 type LinuxThermalSensor struct{}
 
-// NewLinuxThermalSensor is a *constructor* — returns a pointer (*LinuxThermalSensor).
+// NewLinuxThermalSensor is a *constructor* -- returns a pointer (*LinuxThermalSensor).
 // In Python you'd do this in __init__ and return self. Here, we manually return &LinuxThermalSensor{}.
-// The & means "take the address of" — like creating an object and getting a reference to it.
+// The & means "take the address of" -- like creating an object and getting a reference to it.
 func NewLinuxThermalSensor() *LinuxThermalSensor {
 	return &LinuxThermalSensor{}
 }
@@ -29,9 +29,9 @@ func NewLinuxThermalSensor() *LinuxThermalSensor {
 // Read reads CPU temperature sensors from multiple Linux interfaces.
 // Strategy: Try hwmon first (better labels), fall back to thermal zones (always available).
 // This is like Python's "try hwmon except: use thermal" pattern.
-// The (s *LinuxThermalSensor) before the name is the *receiver* — like "self" in Python methods.
+// The (s *LinuxThermalSensor) before the name is the *receiver* -- like "self" in Python methods.
 func (s *LinuxThermalSensor) Read() map[string]float64 {
-	// Try hwmon first — provides better sensor names like "Core 0", "Package id 0"
+	// Try hwmon first -- provides better sensor names like "Core 0", "Package id 0"
 	// This is like Python's EAFP: Easier to Ask for Forgiveness than Permission
 	temps := s.readHwmonSensors()
 
@@ -42,22 +42,22 @@ func (s *LinuxThermalSensor) Read() map[string]float64 {
 		return temps
 	}
 
-	// Fallback to thermal zones — works on ALL Linux systems
+	// Fallback to thermal zones -- works on ALL Linux systems
 	// Like a Python fallback: return read_thermal_zones() if not temps
 	Logger.Debug("No hwmon sensors found, falling back to thermal zones")
 	return s.readThermalZones()
 }
 
-// readHwmonSensors reads from /sys/class/hwmon/ — the hardware monitoring interface.
+// readHwmonSensors reads from /sys/class/hwmon/ -- the hardware monitoring interface.
 // This provides detailed sensor labels like "Core 0" instead of generic "thermal_zone0".
 // Works when kernel modules like coretemp (Intel) or k10temp (AMD) are loaded.
 // Returns empty map if no hwmon sensors are available.
 // In Python terms: scans /sys/class/hwmon/hwmon*/temp*_input files.
 func (s *LinuxThermalSensor) readHwmonSensors() map[string]float64 {
-	// make(map[string]float64) creates an empty map — like {} in Python.
+	// make(map[string]float64) creates an empty map -- like {} in Python.
 	temps := make(map[string]float64)
 
-	// filepath.Glob finds all hwmon directories — like Python's glob.glob('/sys/class/hwmon/hwmon*')
+	// filepath.Glob finds all hwmon directories -- like Python's glob.glob('/sys/class/hwmon/hwmon*')
 	// Go returns TWO values: result AND error. This is Go's error handling instead of try/except.
 	hwmons, err := filepath.Glob("/sys/class/hwmon/hwmon*")
 	if err != nil {
@@ -72,7 +72,7 @@ func (s *LinuxThermalSensor) readHwmonSensors() map[string]float64 {
 
 	Logger.Debug("Found %d hwmon directorie(s)", len(hwmons))
 
-	// Iterate over each hwmon device — like Python's for hwmon in hwmons:
+	// Iterate over each hwmon device -- like Python's for hwmon in hwmons:
 	// We use _ for the index because Go doesn't allow unused variables.
 	for _, hwmon := range hwmons {
 		hwmonName := filepath.Base(hwmon)
@@ -98,21 +98,21 @@ func (s *LinuxThermalSensor) readHwmonSensors() map[string]float64 {
 		// Process each temperature sensor file.
 		// In Python: for temp_file in temp_inputs:
 		for _, tempInput := range tempInputs {
-			// Extract the sensor number from filename: "temp1_input" → "1"
+			// Extract the sensor number from filename: "temp1_input" -> "1"
 			// filepath.Base gets the filename, strings.TrimSuffix removes "_input"
 			baseName := filepath.Base(tempInput)           // "temp1_input"
 			numStr := strings.TrimPrefix(baseName, "temp") // "1_input"
 			numStr = strings.TrimSuffix(numStr, "_input")  // "1"
 
 			// Read the temperature value from tempN_input file.
-			// Value is in millidegrees Celsius (e.g., 45000 = 45°C).
+			// Value is in millidegrees Celsius (e.g., 45000 = 45C).
 			raw, err := os.ReadFile(tempInput)
 			if err != nil {
 				Logger.Debug("Cannot read %s: %v", baseName, err)
 				continue
 			}
 
-			// strconv.ParseFloat converts string to float64 — like Python's float().
+			// strconv.ParseFloat converts string to float64 -- like Python's float().
 			val, err := strconv.ParseFloat(strings.TrimSpace(string(raw)), 64)
 			if err != nil {
 				Logger.Debug("Cannot parse temperature from %s: %v", baseName, err)
@@ -138,7 +138,7 @@ func (s *LinuxThermalSensor) readHwmonSensors() map[string]float64 {
 				sensorName = deviceName + "/" + label
 			}
 
-			Logger.Debug("Sensor %s: %.2f°C", sensorName, tempC)
+			Logger.Debug("Sensor %s: %.2fC", sensorName, tempC)
 			temps[sensorName] = tempC  // Like Python: temps[sensor_name] = temp_c
 		}
 	}
@@ -146,15 +146,15 @@ func (s *LinuxThermalSensor) readHwmonSensors() map[string]float64 {
 	return temps
 }
 
-// readThermalZones reads from /sys/class/thermal/ — the thermal zone interface.
+// readThermalZones reads from /sys/class/thermal/ -- the thermal zone interface.
 // This is the fallback method that works on ALL Linux systems with kernel 2.6+.
 // Thermal zones are more generic ("thermal_zone0", "x86_pkg_temp") but always available.
 // In Python terms: scans /sys/class/thermal/thermal_zone*/temp files.
 func (s *LinuxThermalSensor) readThermalZones() map[string]float64 {
-	// make(map[string]float64) creates an empty map — like {} in Python.
+	// make(map[string]float64) creates an empty map -- like {} in Python.
 	temps := make(map[string]float64)
 
-	// filepath.Glob finds files matching a pattern — like Python's glob.glob().
+	// filepath.Glob finds files matching a pattern -- like Python's glob.glob().
 	// Go returns TWO values: the result AND an error. This is Go's way of handling errors
 	// instead of try/except. You ALWAYS check if err != nil before using the result.
 	zones, err := filepath.Glob("/sys/class/thermal/thermal_zone*")
@@ -176,7 +176,7 @@ func (s *LinuxThermalSensor) readThermalZones() map[string]float64 {
 	for _, zone := range zones {
 		zoneName := filepath.Base(zone)
 
-		// os.ReadFile reads a whole file into memory — like Python's open().read().
+		// os.ReadFile reads a whole file into memory -- like Python's open().read().
 		// Returns []byte (byte slice, similar to Python's bytes) and error.
 		raw, err := os.ReadFile(filepath.Join(zone, "temp"))
 		if err != nil {
@@ -184,8 +184,8 @@ func (s *LinuxThermalSensor) readThermalZones() map[string]float64 {
 			continue
 		}
 
-		// strconv.ParseFloat converts string to float64 — like Python's float().
-		// TrimSpace removes whitespace — like Python's .strip().
+		// strconv.ParseFloat converts string to float64 -- like Python's float().
+		// TrimSpace removes whitespace -- like Python's .strip().
 		val, err := strconv.ParseFloat(strings.TrimSpace(string(raw)), 64)
 		if err != nil {
 			Logger.Warn("Cannot parse temperature from %s: %v", zoneName, err)
@@ -201,10 +201,10 @@ func (s *LinuxThermalSensor) readThermalZones() map[string]float64 {
 			Logger.Warn("Cannot read %s/type, using zone name: %v", zoneName, err)
 		}
 
-		// Linux reports temperature in millidegrees (e.g. 45000 = 45°C).
+		// Linux reports temperature in millidegrees (e.g. 45000 = 45C).
 		tempC := val / 1000.0
-		Logger.Debug("Sensor %s (%s): %.2f°C", zoneName, name, tempC)
-		temps[name] = tempC  // Assigning to a map — like Python dict: temps[name] = tempC
+		Logger.Debug("Sensor %s (%s): %.2fC", zoneName, name, tempC)
+		temps[name] = tempC  // Assigning to a map -- like Python dict: temps[name] = tempC
 	}
 
 	return temps  // Returns the map (Go passes maps by reference, like Python dicts)

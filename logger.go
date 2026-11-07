@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// LogLevel is a custom type based on int — like an IntEnum in Python.
+// LogLevel is a custom type based on int -- like an IntEnum in Python.
 // Go doesn't have classes, so we use typed constants with iota (similar to Enum auto()).
 type LogLevel int
 
@@ -23,7 +23,7 @@ const (
 	ERROR
 )
 
-// levelNames maps LogLevel values to their string names — like a Python dict.
+// levelNames maps LogLevel values to their string names -- like a Python dict.
 var levelNames = map[LogLevel]string{
 	DEBUG: "DEBUG",
 	INFO:  "INFO",
@@ -31,18 +31,18 @@ var levelNames = map[LogLevel]string{
 	ERROR: "ERROR",
 }
 
-// LeveledLogger provides leveled logging with timestamps — like Python's logging.Logger.
+// LeveledLogger provides leveled logging with timestamps -- like Python's logging.Logger.
 // It's thread-safe (uses sync.Mutex) so multiple goroutines can log without garbled output.
 // In Python, logging.Logger is already thread-safe; here we have to manage it manually.
 type LeveledLogger struct {
-	mu     sync.Mutex   // Mutex = mutual exclusion lock — like threading.Lock() in Python
+	mu     sync.Mutex   // Mutex = mutual exclusion lock -- like threading.Lock() in Python
 	logger *log.Logger  // Go's standard library logger
 	level  LogLevel     // Minimum level to actually print
 }
 
 // Logger is the package-level global logger, initialized from LOG_LEVEL env var.
 // Similar to Python's logging.getLogger(__name__) or logging.basicConfig().
-// Capitalized = exported (public) — any file in package main can use Logger.Info(...).
+// Capitalized = exported (public) -- any file in package main can use Logger.Info(...).
 var Logger = NewLeveledLogger(strings.ToUpper(os.Getenv("LOG_LEVEL")))
 
 // NewLeveledLogger creates a new logger. The level parameter comes from LOG_LEVEL env var.
@@ -63,7 +63,7 @@ func NewLeveledLogger(level string) *LeveledLogger {
 }
 
 // log is the internal method that all public methods (Debug, Info, etc.) call.
-// ...interface{} is like *args in Python — variadic parameters of any type.
+// ...interface{} is like *args in Python -- variadic parameters of any type.
 // In Python: def log(self, level, format, *args): ...
 func (l *LeveledLogger) log(level LogLevel, format string, args ...interface{}) {
 	// Skip if this log level is below the configured minimum.
@@ -84,7 +84,7 @@ func (l *LeveledLogger) Debug(format string, args ...interface{}) { l.log(DEBUG,
 func (l *LeveledLogger) Info(format string, args ...interface{})  { l.log(INFO, format, args...) }
 func (l *LeveledLogger) Warn(format string, args ...interface{})  { l.log(WARN, format, args...) }
 func (l *LeveledLogger) Error(format string, args ...interface{}) { l.log(ERROR, format, args...) }
-// Fatal logs an error and then exits the program — like Python's logging.critical() + sys.exit(1).
+// Fatal logs an error and then exits the program -- like Python's logging.critical() + sys.exit(1).
 func (l *LeveledLogger) Fatal(format string, args ...interface{}) {
 	l.log(ERROR, format, args...)
 	os.Exit(1)

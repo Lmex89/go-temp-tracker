@@ -14,7 +14,7 @@ type Poller struct {
 	db     *sql.DB
 }
 
-// NewPoller constructor — like Python's __init__, returns a pointer to a new Poller.
+// NewPoller constructor -- like Python's __init__, returns a pointer to a new Poller.
 // The struct literal Poller{...} fills fields by name (keyword arguments in Python).
 func NewPoller(sensor SensorReader, store Store, db *sql.DB) *Poller {
 	return &Poller{sensor: sensor, store: store, db: db}
@@ -26,7 +26,7 @@ func NewPoller(sensor SensorReader, store Store, db *sql.DB) *Poller {
 func (p *Poller) Run(intervalSec, retainHours int) {
 	Logger.Info("Temperature polling loop started (interval=%ds, retain=%dh)", intervalSec, retainHours)
 
-	// Infinite loop — same as "while True:" in Python.
+	// Infinite loop -- same as "while True:" in Python.
 	for {
 		Logger.Debug("Reading CPU temperatures...")
 		temps := p.sensor.Read()
@@ -35,10 +35,10 @@ func (p *Poller) Run(intervalSec, retainHours int) {
 			Logger.Warn("No temperature sensors found")
 		}
 
-		// range over a map gives (key, value) — like Python's dict.items().
+		// range over a map gives (key, value) -- like Python's dict.items().
 		for sensor, temp := range temps {
-			Logger.Debug("Recording %s: %.2f°C", sensor, temp)
-			p.store.Insert(p.db, sensor, temp, "temperature", "°C")
+			Logger.Debug("Recording %s: %.2fC", sensor, temp)
+			p.store.Insert(p.db, sensor, temp, "temperature", "C")
 		}
 
 		Logger.Info("Recorded %d temperature reading(s)", len(temps))

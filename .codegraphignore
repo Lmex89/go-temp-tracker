@@ -1,0 +1,10 @@
+data/
+__pycache__/
+*.pyc
+.git/
+temps.db*
+*.db-shm
+*.db-wal
+spike-report
+temp-tracker
+*.log

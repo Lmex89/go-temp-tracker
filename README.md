@@ -1,21 +1,23 @@
 # System Monitor
 
-A lightweight Go application that monitors CPU temperatures, system metrics (CPU, memory, swap, load), stores readings in SQLite, and displays them in a real-time web dashboard with gauges and interactive charts.
+A lightweight Go application that monitors CPU temperatures, system metrics (CPU, memory, swap, disk, load), stores readings in PostgreSQL (or SQLite as a fallback), and displays them in a real-time web dashboard with gauges and interactive charts.
 
 ## Features
 
 - **Temperature sensors**: Reads from all available `/sys/class/thermal/thermal_zone*` and `/sys/class/hwmon/hwmon*` sensors
 - **System metrics**: CPU usage per core, RAM usage, swap usage, disk usage, and load averages via gopsutil v3
 - **Gauges**: Semicircular visual indicators for CPU, RAM, Swap, and Disk at a glance
-- **Historical data**: Stored in local SQLite database (`temps.db`)
-- **Auto-pruning**: Configurable retention per metric type (temperature 1y, CPU 24h, memory 24h, etc.)
+- **Historical data**: Stored in PostgreSQL (default for the service scripts) or SQLite (binary default; `temps.db` fallback)
+- **Auto-pruning**: Uniform retention for all metric types via the `-retain` flag (default 1 year; the `*_RETAIN_HOURS` vars in `.env.example` are not consumed by the code)
 - **REST API**: Query historical data by metric type with relative hours or absolute date range
 - **Interactive dashboard**: Multiple Chart.js line charts with zoom/pan, stacked vertically
 
 ## Requirements
 
 - Linux (reads `/proc` and `/sys` for system metrics)
-- Go 1.21+
+- Go 1.25+
+- Docker (for PostgreSQL backend)
+- PostgreSQL 17+ (via `docker compose up -d`)
 
 ## Installation
 
@@ -23,19 +25,25 @@ A lightweight Go application that monitors CPU temperatures, system metrics (CPU
 git clone <repo-url> sensors-temp
 cd sensors-temp
 go build -o temp-tracker .
+
+# Start PostgreSQL (required when DB_DRIVER=postgres)
+docker compose up -d
 ```
 
 ## Usage
 
 ```bash
-# Run with defaults (port 8080)
-./temp-tracker
+# Run with PostgreSQL (default for helper scripts; the binary defaults to sqlite)
+DB_DRIVER=postgres ./temp-tracker -port 9091
+
+# Run with SQLite (fallback, no Docker needed)
+DB_DRIVER=sqlite ./temp-tracker -port 9091
 
 # Custom configuration
 ./temp-tracker -port 9090 -interval 60 -retain 48
 ```
 
-Open `http://localhost:8080` in your browser.
+Open `http://localhost:9091` in your browser.
 
 ## Running indefinitely
 
@@ -51,7 +59,41 @@ nohup ./temp-tracker -port 9091 -interval 30 > tracker.log 2>&1 &
 
 ### systemd service (survives reboots)
 
-Create `/etc/systemd/system/temp-tracker.service`:
+The project includes helper scripts that create, enable, and start the service for you.
+
+#### User service (starts on login, no sudo)
+
+```bash
+./setup-systemd-service.sh
+# or, if you prefer Fish:
+./setup-systemd-service.fish
+```
+
+This installs `~/.config/systemd/user/temp-tracker.service` and uses the same settings as `cleanup-and-build.fish` (port **9091**, 60s polling intervals).
+
+- Check status: `systemctl --user status temp-tracker`
+- Stop: `systemctl --user stop temp-tracker` (or `./service-manager.sh stop`)
+- Restart: `systemctl --user restart temp-tracker` (or `./service-manager.sh restart`)
+- View logs: `journalctl --user -u temp-tracker -f` (or `./view-logs.sh -f`)
+
+#### System service (starts at boot, requires sudo)
+
+```bash
+./setup-systemd-service.sh --system
+# or, if you prefer Fish:
+./setup-systemd-service.fish --system
+```
+
+This installs `/etc/systemd/system/temp-tracker.service`, runs as your user, and starts automatically at boot.
+
+- Check status: `sudo systemctl status temp-tracker`
+- Stop: `sudo systemctl stop temp-tracker` (or `./service-manager.sh --system stop`)
+- Restart: `sudo systemctl restart temp-tracker` (or `./service-manager.sh --system restart`)
+- View logs: `sudo journalctl -u temp-tracker -f` (or `./view-logs.sh --system -f`)
+
+#### Manual setup
+
+If you prefer to write the unit file yourself, create `/etc/systemd/system/temp-tracker.service`:
 
 ```ini
 [Unit]
@@ -59,9 +101,9 @@ Description=Sensor Temperature Tracker
 After=network.target
 
 [Service]
-ExecStart=/home/lmex89/Documentos/probe/sensors-temp/temp-tracker -port 9091 -interval 30
+ExecStart=/home/lmex89/Documentos/probe/sensors-temp/temp-tracker -port 9091 -interval 60
 WorkingDirectory=/home/lmex89/Documentos/probe/sensors-temp
-Restart=always
+Restart=on-failure
 RestartSec=5
 User=lmex89
 
@@ -76,8 +118,6 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now temp-tracker
 ```
 
-- Check status: `sudo systemctl status temp-tracker`
-- View logs: `journalctl -u temp-tracker -f`
 - Stop: `sudo systemctl stop temp-tracker`
 
 ### tmux session
@@ -89,13 +129,55 @@ tmux new -s temp-tracker
 # Reattach: tmux attach -t temp-tracker
 ```
 
+## Database backup
+
+### Manual backup
+
+```bash
+# Create a gzip-compressed backup (saved to backups/)
+./backup-db.sh
+
+# List available backups
+./restore-db.sh
+
+# Restore from a specific backup file
+./restore-db.sh backups/sensors_temp_20260725_020000.sql.gz
+```
+
+The backup script:
+- Runs `pg_dump` inside the `sensors-temp-db` Docker container
+- Compresses to `backups/<database>_<timestamp>.sql.gz`
+- Auto-deletes backups older than 3 days (`RETENTION_DAYS` hardcoded in both scripts)
+
+### Scheduled backup (cron)
+
+To run a daily backup at 02:00:
+
+```bash
+# Add to crontab interactively
+crontab -e
+# Add this line:
+0 2 * * * /home/lmex89/Documentos/probe/sensors-temp/backup-db.sh >> /home/lmex89/Documentos/probe/sensors-temp/backups/cron.log 2>&1
+```
+
+```bash
+# Or add it in one command (no editor needed)
+(crontab -l 2>/dev/null; echo "0 2 * * * /home/lmex89/Documentos/probe/sensors-temp/backup-db.sh >> /home/lmex89/Documentos/probe/sensors-temp/backups/cron.log 2>&1") | crontab -
+
+# Verify it was added
+crontab -l
+```
+
+Backups are saved in `backups/` (gitignored). Cron logs go to `backups/cron.log`.
+
 ## Command-line flags
 
-| Flag        | Default | Description                            |
-|-------------|---------|----------------------------------------|
-| `-port`     | `8080`  | HTTP server port                       |
-| `-interval` | `60`    | Temperature polling interval in seconds |
-| `-retain`   | `8760`  | Delete ALL readings older than N hours (~12 months) |
+| Flag        | Default  | Description                            |
+|-------------|----------|----------------------------------------|
+| `-port`     | `8080`   | HTTP server port                       |
+| `-interval` | `60`     | Temperature polling interval in seconds |
+| `-retain`   | `8760`   | Delete ALL readings older than N hours (~12 months) |
+| `-db-driver`| `sqlite` | Database backend: `sqlite` or `postgres` |
 
 ## Environment variables
 
@@ -104,7 +186,8 @@ All polling intervals are overridable via environment variables. See `.env.examp
 | Variable              | Default | Description                                      |
 |-----------------------|---------|--------------------------------------------------|
 | `LOG_LEVEL`           | `INFO`  | Log level: `DEBUG`, `INFO`, `WARN`, or `ERROR`   |
-| `TEMP_POLL_INTERVAL`  | `60`    | Temperature polling interval in seconds           |
+| `DB_DRIVER`           | `sqlite`| Database backend: `sqlite` or `postgres`         |
+| `DATABASE_URL`        | (none)  | PostgreSQL connection string (required for postgres) |
 | `CPU_POLL_INTERVAL`   | `60`    | CPU polling interval in seconds                  |
 | `MEMORY_POLL_INTERVAL`| `60`    | Memory polling interval in seconds               |
 | `SWAP_POLL_INTERVAL`  | `60`    | Swap polling interval in seconds                 |
@@ -133,6 +216,7 @@ All endpoints support `?hours=N` (relative) or `?from=ISO&to=ISO` (absolute rang
 | `GET /api/cpu` | `[]Reading` | CPU usage per core + total |
 | `GET /api/memory` | `[]Reading` | Memory usage (used_percent, total/used/free bytes) |
 | `GET /api/swap` | `[]Reading` | Swap usage (used_percent, total/used/free bytes) |
+| `GET /api/disk` | `[]Reading` | Disk usage (root partition, gauge only) |
 | `GET /api/load` | `[]Reading` | Load averages (1m, 5m, 15m) |
 
 ### Current values
@@ -183,24 +267,34 @@ Serves the web dashboard (`static/index.html`).
 
 ```
 sensors-temp/
-├── logger.go       Leveled logger (DEBUG/INFO/WARN/ERROR/FATAL)
-├── main.go         Entry point — wires sensors, metrics, store, pollers, HTTP server
-├── sensor.go       SensorReader + LinuxThermalSensor (reads /sys/class/thermal/ and hwmon)
-├── metrics.go      SystemMetrics (CPU, memory, swap, disk, load via gopsutil v3)
-├── poller.go       Poller + RunMetricPoller — one goroutine per metric type
-├── db.go           Store + SQLiteStore (schema, migration, insert, query, prune)
-├── timeutil.go     TimeConverter + MeridaTimeConverter (UTC -> America/Merida)
-├── handler.go      REST API endpoints
-├── static/
-│   ├── index.html           Chart.js dashboard (gauges + line charts)
-│   ├── config.json          Active dashboard configuration
-│   └── config.default.json  Reference defaults
-├── .env.example    Environment variable reference template
-├── AGENTS.md       IDE agent instructions
-├── README.md       This file
-├── go.mod / go.sum Go module files
-├── temps.db        SQLite database (created at runtime — NEVER DELETE)
-└── temp-tracker    Compiled binary
+|-- logger.go       Leveled logger (DEBUG/INFO/WARN/ERROR/FATAL)
+|-- main.go         Entry point -- wires sensors, metrics, store, pollers, HTTP server
+|-- sensor.go       SensorReader + LinuxThermalSensor (reads /sys/class/thermal/ and hwmon)
+|-- metrics.go      SystemMetrics (CPU, memory, swap, disk, load via gopsutil v3)
+|-- poller.go       Poller + RunMetricPoller -- one goroutine per metric type
+|-- db.go           Store + SQLiteStore (schema, migration, insert, query, prune)
+|-- pgstore.go      PostgresStore (PostgreSQL implementation of the Store interface)
+|-- timeutil.go     TimeConverter + MeridaTimeConverter (UTC -> America/Merida)
+|-- handler.go      REST API endpoints
+|-- docker-compose.yml  PostgreSQL 17 Alpine container (port 5432)
+|-- setup-systemd-service.fish  Create/enable systemd user or system service
+|-- service-manager.fish       Start/stop/restart/status/logs for the service
+|-- cleanup-and-build.fish     Kill old process, rebuild, restart service
+|-- backup-db.sh          PostgreSQL backup via docker exec pg_dump
+|-- restore-db.sh         Restore from a gzip-compressed backup
+|-- cmd/
+|   |-- spike-report/       On-demand spike analysis tool
+|   `-- migrate-to-postgres/ SQLite-to-PostgreSQL bulk migration tool
+|-- static/
+|   |-- index.html           Chart.js dashboard (gauges + line charts)
+|   |-- config.json          Active dashboard configuration
+|   `-- config.default.json  Reference defaults
+|-- .env.example    Environment variable reference template
+|-- AGENTS.md       IDE agent instructions
+|-- README.md       This file
+|-- go.mod / go.sum Go module files
+|-- temps.db        SQLite database (fallback backend, created at runtime)
+`-- temp-tracker    Compiled binary
 ```
 
 ## Log levels
