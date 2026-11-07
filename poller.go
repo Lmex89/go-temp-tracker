@@ -5,75 +5,78 @@ import (
 	"time"
 )
 
-// Poller is a struct that ties together a sensor reader, a database store, and a db connection.
-// It runs an infinite loop: read -> insert -> prune -> sleep.
-// In Python you'd write a class with __init__ setting self.sensor, self.store, self.db.
-type Poller struct {
-	sensor SensorReader
-	store  Store
-	db     *sql.DB
+// pollSpec bundles the three per-goroutine variables of a polling loop.
+// In Python this would be a dataclass(metric_type, interval, read_func).
+type pollSpec struct {
+	metricType string
+	interval   time.Duration
+	readFunc   func() []MetricPoint
 }
 
-// NewPoller constructor -- like Python's __init__, returns a pointer to a new Poller.
-// The struct literal Poller{...} fills fields by name (keyword arguments in Python).
-func NewPoller(sensor SensorReader, store Store, db *sql.DB) *Poller {
-	return &Poller{sensor: sensor, store: store, db: db}
-}
-
-// Run starts the infinite polling loop for temperature sensors.
-// It's meant to be called with "go poller.Run(...)" so it runs in a separate goroutine.
-// In Python you'd do threading.Thread(target=poller.run, args=(interval, retain)).start().
-func (p *Poller) Run(intervalSec, retainHours int) {
-	Logger.Info("Temperature polling loop started (interval=%ds, retain=%dh)", intervalSec, retainHours)
-
-	// Infinite loop -- same as "while True:" in Python.
-	for {
-		Logger.Debug("Reading CPU temperatures...")
-		temps := p.sensor.Read()
-
-		if len(temps) == 0 {
-			Logger.Warn("No temperature sensors found")
+// wrapSensorReader adapts SensorReader.Read() (a map) to func() []MetricPoint,
+// so temperature looks like every other metric. Unit is "C" (not "celsius"):
+// the old Poller stored "C" and the schema default is 'C', so rows must match. Like a Python
+// [MetricPoint(s, v, "C") for s, v in reader.read().items()].
+func wrapSensorReader(reader SensorReader) func() []MetricPoint {
+	return func() []MetricPoint {
+		readings := reader.Read()
+		points := make([]MetricPoint, 0, len(readings))
+		for sensor, value := range readings {
+			points = append(points, MetricPoint{Sensor: sensor, Value: value, Unit: "C"})
 		}
-
-		// range over a map gives (key, value) -- like Python's dict.items().
-		for sensor, temp := range temps {
-			Logger.Debug("Recording %s: %.2fC", sensor, temp)
-			p.store.Insert(p.db, sensor, temp, "temperature", "C")
-		}
-
-		Logger.Info("Recorded %d temperature reading(s)", len(temps))
-		p.store.Prune(p.db, AllMetrics, retainHours)
-
-		Logger.Debug("Sleeping for %d seconds...", intervalSec)
-		time.Sleep(time.Duration(intervalSec) * time.Second)
+		return points
 	}
 }
 
-// RunMetricPoller is a generic polling loop for any system metric type.
-// It reads metrics via readFunc, inserts them with store, prunes, then sleeps.
-// Multiple goroutines call this with different intervals and metric types.
-// In Python: threading.Thread(target=run_metric_poller, args=(interval, read_fn)).start()
-func RunMetricPoller(store Store, db *sql.DB, metricType string, intervalSec, retainHours int, readFunc func() []MetricPoint) {
+// buildPollSpecs returns the six polling specs in start order (index * 3s is
+// the stagger delay). Temperature uses the -interval flag; the system metrics
+// read their *_POLL_INTERVAL env vars (default 60s). Extracted from main() so
+// tests can check it. Python analogy: a factory returning a list of dataclasses.
+func buildPollSpecs(sensor SensorReader, metrics *SystemMetrics, tempIntervalSec int) []pollSpec {
+	const defaultSec = 60
+	sec := func(d int) time.Duration { return time.Duration(d) * time.Second }
+	return []pollSpec{
+		{"temperature", sec(tempIntervalSec), wrapSensorReader(sensor)},
+		{"cpu", sec(getEnvInt("CPU_POLL_INTERVAL", defaultSec)), metrics.ReadCPU},
+		{"memory", sec(getEnvInt("MEMORY_POLL_INTERVAL", defaultSec)), metrics.ReadMemory},
+		{"swap", sec(getEnvInt("SWAP_POLL_INTERVAL", defaultSec)), metrics.ReadSwap},
+		{"disk", sec(getEnvInt("DISK_POLL_INTERVAL", defaultSec)), metrics.ReadDisk},
+		{"load", sec(getEnvInt("LOAD_POLL_INTERVAL", defaultSec)), metrics.ReadLoad},
+	}
+}
+
+// pollOnce runs ONE iteration of the polling loop: read -> insert -> prune.
+// It is split out of RunPoller so tests can call it without the infinite loop
+// or the sleep. Python analogy: the body of "while True:" extracted into a
+// function you can call directly from pytest.
+func pollOnce(store Store, db *sql.DB, metricType string, retainHours int, readFunc func() []MetricPoint) {
+	Logger.Debug("Reading [%s] metrics...", metricType)
+	points := readFunc()
+
+	if len(points) == 0 {
+		Logger.Warn("[%s] No metrics returned", metricType)
+	}
+
+	for _, p := range points {
+		Logger.Debug("Recording [%s] %s: %.2f%s", metricType, p.Sensor, p.Value, p.Unit)
+		store.Insert(db, p.Sensor, p.Value, metricType, p.Unit)
+	}
+
+	if len(points) > 0 {
+		Logger.Info("Recorded %d [%s] reading(s)", len(points), metricType)
+	}
+
+	store.Prune(db, metricType, retainHours)
+}
+
+// RunPoller is the unified polling loop for ANY metric type (temperature
+// included). Replaced the old RunMetricPoller and Poller.Run.
+// Meant to be started with "go RunPoller(...)", like a Python daemon thread.
+func RunPoller(store Store, db *sql.DB, metricType string, intervalSec, retainHours int, readFunc func() []MetricPoint) {
 	Logger.Info("[%s] polling loop started (interval=%ds, retain=%dh)", metricType, intervalSec, retainHours)
 
 	for {
-		Logger.Debug("Reading [%s] metrics...", metricType)
-		points := readFunc()
-
-		if len(points) == 0 {
-			Logger.Warn("[%s] No metrics returned", metricType)
-		}
-
-		for _, p := range points {
-			Logger.Debug("Recording [%s] %s: %.2f%s", metricType, p.Sensor, p.Value, p.Unit)
-			store.Insert(db, p.Sensor, p.Value, metricType, p.Unit)
-		}
-
-		if len(points) > 0 {
-			Logger.Info("Recorded %d [%s] reading(s)", len(points), metricType)
-		}
-
-		store.Prune(db, metricType, retainHours)
+		pollOnce(store, db, metricType, retainHours, readFunc)
 
 		Logger.Debug("[%s] sleeping for %d seconds...", metricType, intervalSec)
 		time.Sleep(time.Duration(intervalSec) * time.Second)

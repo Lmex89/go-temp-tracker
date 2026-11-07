@@ -87,39 +87,16 @@ func main() {
 	// Without staggering, 6 goroutines sharing 3 conns create a thundering herd
 	// against SQLite's internal lock, causing 5s busy_timeout waits on every cycle.
 	// In Python: time.sleep(offset) before entering the while loop.
-	poller := NewPoller(sensor, store, db)
-	go func() {
-		time.Sleep(0 * time.Second)
-		poller.Run(*interval, *retain)
-	}()
-
-	metricDefaultInterval := 60
-
-	cpuInterval := getEnvInt("CPU_POLL_INTERVAL", metricDefaultInterval)
-	go func() {
-		time.Sleep(3 * time.Second)
-		RunMetricPoller(store, db, "cpu", cpuInterval, *retain, metrics.ReadCPU)
-	}()
-	memInterval := getEnvInt("MEMORY_POLL_INTERVAL", metricDefaultInterval)
-	go func() {
-		time.Sleep(6 * time.Second)
-		RunMetricPoller(store, db, "memory", memInterval, *retain, metrics.ReadMemory)
-	}()
-	swapInterval := getEnvInt("SWAP_POLL_INTERVAL", metricDefaultInterval)
-	go func() {
-		time.Sleep(9 * time.Second)
-		RunMetricPoller(store, db, "swap", swapInterval, *retain, metrics.ReadSwap)
-	}()
-	diskInterval := getEnvInt("DISK_POLL_INTERVAL", metricDefaultInterval)
-	go func() {
-		time.Sleep(12 * time.Second)
-		RunMetricPoller(store, db, "disk", diskInterval, *retain, metrics.ReadDisk)
-	}()
-	loadInterval := getEnvInt("LOAD_POLL_INTERVAL", metricDefaultInterval)
-	go func() {
-		time.Sleep(15 * time.Second)
-		RunMetricPoller(store, db, "load", loadInterval, *retain, metrics.ReadLoad)
-	}()
+	// Data-driven loop: one pollSpec per metric type, one goroutine each.
+	// The goroutine takes spec and delay as PARAMETERS so each one gets its own
+	// copy -- capturing the loop variable in a closure is a classic Go bug
+	// (like Python's late-binding lambda in a for loop).
+	for i, spec := range buildPollSpecs(sensor, metrics, *interval) {
+		go func(spec pollSpec, delay time.Duration) {
+			time.Sleep(delay)
+			RunPoller(store, db, spec.metricType, int(spec.interval/time.Second), *retain, spec.readFunc)
+		}(spec, time.Duration(i)*3*time.Second)
+	}
 
 	// Setting up HTTP routes -- ServeMux is like Flask's app or Django's urlpatterns.
 	mux := http.NewServeMux()

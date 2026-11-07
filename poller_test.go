@@ -1,0 +1,155 @@
+package main
+
+import (
+	"sort"
+	"testing"
+	"time"
+)
+
+// fakeSensorReader satisfies SensorReader with canned data.
+// In Python this would be a stub class with a read() method returning a dict.
+type fakeSensorReader struct{ data map[string]float64 }
+
+func (f fakeSensorReader) Read() map[string]float64 { return f.data }
+
+func TestWrapSensorReader(t *testing.T) {
+	tests := []struct {
+		name string
+		data map[string]float64
+		want []MetricPoint // sorted by Sensor, because map order is random
+	}{
+		{"empty map", map[string]float64{}, []MetricPoint{}},
+		{"single sensor", map[string]float64{"Core 0": 45.5},
+			[]MetricPoint{{Sensor: "Core 0", Value: 45.5, Unit: "C"}}},
+		{"multiple sensors preserved", map[string]float64{"acpitz": 30, "Core 0": 55.25},
+			[]MetricPoint{
+				{Sensor: "Core 0", Value: 55.25, Unit: "C"},
+				{Sensor: "acpitz", Value: 30, Unit: "C"},
+			}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := wrapSensorReader(fakeSensorReader{tt.data})()
+			sort.Slice(got, func(i, j int) bool { return got[i].Sensor < got[j].Sensor })
+			if len(got) != len(tt.want) {
+				t.Fatalf("len = %d, want %d", len(got), len(tt.want))
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("point %d = %+v, want %+v", i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
+// TestPollOnce drives one iteration of the polling loop against a throwaway
+// SQLite store (newTempSQLite chdirs into a temp dir, so the real temps.db is
+// never touched -- like pytest's tmp_path fixture).
+func TestPollOnce(t *testing.T) {
+	tests := []struct {
+		name       string
+		metricType string
+		points     []MetricPoint
+	}{
+		{"temperature", "temperature", []MetricPoint{
+			{Sensor: "Core 0", Value: 55.5, Unit: "C"},
+			{Sensor: "acpitz", Value: 30, Unit: "C"},
+		}},
+		{"cpu", "cpu", []MetricPoint{{Sensor: "cpu/total", Value: 12.5, Unit: "%"}}},
+		{"memory empty read", "memory", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store, db := newTempSQLite(t)
+
+			calls := 0
+			read := func() []MetricPoint { calls++; return tt.points }
+
+			pollOnce(store, db, tt.metricType, 24, read)
+
+			if calls != 1 {
+				t.Errorf("readFunc calls = %d, want 1", calls)
+			}
+			got, err := store.Query(db, TimeWindow{Hours: 1}, tt.metricType)
+			if err != nil {
+				t.Fatalf("Query: %v", err)
+			}
+			if len(got) != len(tt.points) {
+				t.Fatalf("stored %d rows, want %d", len(got), len(tt.points))
+			}
+			for _, r := range got {
+				if r.MetricType != tt.metricType {
+					t.Errorf("metric_type = %q, want %q", r.MetricType, tt.metricType)
+				}
+			}
+		})
+	}
+}
+
+// TestPollOncePrunesOnlyOwnType checks the prune step is scoped to the
+// poller's metric type: an old "cpu" row must survive a "memory" poll.
+func TestPollOncePrunesOnlyOwnType(t *testing.T) {
+	store, db := newTempSQLite(t)
+
+	old := "2000-01-01 00:00:00"
+	for _, mt := range []string{"cpu", "memory"} {
+		if _, err := db.Exec(`INSERT INTO readings (sensor, temp_c, metric_type, unit, created_at) VALUES (?, 1, ?, '%', ?)`, mt+"/x", mt, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	pollOnce(store, db, "memory", 1, func() []MetricPoint { return nil })
+
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM readings WHERE metric_type='cpu'`).Scan(&n); err != nil {
+		t.Fatalf("count cpu rows: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("old cpu rows = %d, want 1 (untouched)", n)
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM readings WHERE metric_type='memory'`).Scan(&n); err != nil {
+		t.Fatalf("count memory rows: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("old memory rows = %d, want 0 (pruned)", n)
+	}
+}
+
+// TestBuildPollSpecsAllTypesStored checks the 6 specs main() starts, then runs
+// one pollOnce per spec with fake readFuncs and verifies every metric type
+// lands in a temp SQLite store.
+func TestBuildPollSpecsAllTypesStored(t *testing.T) {
+	t.Setenv("MEMORY_POLL_INTERVAL", "15")
+	// A nil *SystemMetrics is fine: method values are bound but never called.
+	specs := buildPollSpecs(fakeSensorReader{data: map[string]float64{"Core 0": 50}}, nil, 30)
+
+	want := []string{"temperature", "cpu", "memory", "swap", "disk", "load"}
+	if len(specs) != len(want) {
+		t.Fatalf("got %d specs, want %d", len(specs), len(want))
+	}
+	for i, mt := range want {
+		if specs[i].metricType != mt {
+			t.Errorf("spec[%d] = %q, want %q", i, specs[i].metricType, mt)
+		}
+	}
+	if specs[0].interval != 30*time.Second || specs[2].interval != 15*time.Second || specs[1].interval != 60*time.Second {
+		t.Errorf("unexpected intervals: %v %v %v", specs[0].interval, specs[1].interval, specs[2].interval)
+	}
+
+	store, db := newTempSQLite(t)
+	for _, s := range specs {
+		read := s.readFunc
+		if s.metricType != "temperature" { // system readers need real hardware
+			mt := s.metricType
+			read = func() []MetricPoint { return []MetricPoint{{Sensor: mt + "/x", Value: 1, Unit: "%"}} }
+		}
+		pollOnce(store, db, s.metricType, 24, read)
+	}
+	for _, mt := range want {
+		got, err := store.Query(db, TimeWindow{Hours: 1}, mt)
+		if err != nil || len(got) != 1 {
+			t.Errorf("%s: rows=%d err=%v, want 1 row", mt, len(got), err)
+		}
+	}
+}

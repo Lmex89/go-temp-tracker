@@ -177,7 +177,7 @@ func TestSQLiteQueryLatest(t *testing.T) {
 
 // TestSQLitePrune checks that Prune(metricType) only deletes old rows of that
 // type, and that an empty metricType deletes old rows of every type (the
-// behavior the temperature Poller relied on). Python analogy: parametrize.
+// behavior the old temperature poller relied on). Python analogy: parametrize.
 func TestSQLitePrune(t *testing.T) {
 	tests := []struct {
 		name       string
