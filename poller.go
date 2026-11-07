@@ -42,7 +42,7 @@ func (p *Poller) Run(intervalSec, retainHours int) {
 		}
 
 		Logger.Info("Recorded %d temperature reading(s)", len(temps))
-		p.store.Prune(p.db, retainHours)
+		p.store.Prune(p.db, AllMetrics, retainHours)
 
 		Logger.Debug("Sleeping for %d seconds...", intervalSec)
 		time.Sleep(time.Duration(intervalSec) * time.Second)
@@ -73,7 +73,7 @@ func RunMetricPoller(store Store, db *sql.DB, metricType string, intervalSec, re
 			Logger.Info("Recorded %d [%s] reading(s)", len(points), metricType)
 		}
 
-		store.PruneByType(db, metricType, retainHours)
+		store.Prune(db, metricType, retainHours)
 
 		Logger.Debug("[%s] sleeping for %d seconds...", metricType, intervalSec)
 		time.Sleep(time.Duration(intervalSec) * time.Second)
