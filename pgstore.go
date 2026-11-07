@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"strings"
 
 	// Register the pgx driver with database/sql.
 	// The blank import is like Python's `importlib.import_module` for side effects:
@@ -116,6 +117,37 @@ func (s *PostgresStore) Insert(db *sql.DB, sensor string, temp float64, metricTy
 	} else {
 		Logger.Debug("Inserted reading: %s [%s] = %.2f%s", sensor, metricType, temp, unit)
 	}
+}
+
+// QueryWindow returns readings inside a TimeWindow, optionally filtered by
+// metric type (empty = all). Postgres placeholders are numbered ($1, $2...).
+func (s *PostgresStore) QueryWindow(db *sql.DB, window TimeWindow, metricType string) []Reading {
+	var conds []string
+	var args []any
+	if metricType != "" {
+		args = append(args, metricType)
+		conds = append(conds, fmt.Sprintf("metric_type = $%d", len(args)))
+	}
+	if window.Hours > 0 {
+		args = append(args, window.Hours)
+		conds = append(conds, fmt.Sprintf("created_at >= NOW() - INTERVAL '1 hour' * $%d", len(args)))
+	} else {
+		args = append(args, window.From.UTC().Format(dbTimeLayout), window.To.UTC().Format(dbTimeLayout))
+		conds = append(conds, fmt.Sprintf("created_at >= $%d::TIMESTAMPTZ AND created_at <= $%d::TIMESTAMPTZ", len(args)-1, len(args)))
+	}
+
+	rows, err := db.Query(
+		fmt.Sprintf(`SELECT sensor, temp_c, metric_type, unit, %s FROM readings
+		 WHERE %s ORDER BY created_at ASC`, s.formatCreatedAt(), strings.Join(conds, " AND ")),
+		args...,
+	)
+	if err != nil {
+		Logger.Error("QueryWindow failed: %v", err)
+		return nil
+	}
+	defer rows.Close()
+
+	return s.scanRows(rows, "QueryWindow", metricType, window.Hours)
 }
 
 // Query retrieves temperature readings from the last N hours (backward compat).

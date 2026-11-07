@@ -24,9 +24,23 @@ type Reading struct {
 // Store is the interface for database operations -- like a Python ABC/Protocol.
 // Any type that has all these methods automatically satisfies Store (no "extends" keyword).
 // This lets us swap out SQLite for another DB later without changing other code.
+// TimeWindow describes which slice of time a query covers.
+// Python analogy: a small dataclass where unset fields keep their zero value.
+// If Hours > 0 the window is relative ("last N hours"); otherwise From/To
+// (both non-zero) describe an absolute range.
+type TimeWindow struct {
+	Hours int
+	From  time.Time
+	To    time.Time
+}
+
 type Store interface {
 	InitDB() *sql.DB
 	Insert(db *sql.DB, sensor string, temp float64, metricType string, unit string)
+	// QueryWindow is the new orthogonal query (window x metricType). It is not
+	// called "Query" yet because Go has no overloading and the old Query stays
+	// for now. An empty metricType returns every metric.
+	QueryWindow(db *sql.DB, window TimeWindow, metricType string) []Reading
 	Query(db *sql.DB, hours int) []Reading
 	QueryByRange(db *sql.DB, from, to string) []Reading
 	QueryLatestPerSensor(db *sql.DB) []Reading
@@ -199,6 +213,59 @@ func (s *SQLiteStore) Insert(db *sql.DB, sensor string, temp float64, metricType
 	} else {
 		Logger.Debug("Inserted reading: %s [%s] = %.2f%s", sensor, metricType, temp, unit)
 	}
+}
+
+// QueryWindow returns readings inside a TimeWindow, optionally filtered by
+// metric type (empty string = all metrics). One scan loop handles every case.
+func (s *SQLiteStore) QueryWindow(db *sql.DB, window TimeWindow, metricType string) []Reading {
+	Logger.Debug("QueryWindow window=%+v metric=%q", window, metricType)
+
+	// Build the WHERE clause piece by piece; args line up with the "?" marks.
+	var conds []string
+	var args []any
+	if metricType != "" {
+		conds = append(conds, "metric_type = ?")
+		args = append(args, metricType)
+	}
+	if window.Hours > 0 {
+		conds = append(conds, "created_at >= datetime('now', ?)")
+		args = append(args, fmt.Sprintf("-%d hours", window.Hours))
+	} else {
+		conds = append(conds, "created_at >= ? AND created_at <= ?")
+		args = append(args, window.From.UTC().Format(dbTimeLayout), window.To.UTC().Format(dbTimeLayout))
+	}
+
+	rows, err := db.Query(
+		`SELECT sensor, temp_c, metric_type, unit, created_at FROM readings
+		 WHERE `+strings.Join(conds, " AND ")+` ORDER BY created_at ASC`,
+		args...,
+	)
+	if err != nil {
+		Logger.Error("QueryWindow failed: %v", err)
+		return nil
+	}
+	defer func() {
+		if err := rows.Close(); err != nil {
+			Logger.Error("Failed to close rows: %v", err)
+		}
+	}()
+
+	var readings []Reading
+	for rows.Next() {
+		var r Reading
+		if err := rows.Scan(&r.Sensor, &r.TempC, &r.MetricType, &r.Unit, &r.CreatedAt); err != nil {
+			Logger.Error("Failed to scan row: %v", err)
+			continue
+		}
+		r.CreatedAt = s.converter.ToLocal(r.CreatedAt)
+		readings = append(readings, r)
+	}
+	if err := rows.Err(); err != nil {
+		Logger.Error("Row iteration error: %v", err)
+	}
+
+	Logger.Info("QueryWindow returned %d reading(s)", len(readings))
+	return readings
 }
 
 // Query retrieves temperature readings from the last N hours (backward compat -- temperature only).
