@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"sensors-temp/internal/logging"
 	"time"
 )
 
@@ -24,27 +25,27 @@ func NewPoller(sensor SensorReader, store Store, db *sql.DB) *Poller {
 // It's meant to be called with "go poller.Run(...)" so it runs in a separate goroutine.
 // In Python you'd do threading.Thread(target=poller.run, args=(interval, retain)).start().
 func (p *Poller) Run(intervalSec, retainHours int) {
-	Logger.Info("Temperature polling loop started (interval=%ds, retain=%dh)", intervalSec, retainHours)
+	logging.Logger.Info("Temperature polling loop started (interval=%ds, retain=%dh)", intervalSec, retainHours)
 
 	// Infinite loop -- same as "while True:" in Python.
 	for {
-		Logger.Debug("Reading CPU temperatures...")
+		logging.Logger.Debug("Reading CPU temperatures...")
 		temps := p.sensor.Read()
 
 		if len(temps) == 0 {
-			Logger.Warn("No temperature sensors found")
+			logging.Logger.Warn("No temperature sensors found")
 		}
 
 		// range over a map gives (key, value) -- like Python's dict.items().
 		for sensor, temp := range temps {
-			Logger.Debug("Recording %s: %.2fC", sensor, temp)
+			logging.Logger.Debug("Recording %s: %.2fC", sensor, temp)
 			p.store.Insert(p.db, sensor, temp, "temperature", "C")
 		}
 
-		Logger.Info("Recorded %d temperature reading(s)", len(temps))
+		logging.Logger.Info("Recorded %d temperature reading(s)", len(temps))
 		p.store.Prune(p.db, AllMetrics, retainHours)
 
-		Logger.Debug("Sleeping for %d seconds...", intervalSec)
+		logging.Logger.Debug("Sleeping for %d seconds...", intervalSec)
 		time.Sleep(time.Duration(intervalSec) * time.Second)
 	}
 }
@@ -54,28 +55,28 @@ func (p *Poller) Run(intervalSec, retainHours int) {
 // Multiple goroutines call this with different intervals and metric types.
 // In Python: threading.Thread(target=run_metric_poller, args=(interval, read_fn)).start()
 func RunMetricPoller(store Store, db *sql.DB, metricType string, intervalSec, retainHours int, readFunc func() []MetricPoint) {
-	Logger.Info("[%s] polling loop started (interval=%ds, retain=%dh)", metricType, intervalSec, retainHours)
+	logging.Logger.Info("[%s] polling loop started (interval=%ds, retain=%dh)", metricType, intervalSec, retainHours)
 
 	for {
-		Logger.Debug("Reading [%s] metrics...", metricType)
+		logging.Logger.Debug("Reading [%s] metrics...", metricType)
 		points := readFunc()
 
 		if len(points) == 0 {
-			Logger.Warn("[%s] No metrics returned", metricType)
+			logging.Logger.Warn("[%s] No metrics returned", metricType)
 		}
 
 		for _, p := range points {
-			Logger.Debug("Recording [%s] %s: %.2f%s", metricType, p.Sensor, p.Value, p.Unit)
+			logging.Logger.Debug("Recording [%s] %s: %.2f%s", metricType, p.Sensor, p.Value, p.Unit)
 			store.Insert(db, p.Sensor, p.Value, metricType, p.Unit)
 		}
 
 		if len(points) > 0 {
-			Logger.Info("Recorded %d [%s] reading(s)", len(points), metricType)
+			logging.Logger.Info("Recorded %d [%s] reading(s)", len(points), metricType)
 		}
 
 		store.Prune(db, metricType, retainHours)
 
-		Logger.Debug("[%s] sleeping for %d seconds...", metricType, intervalSec)
+		logging.Logger.Debug("[%s] sleeping for %d seconds...", metricType, intervalSec)
 		time.Sleep(time.Duration(intervalSec) * time.Second)
 	}
 }

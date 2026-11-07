@@ -13,7 +13,7 @@ import (
 // Supported: "table", "json", "csv".
 // In Python: if format == "table": write_table(...) elif ...
 func writeReport(w io.Writer, report Report, format string) error {
-	logger.debug("writing report in %s format (%d rows)", format, len(report.Rows))
+	logger.Debug("writing report in %s format (%d rows)", format, len(report.Rows))
 	switch format {
 	case "table":
 		return writeTable(w, report)

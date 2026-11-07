@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"sensors-temp/internal/logging"
 	"strings"
 
 	// Register the pgx driver with database/sql.
@@ -44,21 +45,21 @@ func NewPostgresStore() *PostgresStore {
 // so we do NOT need PRAGMA journal_mode or busy_timeout, and we do NOT force
 // SetMaxOpenConns(1). The connection pool is left at sensible defaults.
 func (s *PostgresStore) InitDB() *sql.DB {
-	Logger.Info("Initializing PostgreSQL database")
+	logging.Logger.Info("Initializing PostgreSQL database")
 
 	// sql.Open only validates the DSN format; the first real connection happens on Ping().
 	db, err := sql.Open("pgx", s.dsn)
 	if err != nil {
-		Logger.Error("Failed to open PostgreSQL database: %v", err)
+		logging.Logger.Error("Failed to open PostgreSQL database: %v", err)
 		return nil
 	}
 
 	if err := db.Ping(); err != nil {
-		Logger.Error("Failed to ping PostgreSQL database: %v", err)
+		logging.Logger.Error("Failed to ping PostgreSQL database: %v", err)
 		return nil
 	}
 
-	Logger.Debug("PostgreSQL connection established")
+	logging.Logger.Debug("PostgreSQL connection established")
 
 	// PostgreSQL schema equivalent to the SQLite readings table.
 	// BIGSERIAL is the Postgres way to say "auto-incrementing 64-bit integer".
@@ -89,13 +90,13 @@ func (s *PostgresStore) InitDB() *sql.DB {
 	CREATE INDEX IF NOT EXISTS idx_readings_disk_created_at ON readings(created_at) WHERE metric_type = 'disk';`
 
 	if _, err := db.Exec(schema); err != nil {
-		Logger.Error("Failed to create PostgreSQL schema: %v", err)
+		logging.Logger.Error("Failed to create PostgreSQL schema: %v", err)
 		return nil
 	}
 
 	// PostgreSQL does not need the SQLite-style migration for metric_type/unit:
 	// the CREATE TABLE above already includes them with defaults.
-	Logger.Info("PostgreSQL schema ready")
+	logging.Logger.Info("PostgreSQL schema ready")
 	return db
 }
 
@@ -115,9 +116,9 @@ func (s *PostgresStore) Insert(db *sql.DB, sensor string, temp float64, metricTy
 		sensor, temp, metricType, unit,
 	)
 	if err != nil {
-		Logger.Error("Failed to insert reading (sensor=%s, type=%s, value=%.2f): %v", sensor, metricType, temp, err)
+		logging.Logger.Error("Failed to insert reading (sensor=%s, type=%s, value=%.2f): %v", sensor, metricType, temp, err)
 	} else {
-		Logger.Debug("Inserted reading: %s [%s] = %.2f%s", sensor, metricType, temp, unit)
+		logging.Logger.Debug("Inserted reading: %s [%s] = %.2f%s", sensor, metricType, temp, unit)
 	}
 }
 
@@ -153,7 +154,7 @@ func (s *PostgresStore) Query(db *sql.DB, window TimeWindow, metricType string) 
 		args...,
 	)
 	if err != nil {
-		Logger.Error("Query failed: %v", err)
+		logging.Logger.Error("Query failed: %v", err)
 		return nil, nil
 	}
 	defer rows.Close()
@@ -172,7 +173,7 @@ func (s *PostgresStore) QueryLatest(db *sql.DB, metricType string) ([]Reading, e
 	if metricType == AllMetrics {
 		return nil, fmt.Errorf("QueryLatest: metricType is required")
 	}
-	Logger.Debug("Querying latest [%s] per sensor", metricType)
+	logging.Logger.Debug("Querying latest [%s] per sensor", metricType)
 
 	rows, err := db.Query(
 		fmt.Sprintf(`WITH RECURSIVE t AS (
@@ -190,7 +191,7 @@ func (s *PostgresStore) QueryLatest(db *sql.DB, metricType string) ([]Reading, e
 		metricType,
 	)
 	if err != nil {
-		Logger.Error("QueryLatest failed: %v", err)
+		logging.Logger.Error("QueryLatest failed: %v", err)
 		return nil, nil
 	}
 	defer rows.Close()
@@ -201,7 +202,7 @@ func (s *PostgresStore) QueryLatest(db *sql.DB, metricType string) ([]Reading, e
 // Prune removes readings older than N hours. AllMetrics prunes every
 // metric type; otherwise only that type. Placeholders are numbered ($1, $2).
 func (s *PostgresStore) Prune(db *sql.DB, metricType string, hours int) {
-	Logger.Debug("Pruning [%s] readings older than %d hour(s)", metricType, hours)
+	logging.Logger.Debug("Pruning [%s] readings older than %d hour(s)", metricType, hours)
 
 	query := "DELETE FROM readings WHERE created_at < NOW() - INTERVAL '1 hour' * $1"
 	args := []any{hours}
@@ -212,15 +213,15 @@ func (s *PostgresStore) Prune(db *sql.DB, metricType string, hours int) {
 
 	result, err := db.Exec(query, args...)
 	if err != nil {
-		Logger.Error("Prune failed for [%s]: %v", metricType, err)
+		logging.Logger.Error("Prune failed for [%s]: %v", metricType, err)
 		return
 	}
 
 	deleted, _ := result.RowsAffected()
 	if deleted > 0 {
-		Logger.Info("Pruned %d old [%s] reading(s) (>%dh)", deleted, metricType, hours)
+		logging.Logger.Info("Pruned %d old [%s] reading(s) (>%dh)", deleted, metricType, hours)
 	} else {
-		Logger.Debug("No old readings to prune")
+		logging.Logger.Debug("No old readings to prune")
 	}
 }
 
@@ -231,7 +232,7 @@ func (s *PostgresStore) scanRows(rows *sql.Rows, queryName string, context ...in
 	for rows.Next() {
 		var r Reading
 		if err := rows.Scan(&r.Sensor, &r.TempC, &r.MetricType, &r.Unit, &r.CreatedAt); err != nil {
-			Logger.Error("Failed to scan row: %v", err)
+			logging.Logger.Error("Failed to scan row: %v", err)
 			continue
 		}
 		r.CreatedAt = s.converter.ToLocal(r.CreatedAt)
@@ -239,9 +240,9 @@ func (s *PostgresStore) scanRows(rows *sql.Rows, queryName string, context ...in
 	}
 
 	if err := rows.Err(); err != nil {
-		Logger.Error("Row iteration error: %v", err)
+		logging.Logger.Error("Row iteration error: %v", err)
 	}
 
-	Logger.Info("Postgres %s returned %d reading(s)", queryName, len(readings))
+	logging.Logger.Info("Postgres %s returned %d reading(s)", queryName, len(readings))
 	return readings
 }

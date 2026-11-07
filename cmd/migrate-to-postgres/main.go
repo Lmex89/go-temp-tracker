@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"sensors-temp/internal/logging"
 	"time"
 
 	"database/sql"
@@ -56,6 +57,9 @@ func (s *sqliteCopySource) Err() error {
 	return s.err
 }
 
+// logger writes to stderr (errors stay off stdout, as before); level from LOG_LEVEL.
+var logger = logging.New(os.Stderr, os.Getenv("LOG_LEVEL"))
+
 func main() {
 	sqlitePath := flag.String("sqlite", "temps.db", "Source SQLite database file")
 	postgresURL := flag.String("postgres", "", "Target PostgreSQL URL (defaults to DATABASE_URL, then docker-compose defaults)")
@@ -73,21 +77,18 @@ func main() {
 	// Open SQLite -- same driver the main app uses.
 	sqliteDB, err := sql.Open("sqlite", *sqlitePath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to open SQLite: %v\n", err)
-		os.Exit(1)
+		logger.Fatal("Failed to open SQLite: %v", err)
 	}
 	defer sqliteDB.Close()
 
 	if err := sqliteDB.Ping(); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to connect to SQLite: %v\n", err)
-		os.Exit(1)
+		logger.Fatal("Failed to connect to SQLite: %v", err)
 	}
 
 	// Count source rows first so the user knows what to expect.
 	var total int64
 	if err := sqliteDB.QueryRow("SELECT COUNT(*) FROM readings").Scan(&total); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to count SQLite rows: %v\n", err)
-		os.Exit(1)
+		logger.Fatal("Failed to count SQLite rows: %v", err)
 	}
 	fmt.Printf("Source rows: %d\n", total)
 
@@ -96,8 +97,7 @@ func main() {
 	ctx := context.Background()
 	pgConn, err := pgx.Connect(ctx, *postgresURL)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to connect to PostgreSQL: %v\n", err)
-		os.Exit(1)
+		logger.Fatal("Failed to connect to PostgreSQL: %v", err)
 	}
 	defer pgConn.Close(ctx)
 
@@ -126,24 +126,21 @@ func main() {
 	CREATE INDEX IF NOT EXISTS idx_readings_memory_created_at ON readings(created_at) WHERE metric_type = 'memory';
 	CREATE INDEX IF NOT EXISTS idx_readings_swap_created_at ON readings(created_at) WHERE metric_type = 'swap';
 	CREATE INDEX IF NOT EXISTS idx_readings_disk_created_at ON readings(created_at) WHERE metric_type = 'disk';`); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to create Postgres schema: %v\n", err)
-		os.Exit(1)
+		logger.Fatal("Failed to create Postgres schema: %v", err)
 	}
 
 	// Truncate the target table so the migration is idempotent.
 	// In a production move you would back up Postgres first; here we assume the
 	// Postgres container is fresh or the user has already backed it up.
 	if _, err := pgConn.Exec(ctx, "TRUNCATE TABLE readings RESTART IDENTITY"); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to truncate Postgres readings: %v\n", err)
-		os.Exit(1)
+		logger.Fatal("Failed to truncate Postgres readings: %v", err)
 	}
 	fmt.Println("Truncated target readings table")
 
 	// Stream rows from SQLite. Order by id keeps the migration deterministic.
 	rows, err := sqliteDB.Query("SELECT sensor, temp_c, metric_type, unit, created_at FROM readings ORDER BY id")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to query SQLite: %v\n", err)
-		os.Exit(1)
+		logger.Fatal("Failed to query SQLite: %v", err)
 	}
 	defer rows.Close()
 
@@ -153,8 +150,7 @@ func main() {
 	copied, err := pgConn.CopyFrom(ctx, pgx.Identifier{"readings"},
 		[]string{"sensor", "temp_c", "metric_type", "unit", "created_at"}, src)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to copy rows to PostgreSQL: %v\n", err)
-		os.Exit(1)
+		logger.Fatal("Failed to copy rows to PostgreSQL: %v", err)
 	}
 
 	elapsed := time.Since(start)
@@ -163,8 +159,7 @@ func main() {
 	// Verify counts match.
 	var pgCount int64
 	if err := pgConn.QueryRow(ctx, "SELECT COUNT(*) FROM readings").Scan(&pgCount); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to count Postgres rows: %v\n", err)
-		os.Exit(1)
+		logger.Fatal("Failed to count Postgres rows: %v", err)
 	}
 	fmt.Printf("Postgres row count: %d\n", pgCount)
 

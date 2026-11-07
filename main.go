@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"sensors-temp/internal/logging"
 	"strconv"
 	"time"
 
@@ -21,7 +22,7 @@ func getEnvInt(key string, defaultVal int) int {
 	}
 	parsed, err := strconv.Atoi(val)
 	if err != nil {
-		Logger.Warn("Invalid value for %s=%q, using default %d", key, val, defaultVal)
+		logging.Logger.Warn("Invalid value for %s=%q, using default %d", key, val, defaultVal)
 		return defaultVal
 	}
 	return parsed
@@ -34,13 +35,13 @@ func getEnvInt(key string, defaultVal int) int {
 func newStore(driver string) Store {
 	switch driver {
 	case "postgres":
-		Logger.Info("Using PostgreSQL store (DATABASE_URL=%s)", os.Getenv("DATABASE_URL"))
+		logging.Logger.Info("Using PostgreSQL store (DATABASE_URL=%s)", os.Getenv("DATABASE_URL"))
 		return NewPostgresStore()
 	case "sqlite", "":
-		Logger.Info("Using SQLite store")
+		logging.Logger.Info("Using SQLite store")
 		return NewSQLiteStore()
 	default:
-		Logger.Warn("Unknown db-driver %q, falling back to SQLite", driver)
+		logging.Logger.Warn("Unknown db-driver %q, falling back to SQLite", driver)
 		return NewSQLiteStore()
 	}
 }
@@ -54,8 +55,8 @@ func main() {
 	dbDriver := flag.String("db-driver", os.Getenv("DB_DRIVER"), "Database driver: sqlite or postgres (also env DB_DRIVER)")
 	flag.Parse()
 
-	Logger.Info("Starting System Monitor")
-	Logger.Debug("Config: port=%d, interval=%ds, retain=%dh", *port, *interval, *retain)
+	logging.Logger.Info("Starting System Monitor")
+	logging.Logger.Debug("Config: port=%d, interval=%ds, retain=%dh", *port, *interval, *retain)
 
 	// Choose the database backend. Defaults to SQLite for backward compatibility.
 	// DB_DRIVER env var or -db-driver flag selects postgres; DATABASE_URL configures
@@ -65,9 +66,9 @@ func main() {
 	db := store.InitDB()
 	defer func() {
 		if err := db.Close(); err != nil {
-			Logger.Error("Failed to close database: %v", err)
+			logging.Logger.Error("Failed to close database: %v", err)
 		} else {
-			Logger.Info("Database connection closed")
+			logging.Logger.Info("Database connection closed")
 		}
 	}()
 
@@ -145,10 +146,10 @@ func main() {
 	mux.Handle("/", http.FileServer(http.Dir("static")))
 
 	addr := fmt.Sprintf(":%d", *port)
-	Logger.Info("HTTP server listening on %s", addr)
-	Logger.Info("Open http://localhost%s in your browser", addr)
+	logging.Logger.Info("HTTP server listening on %s", addr)
+	logging.Logger.Info("Open http://localhost%s in your browser", addr)
 
 	if err := http.ListenAndServe(addr, mux); err != nil {
-		Logger.Fatal("HTTP server error: %v", err)
+		logging.Logger.Fatal("HTTP server error: %v", err)
 	}
 }
