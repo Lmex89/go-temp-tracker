@@ -121,3 +121,61 @@ func TestPostgresQueryWindow(t *testing.T) {
 		})
 	}
 }
+
+// TestPostgresQueryLatest checks QueryLatest returns the newest row per sensor
+// for each metric type (the recursive-CTE loose index scan).
+func TestPostgresQueryLatest(t *testing.T) {
+	store, db := newPGTestStore(t)
+
+	base := time.Now().UTC().Add(-time.Hour)
+	// Insert order defines id order; the last row per sensor must win.
+	seed := []struct {
+		sensor, metric, unit string
+		value                float64
+	}{
+		{"temp/a", "temperature", "C", 40},
+		{"temp/b", "temperature", "C", 50},
+		{"temp/a", "temperature", "C", 41},
+		{"cpu/total", "cpu", "%", 10},
+		{"cpu/total", "cpu", "%", 20},
+		{"mem/used", "memory", "%", 70},
+		{"load/1m", "load", "", 1.5},
+		{"load/5m", "load", "", 2.5},
+	}
+	for i, s := range seed {
+		if _, err := db.Exec(
+			`INSERT INTO readings (sensor, temp_c, metric_type, unit, created_at) VALUES ($1, $2, $3, $4, $5)`,
+			s.sensor, s.value, s.metric, s.unit, base.Add(time.Duration(i)*time.Minute),
+		); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+
+	tests := []struct {
+		name       string
+		metricType string
+		want       map[string]float64 // sensor -> latest value
+	}{
+		{"temperature", "temperature", map[string]float64{"temp/a": 41, "temp/b": 50}},
+		{"cpu", "cpu", map[string]float64{"cpu/total": 20}},
+		{"memory", "memory", map[string]float64{"mem/used": 70}},
+		{"load", "load", map[string]float64{"load/1m": 1.5, "load/5m": 2.5}},
+		{"unknown metric", "disk", map[string]float64{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := store.QueryLatest(db, tt.metricType)
+			if len(got) != len(tt.want) {
+				t.Fatalf("got %d readings, want %d: %+v", len(got), len(tt.want), got)
+			}
+			for _, r := range got {
+				if r.MetricType != tt.metricType {
+					t.Errorf("sensor %s has metric %q, want %q", r.Sensor, r.MetricType, tt.metricType)
+				}
+				if v, ok := tt.want[r.Sensor]; !ok || r.TempC != v {
+					t.Errorf("sensor %s value %v, want %v (present=%v)", r.Sensor, r.TempC, v, ok)
+				}
+			}
+		})
+	}
+}

@@ -195,9 +195,9 @@ func (s *PostgresStore) QueryByRange(db *sql.DB, from, to string) []Reading {
 }
 
 // QueryLatestPerSensor gets the most recent temperature reading per sensor.
-// Delegates to QueryLatestByType since the logic is identical for temperature.
+// Thin wrapper over QueryLatest, kept until #15 removes it.
 func (s *PostgresStore) QueryLatestPerSensor(db *sql.DB) []Reading {
-	return s.QueryLatestByType(db, "temperature")
+	return s.QueryLatest(db, "temperature")
 }
 
 // QueryByType retrieves readings for a specific metric type from the last N hours.
@@ -239,40 +239,41 @@ func (s *PostgresStore) QueryByRangeAndType(db *sql.DB, from, to, metricType str
 }
 
 // QueryLatest returns the newest reading per sensor for one metric type.
-// Delegates to the recursive-CTE loose index scan in QueryLatestByType.
-func (s *PostgresStore) QueryLatest(db *sql.DB, metricType string) []Reading {
-	return s.QueryLatestByType(db, metricType)
-}
-
-// QueryLatestByType gets the most recent reading per sensor for a metric type.
 // Uses a recursive CTE "loose index scan" to jump through the partial index
 // (sensor, id DESC) per metric type, avoiding a full scan of all rows.
 // In Python terms: instead of scanning all 250K rows to find 3 max values,
 // we hop directly to the latest row per sensor via the index -- ~500x faster.
-func (s *PostgresStore) QueryLatestByType(db *sql.DB, metricType string) []Reading {
+// The metric type is passed as bind parameter $1 (like a DB-API "%s" placeholder).
+func (s *PostgresStore) QueryLatest(db *sql.DB, metricType string) []Reading {
 	Logger.Debug("Querying latest [%s] per sensor", metricType)
 
 	rows, err := db.Query(
 		fmt.Sprintf(`WITH RECURSIVE t AS (
-			(SELECT sensor, id FROM readings WHERE metric_type = '%s' ORDER BY sensor, id DESC LIMIT 1)
+			(SELECT sensor, id FROM readings WHERE metric_type = $1 ORDER BY sensor, id DESC LIMIT 1)
 			UNION ALL
-			SELECT (SELECT sensor FROM readings WHERE metric_type = '%s' AND sensor > t.sensor ORDER BY sensor LIMIT 1),
-			       (SELECT id FROM readings WHERE metric_type = '%s' AND sensor = (SELECT sensor FROM readings WHERE metric_type = '%s' AND sensor > t.sensor ORDER BY sensor LIMIT 1) ORDER BY id DESC LIMIT 1)
+			SELECT (SELECT sensor FROM readings WHERE metric_type = $1 AND sensor > t.sensor ORDER BY sensor LIMIT 1),
+			       (SELECT id FROM readings WHERE metric_type = $1 AND sensor = (SELECT sensor FROM readings WHERE metric_type = $1 AND sensor > t.sensor ORDER BY sensor LIMIT 1) ORDER BY id DESC LIMIT 1)
 			FROM t
 			WHERE t.sensor IS NOT NULL
 		)
 		SELECT r.sensor, r.temp_c, r.metric_type, r.unit, %s
 		FROM t JOIN readings r ON r.id = t.id
 		WHERE t.sensor IS NOT NULL
-		ORDER BY r.sensor`, metricType, metricType, metricType, metricType, s.formatCreatedAt()),
+		ORDER BY r.sensor`, s.formatCreatedAt()),
+		metricType,
 	)
 	if err != nil {
-		Logger.Error("QueryLatestByType failed: %v", err)
+		Logger.Error("QueryLatest failed: %v", err)
 		return nil
 	}
 	defer rows.Close()
 
-	return s.scanRows(rows, "QueryLatestByType", metricType)
+	return s.scanRows(rows, "QueryLatest", metricType)
+}
+
+// QueryLatestByType is a thin wrapper kept until #15 removes it.
+func (s *PostgresStore) QueryLatestByType(db *sql.DB, metricType string) []Reading {
+	return s.QueryLatest(db, metricType)
 }
 
 // Prune removes ALL readings older than the specified number of hours.
