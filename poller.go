@@ -101,3 +101,41 @@ func RunMetricPoller(store Store, db *sql.DB, metricType string, intervalSec, re
 		time.Sleep(time.Duration(intervalSec) * time.Second)
 	}
 }
+
+// pollOnce runs ONE iteration of the polling loop: read -> insert -> prune.
+// It is split out of RunPoller so tests can call it without the infinite loop
+// or the sleep. Python analogy: the body of "while True:" extracted into a
+// function you can call directly from pytest.
+func pollOnce(store Store, db *sql.DB, metricType string, retainHours int, readFunc func() []MetricPoint) {
+	Logger.Debug("Reading [%s] metrics...", metricType)
+	points := readFunc()
+
+	if len(points) == 0 {
+		Logger.Warn("[%s] No metrics returned", metricType)
+	}
+
+	for _, p := range points {
+		Logger.Debug("Recording [%s] %s: %.2f%s", metricType, p.Sensor, p.Value, p.Unit)
+		store.Insert(db, p.Sensor, p.Value, metricType, p.Unit)
+	}
+
+	if len(points) > 0 {
+		Logger.Info("Recorded %d [%s] reading(s)", len(points), metricType)
+	}
+
+	store.Prune(db, metricType, retainHours)
+}
+
+// RunPoller is the unified polling loop for ANY metric type (temperature
+// included). Same signature as RunMetricPoller, which it will replace.
+// Meant to be started with "go RunPoller(...)", like a Python daemon thread.
+func RunPoller(store Store, db *sql.DB, metricType string, intervalSec, retainHours int, readFunc func() []MetricPoint) {
+	Logger.Info("[%s] polling loop started (interval=%ds, retain=%dh)", metricType, intervalSec, retainHours)
+
+	for {
+		pollOnce(store, db, metricType, retainHours, readFunc)
+
+		Logger.Debug("[%s] sleeping for %d seconds...", metricType, intervalSec)
+		time.Sleep(time.Duration(intervalSec) * time.Second)
+	}
+}
