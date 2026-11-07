@@ -43,6 +43,8 @@ type Store interface {
 	QueryWindow(db *sql.DB, window TimeWindow, metricType string) []Reading
 	Query(db *sql.DB, hours int) []Reading
 	QueryByRange(db *sql.DB, from, to string) []Reading
+	// QueryLatest: newest reading per sensor for one (required) metric type.
+	QueryLatest(db *sql.DB, metricType string) []Reading
 	QueryLatestPerSensor(db *sql.DB) []Reading
 	QueryByType(db *sql.DB, metricType string, hours int) []Reading
 	QueryByRangeAndType(db *sql.DB, from, to, metricType string) []Reading
@@ -466,6 +468,15 @@ func (s *SQLiteStore) QueryByRangeAndType(db *sql.DB, from, to, metricType strin
 
 	Logger.Info("Queried %d [%s] reading(s)", len(readings), metricType)
 	return readings
+}
+
+// QueryLatest returns the newest reading per sensor for ONE metric type.
+// metricType is required (no "all metrics" variant). It will replace
+// QueryLatestByType/QueryLatestPerSensor; for now it delegates so the SQL
+// (group by sensor, take MAX(id)) lives in a single place. Python analogy: a
+// new public name that wraps the old function until the callers are migrated.
+func (s *SQLiteStore) QueryLatest(db *sql.DB, metricType string) []Reading {
+	return s.QueryLatestByType(db, metricType)
 }
 
 // QueryLatestByType gets the most recent reading per unique sensor for a specific metric type.

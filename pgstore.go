@@ -233,6 +233,12 @@ func (s *PostgresStore) QueryByRangeAndType(db *sql.DB, from, to, metricType str
 	return s.scanRows(rows, "QueryByRangeAndType", metricType, from, to)
 }
 
+// QueryLatest returns the newest reading per sensor for one metric type.
+// Delegates to the recursive-CTE loose index scan in QueryLatestByType.
+func (s *PostgresStore) QueryLatest(db *sql.DB, metricType string) []Reading {
+	return s.QueryLatestByType(db, metricType)
+}
+
 // QueryLatestByType gets the most recent reading per sensor for a metric type.
 // Uses a recursive CTE "loose index scan" to jump through the partial index
 // (sensor, id DESC) per metric type, avoiding a full scan of all rows.

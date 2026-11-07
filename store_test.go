@@ -93,3 +93,83 @@ func TestSQLiteQueryWindow(t *testing.T) {
 		})
 	}
 }
+
+// newTempSQLite builds a throwaway SQLite store in a temp dir (same workaround
+// as TestSQLiteQueryWindow for the fresh-DB InitDB bug).
+func newTempSQLite(t *testing.T) (*SQLiteStore, *sql.DB) {
+	t.Helper()
+	t.Chdir(t.TempDir())
+	pre, err := sql.Open("sqlite", "temps.db")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	_, err = pre.Exec(`CREATE TABLE readings (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		sensor TEXT NOT NULL,
+		temp_c REAL NOT NULL,
+		metric_type TEXT NOT NULL DEFAULT 'temperature',
+		unit TEXT NOT NULL DEFAULT 'C',
+		created_at TEXT NOT NULL DEFAULT (datetime('now'))
+	)`)
+	if err != nil {
+		t.Fatalf("pre-create: %v", err)
+	}
+	pre.Close()
+	store := NewSQLiteStore()
+	db := store.InitDB()
+	t.Cleanup(func() { db.Close() })
+	return store, db
+}
+
+// TestSQLiteQueryLatest checks QueryLatest returns the newest row per sensor
+// for exactly one metric type. Python analogy: pytest.mark.parametrize.
+func TestSQLiteQueryLatest(t *testing.T) {
+	store, db := newTempSQLite(t)
+
+	base := time.Date(2024, 1, 15, 12, 0, 0, 0, time.UTC)
+	seed := []struct {
+		sensor, metric string
+		val            float64
+		at             time.Duration
+	}{
+		{"temp/a", "temperature", 40, 0},
+		{"temp/a", "temperature", 55, time.Minute}, // newest for temp/a
+		{"temp/b", "temperature", 30, 0},
+		{"cpu/total", "cpu", 10, 0},
+		{"cpu/total", "cpu", 90, time.Minute}, // newest for cpu/total
+		{"mem/used", "memory", 50, 0},
+	}
+	for _, s := range seed {
+		_, err := db.Exec(
+			`INSERT INTO readings (sensor, temp_c, metric_type, unit, created_at) VALUES (?, ?, ?, 'x', ?)`,
+			s.sensor, s.val, s.metric, base.Add(s.at).Format(dbTimeLayout),
+		)
+		if err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+
+	tests := []struct {
+		name       string
+		metricType string
+		want       map[string]float64 // sensor -> latest value
+	}{
+		{"temperature", "temperature", map[string]float64{"temp/a": 55, "temp/b": 30}},
+		{"cpu", "cpu", map[string]float64{"cpu/total": 90}},
+		{"memory", "memory", map[string]float64{"mem/used": 50}},
+		{"unknown metric", "nope", map[string]float64{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := store.QueryLatest(db, tt.metricType)
+			if len(got) != len(tt.want) {
+				t.Fatalf("got %d rows (%v), want %d", len(got), got, len(tt.want))
+			}
+			for _, r := range got {
+				if v, ok := tt.want[r.Sensor]; !ok || v != r.TempC {
+					t.Fatalf("sensor %s value %v, want %v", r.Sensor, r.TempC, v)
+				}
+			}
+		})
+	}
+}
