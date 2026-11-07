@@ -323,7 +323,7 @@ func (s *SQLiteStore) scanRows(rows *sql.Rows) []Reading {
 }
 
 // Prune removes readings older than the given number of hours. AllMetrics
-// as metricType prunes every metric type (what the temperature Poller needs);
+// as metricType prunes every metric type (what the temperature poller needs);
 // otherwise only that type is pruned, so metric types can have their own
 // retention. Python analogy: a DELETE with an optional extra WHERE clause.
 func (s *SQLiteStore) Prune(db *sql.DB, metricType string, hours int) {
