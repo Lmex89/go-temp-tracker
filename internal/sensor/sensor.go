@@ -1,4 +1,4 @@
-package main
+package sensor
 
 import (
 	"os"
@@ -8,23 +8,32 @@ import (
 	"strings"
 )
 
-// SensorReader is an *interface* (like a Python ABC or Protocol, but implicit).
+// Reader is an *interface* (like a Python ABC or Protocol, but implicit).
 // Any type that has a Read() method returning map[string]float64 automatically satisfies it.
-// In Python you'd write "class SensorReader(ABC): @abstractmethod def read() -> dict[str, float]".
+// In Python you'd write "class Reader(ABC): @abstractmethod def read() -> dict[str, float]".
 // Here, you just define the method set -- no explicit "implements" keyword needed.
-type SensorReader interface {
+type Reader interface {
 	Read() map[string]float64
 }
 
 // LinuxThermalSensor is a *struct* (like a Python class with only attributes, no methods defined inline).
 // Struct{} means it has no fields -- just an empty "bag". Methods are attached separately below.
-type LinuxThermalSensor struct{}
+// root is the sysfs base ("/sys" in production). Tests point it at a temp dir,
+// like passing a base path into a Python class so pytest's tmp_path can fake /sys.
+type LinuxThermalSensor struct {
+	root string
+}
 
 // NewLinuxThermalSensor is a *constructor* -- returns a pointer (*LinuxThermalSensor).
 // In Python you'd do this in __init__ and return self. Here, we manually return &LinuxThermalSensor{}.
 // The & means "take the address of" -- like creating an object and getting a reference to it.
 func NewLinuxThermalSensor() *LinuxThermalSensor {
-	return &LinuxThermalSensor{}
+	return NewLinuxThermalSensorAt("/sys")
+}
+
+// NewLinuxThermalSensorAt builds a sensor that reads under a custom sysfs root.
+func NewLinuxThermalSensorAt(root string) *LinuxThermalSensor {
+	return &LinuxThermalSensor{root: root}
 }
 
 // Read reads CPU temperature sensors from multiple Linux interfaces.
@@ -60,7 +69,7 @@ func (s *LinuxThermalSensor) readHwmonSensors() map[string]float64 {
 
 	// filepath.Glob finds all hwmon directories -- like Python's glob.glob('/sys/class/hwmon/hwmon*')
 	// Go returns TWO values: result AND error. This is Go's error handling instead of try/except.
-	hwmons, err := filepath.Glob("/sys/class/hwmon/hwmon*")
+	hwmons, err := filepath.Glob(filepath.Join(s.root, "class/hwmon/hwmon*"))
 	if err != nil {
 		logging.Logger.Debug("Failed to glob hwmon directories: %v", err)
 		return temps
@@ -158,7 +167,7 @@ func (s *LinuxThermalSensor) readThermalZones() map[string]float64 {
 	// filepath.Glob finds files matching a pattern -- like Python's glob.glob().
 	// Go returns TWO values: the result AND an error. This is Go's way of handling errors
 	// instead of try/except. You ALWAYS check if err != nil before using the result.
-	zones, err := filepath.Glob("/sys/class/thermal/thermal_zone*")
+	zones, err := filepath.Glob(filepath.Join(s.root, "class/thermal/thermal_zone*"))
 	if err != nil {
 		logging.Logger.Warn("Failed to glob thermal zones: %v", err)
 		return temps

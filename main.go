@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"os"
 	"sensors-temp/internal/logging"
+	"sensors-temp/internal/metrics"
+	"sensors-temp/internal/sensor"
 	"strconv"
 	"time"
 
@@ -61,7 +63,7 @@ func main() {
 	// Choose the database backend. Defaults to SQLite for backward compatibility.
 	// DB_DRIVER env var or -db-driver flag selects postgres; DATABASE_URL configures
 	// the Postgres connection (defaults to the project's docker-compose.yml settings).
-	sensor := NewLinuxThermalSensor()
+	sensor := sensor.NewLinuxThermalSensor()
 	store := newStore(*dbDriver)
 	db := store.InitDB()
 	defer func() {
@@ -73,7 +75,7 @@ func main() {
 	}()
 
 	// SystemMetrics for CPU, memory, swap, disk, load (gopsutil-based).
-	metrics := NewSystemMetrics()
+	sysMetrics := metrics.NewSystemMetrics()
 
 	// SQLite only allows one writer at a time (even in WAL mode). A single connection
 	// makes Go's database/sql queue all operations, eliminating lock contention.
@@ -99,27 +101,27 @@ func main() {
 	cpuInterval := getEnvInt("CPU_POLL_INTERVAL", metricDefaultInterval)
 	go func() {
 		time.Sleep(3 * time.Second)
-		RunMetricPoller(store, db, "cpu", cpuInterval, *retain, metrics.ReadCPU)
+		RunMetricPoller(store, db, "cpu", cpuInterval, *retain, sysMetrics.ReadCPU)
 	}()
 	memInterval := getEnvInt("MEMORY_POLL_INTERVAL", metricDefaultInterval)
 	go func() {
 		time.Sleep(6 * time.Second)
-		RunMetricPoller(store, db, "memory", memInterval, *retain, metrics.ReadMemory)
+		RunMetricPoller(store, db, "memory", memInterval, *retain, sysMetrics.ReadMemory)
 	}()
 	swapInterval := getEnvInt("SWAP_POLL_INTERVAL", metricDefaultInterval)
 	go func() {
 		time.Sleep(9 * time.Second)
-		RunMetricPoller(store, db, "swap", swapInterval, *retain, metrics.ReadSwap)
+		RunMetricPoller(store, db, "swap", swapInterval, *retain, sysMetrics.ReadSwap)
 	}()
 	diskInterval := getEnvInt("DISK_POLL_INTERVAL", metricDefaultInterval)
 	go func() {
 		time.Sleep(12 * time.Second)
-		RunMetricPoller(store, db, "disk", diskInterval, *retain, metrics.ReadDisk)
+		RunMetricPoller(store, db, "disk", diskInterval, *retain, sysMetrics.ReadDisk)
 	}()
 	loadInterval := getEnvInt("LOAD_POLL_INTERVAL", metricDefaultInterval)
 	go func() {
 		time.Sleep(15 * time.Second)
-		RunMetricPoller(store, db, "load", loadInterval, *retain, metrics.ReadLoad)
+		RunMetricPoller(store, db, "load", loadInterval, *retain, sysMetrics.ReadLoad)
 	}()
 
 	// Setting up HTTP routes -- ServeMux is like Flask's app or Django's urlpatterns.
