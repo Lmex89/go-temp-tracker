@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"strings"
 
 	// Register the pgx driver with database/sql.
 	// The blank import is like Python's `importlib.import_module` for side effects:
@@ -118,157 +119,106 @@ func (s *PostgresStore) Insert(db *sql.DB, sensor string, temp float64, metricTy
 	}
 }
 
-// Query retrieves temperature readings from the last N hours (backward compat).
-// INTERVAL '1 hour' * $1 converts the integer hour count to a Postgres interval.
-func (s *PostgresStore) Query(db *sql.DB, hours int) []Reading {
-	Logger.Debug("Querying temperature readings from last %d hour(s)", hours)
+// Query returns readings inside a TimeWindow, optionally filtered by
+// metric type (AllMetrics = all). Postgres placeholders are numbered ($1, $2...).
+// An invalid window returns an error instead of querying year 1.
+func (s *PostgresStore) Query(db *sql.DB, window TimeWindow, metricType string) ([]Reading, error) {
+	if err := window.Validate(); err != nil {
+		return nil, err
+	}
+	var conds []string
+	var args []any
+	if metricType != AllMetrics {
+		args = append(args, metricType)
+		conds = append(conds, fmt.Sprintf("metric_type = $%d", len(args)))
+	}
+	if window.Hours > 0 {
+		args = append(args, window.Hours)
+		conds = append(conds, fmt.Sprintf("created_at >= NOW() - INTERVAL '1 hour' * $%d", len(args)))
+	} else {
+		// Pass time.Time (not a formatted string): pgx sends an unambiguous
+		// instant, so the session TimeZone cannot shift the range. A string
+		// like "2024-01-15 12:00:00" cast to TIMESTAMPTZ would be read in the
+		// session timezone (a classic Postgres gotcha, unlike Python's
+		// explicit tzinfo).
+		args = append(args, window.From.UTC(), window.To.UTC())
+		conds = append(conds, fmt.Sprintf("created_at >= $%d::TIMESTAMPTZ AND created_at <= $%d::TIMESTAMPTZ", len(args)-1, len(args)))
+	}
 
 	rows, err := db.Query(
 		fmt.Sprintf(`SELECT sensor, temp_c, metric_type, unit, %s FROM readings
-		 WHERE metric_type = 'temperature' AND created_at >= NOW() - INTERVAL '1 hour' * $1
-		 ORDER BY created_at ASC`, s.formatCreatedAt()),
-		hours,
+		 WHERE %s ORDER BY created_at ASC`, s.formatCreatedAt(), strings.Join(conds, " AND ")),
+		args...,
 	)
 	if err != nil {
 		Logger.Error("Query failed: %v", err)
-		return nil
+		return nil, nil
 	}
 	defer rows.Close()
 
-	return s.scanRows(rows, "Query", hours)
+	return s.scanRows(rows, "Query", metricType, window.Hours), nil
 }
 
-// QueryByRange retrieves temperature readings between two UTC timestamps.
-func (s *PostgresStore) QueryByRange(db *sql.DB, from, to string) []Reading {
-	Logger.Debug("Querying temperature readings from %s to %s", from, to)
-
-	rows, err := db.Query(
-		fmt.Sprintf(`SELECT sensor, temp_c, metric_type, unit, %s FROM readings
-		 WHERE metric_type = 'temperature' AND created_at >= $1::TIMESTAMPTZ AND created_at <= $2::TIMESTAMPTZ
-		 ORDER BY created_at ASC`, s.formatCreatedAt()),
-		from, to,
-	)
-	if err != nil {
-		Logger.Error("Query by range failed: %v", err)
-		return nil
-	}
-	defer rows.Close()
-
-	return s.scanRows(rows, "QueryByRange", from, to)
-}
-
-// QueryLatestPerSensor gets the most recent temperature reading per sensor.
-// Delegates to QueryLatestByType since the logic is identical for temperature.
-func (s *PostgresStore) QueryLatestPerSensor(db *sql.DB) []Reading {
-	return s.QueryLatestByType(db, "temperature")
-}
-
-// QueryByType retrieves readings for a specific metric type from the last N hours.
-func (s *PostgresStore) QueryByType(db *sql.DB, metricType string, hours int) []Reading {
-	Logger.Debug("Querying [%s] readings from last %d hour(s)", metricType, hours)
-
-	rows, err := db.Query(
-		fmt.Sprintf(`SELECT sensor, temp_c, metric_type, unit, %s FROM readings
-		 WHERE metric_type = $1 AND created_at >= NOW() - INTERVAL '1 hour' * $2
-		 ORDER BY created_at ASC`, s.formatCreatedAt()),
-		metricType, hours,
-	)
-	if err != nil {
-		Logger.Error("QueryByType failed: %v", err)
-		return nil
-	}
-	defer rows.Close()
-
-	return s.scanRows(rows, "QueryByType", metricType, hours)
-}
-
-// QueryByRangeAndType retrieves readings for a metric type between two timestamps.
-func (s *PostgresStore) QueryByRangeAndType(db *sql.DB, from, to, metricType string) []Reading {
-	Logger.Debug("Querying [%s] readings from %s to %s", metricType, from, to)
-
-	rows, err := db.Query(
-		fmt.Sprintf(`SELECT sensor, temp_c, metric_type, unit, %s FROM readings
-		 WHERE metric_type = $1 AND created_at >= $2::TIMESTAMPTZ AND created_at <= $3::TIMESTAMPTZ
-		 ORDER BY created_at ASC`, s.formatCreatedAt()),
-		metricType, from, to,
-	)
-	if err != nil {
-		Logger.Error("QueryByRangeAndType failed: %v", err)
-		return nil
-	}
-	defer rows.Close()
-
-	return s.scanRows(rows, "QueryByRangeAndType", metricType, from, to)
-}
-
-// QueryLatestByType gets the most recent reading per sensor for a metric type.
+// QueryLatest returns the newest reading per sensor for one metric type.
 // Uses a recursive CTE "loose index scan" to jump through the partial index
 // (sensor, id DESC) per metric type, avoiding a full scan of all rows.
 // In Python terms: instead of scanning all 250K rows to find 3 max values,
 // we hop directly to the latest row per sensor via the index -- ~500x faster.
-func (s *PostgresStore) QueryLatestByType(db *sql.DB, metricType string) []Reading {
+// The metric type is passed as bind parameter $1 (like a DB-API "%s" placeholder).
+// metricType is required: AllMetrics returns an error.
+func (s *PostgresStore) QueryLatest(db *sql.DB, metricType string) ([]Reading, error) {
+	if metricType == AllMetrics {
+		return nil, fmt.Errorf("QueryLatest: metricType is required")
+	}
 	Logger.Debug("Querying latest [%s] per sensor", metricType)
 
 	rows, err := db.Query(
 		fmt.Sprintf(`WITH RECURSIVE t AS (
-			(SELECT sensor, id FROM readings WHERE metric_type = '%s' ORDER BY sensor, id DESC LIMIT 1)
+			(SELECT sensor, id FROM readings WHERE metric_type = $1 ORDER BY sensor, id DESC LIMIT 1)
 			UNION ALL
-			SELECT (SELECT sensor FROM readings WHERE metric_type = '%s' AND sensor > t.sensor ORDER BY sensor LIMIT 1),
-			       (SELECT id FROM readings WHERE metric_type = '%s' AND sensor = (SELECT sensor FROM readings WHERE metric_type = '%s' AND sensor > t.sensor ORDER BY sensor LIMIT 1) ORDER BY id DESC LIMIT 1)
+			SELECT (SELECT sensor FROM readings WHERE metric_type = $1 AND sensor > t.sensor ORDER BY sensor LIMIT 1),
+			       (SELECT id FROM readings WHERE metric_type = $1 AND sensor = (SELECT sensor FROM readings WHERE metric_type = $1 AND sensor > t.sensor ORDER BY sensor LIMIT 1) ORDER BY id DESC LIMIT 1)
 			FROM t
 			WHERE t.sensor IS NOT NULL
 		)
 		SELECT r.sensor, r.temp_c, r.metric_type, r.unit, %s
 		FROM t JOIN readings r ON r.id = t.id
 		WHERE t.sensor IS NOT NULL
-		ORDER BY r.sensor`, metricType, metricType, metricType, metricType, s.formatCreatedAt()),
+		ORDER BY r.sensor`, s.formatCreatedAt()),
+		metricType,
 	)
 	if err != nil {
-		Logger.Error("QueryLatestByType failed: %v", err)
-		return nil
+		Logger.Error("QueryLatest failed: %v", err)
+		return nil, nil
 	}
 	defer rows.Close()
 
-	return s.scanRows(rows, "QueryLatestByType", metricType)
+	return s.scanRows(rows, "QueryLatest", metricType), nil
 }
 
-// Prune removes ALL readings older than the specified number of hours.
-func (s *PostgresStore) Prune(db *sql.DB, hours int) {
-	Logger.Debug("Pruning all readings older than %d hour(s)", hours)
-
-	result, err := db.Exec(
-		"DELETE FROM readings WHERE created_at < NOW() - INTERVAL '1 hour' * $1",
-		hours,
-	)
-	if err != nil {
-		Logger.Error("Prune failed: %v", err)
-		return
-	}
-
-	deleted, _ := result.RowsAffected()
-	if deleted > 0 {
-		Logger.Info("Pruned %d old reading(s) (>%dh)", deleted, hours)
-	} else {
-		Logger.Debug("No old readings to prune")
-	}
-}
-
-// PruneByType removes readings older than N hours for a specific metric type.
-func (s *PostgresStore) PruneByType(db *sql.DB, metricType string, hours int) {
+// Prune removes readings older than N hours. AllMetrics prunes every
+// metric type; otherwise only that type. Placeholders are numbered ($1, $2).
+func (s *PostgresStore) Prune(db *sql.DB, metricType string, hours int) {
 	Logger.Debug("Pruning [%s] readings older than %d hour(s)", metricType, hours)
 
-	result, err := db.Exec(
-		"DELETE FROM readings WHERE metric_type = $1 AND created_at < NOW() - INTERVAL '1 hour' * $2",
-		metricType, hours,
-	)
+	query := "DELETE FROM readings WHERE created_at < NOW() - INTERVAL '1 hour' * $1"
+	args := []any{hours}
+	if metricType != AllMetrics {
+		query += " AND metric_type = $2"
+		args = append(args, metricType)
+	}
+
+	result, err := db.Exec(query, args...)
 	if err != nil {
-		Logger.Error("PruneByType failed for %s: %v", metricType, err)
+		Logger.Error("Prune failed for [%s]: %v", metricType, err)
 		return
 	}
 
 	deleted, _ := result.RowsAffected()
 	if deleted > 0 {
 		Logger.Info("Pruned %d old [%s] reading(s) (>%dh)", deleted, metricType, hours)
+	} else {
+		Logger.Debug("No old readings to prune")
 	}
 }
 
