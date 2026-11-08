@@ -5,12 +5,13 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"sensors-temp/internal/store"
+	"sensors-temp/internal/timeutil"
 	"time"
 
 	"database/sql"
 
 	"github.com/jackc/pgx/v5"
-	_ "modernc.org/sqlite"
 )
 
 // sqliteCopySource streams rows from SQLite into pgx's CopyFrom protocol.
@@ -43,7 +44,7 @@ func (s *sqliteCopySource) Values() ([]interface{}, error) {
 		return nil, err
 	}
 
-	ts, err := time.Parse("2006-01-02 15:04:05", createdAt)
+	ts, err := time.Parse(timeutil.DBLayout, createdAt)
 	if err != nil {
 		return nil, fmt.Errorf("parse created_at %q: %w", createdAt, err)
 	}
@@ -56,38 +57,39 @@ func (s *sqliteCopySource) Err() error {
 	return s.err
 }
 
+// fail prints a plain message to stderr (no timestamp, no level, no LOG_LEVEL
+// filtering, as the original tool did) and exits with code 1.
+// Python analogy: print(msg, file=sys.stderr); sys.exit(1).
+func fail(format string, args ...interface{}) {
+	fmt.Fprintf(os.Stderr, format+"\n", args...)
+	os.Exit(1)
+}
+
 func main() {
-	sqlitePath := flag.String("sqlite", "temps.db", "Source SQLite database file")
+	sqlitePath := flag.String("sqlite", store.DefaultSQLitePath, "Source SQLite database file")
 	postgresURL := flag.String("postgres", "", "Target PostgreSQL URL (defaults to DATABASE_URL, then docker-compose defaults)")
 	flag.Parse()
 
-	if *postgresURL == "" {
-		*postgresURL = os.Getenv("DATABASE_URL")
-		if *postgresURL == "" {
-			*postgresURL = "postgres://tracker:tracker@localhost:5432/sensors_temp?sslmode=disable"
-		}
-	}
+	// Flag, then DATABASE_URL, then docker-compose default (shared with the service).
+	*postgresURL = store.ResolvePostgresDSN(*postgresURL)
 
 	fmt.Printf("Migrating %s -> %s\n", *sqlitePath, *postgresURL)
 
 	// Open SQLite -- same driver the main app uses.
-	sqliteDB, err := sql.Open("sqlite", *sqlitePath)
+	sqliteDB, err := store.Open("sqlite", *sqlitePath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to open SQLite: %v\n", err)
-		os.Exit(1)
+		fail("Failed to open SQLite: %v", err)
 	}
 	defer sqliteDB.Close()
 
 	if err := sqliteDB.Ping(); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to connect to SQLite: %v\n", err)
-		os.Exit(1)
+		fail("Failed to connect to SQLite: %v", err)
 	}
 
 	// Count source rows first so the user knows what to expect.
 	var total int64
 	if err := sqliteDB.QueryRow("SELECT COUNT(*) FROM readings").Scan(&total); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to count SQLite rows: %v\n", err)
-		os.Exit(1)
+		fail("Failed to count SQLite rows: %v", err)
 	}
 	fmt.Printf("Source rows: %d\n", total)
 
@@ -96,54 +98,27 @@ func main() {
 	ctx := context.Background()
 	pgConn, err := pgx.Connect(ctx, *postgresURL)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to connect to PostgreSQL: %v\n", err)
-		os.Exit(1)
+		fail("Failed to connect to PostgreSQL: %v", err)
 	}
 	defer pgConn.Close(ctx)
 
 	// Ensure the target schema exists.
-	if _, err := pgConn.Exec(ctx, `CREATE TABLE IF NOT EXISTS readings (
-		id BIGSERIAL PRIMARY KEY,
-		sensor TEXT NOT NULL,
-		temp_c DOUBLE PRECISION NOT NULL,
-		metric_type TEXT NOT NULL DEFAULT 'temperature',
-		unit TEXT NOT NULL DEFAULT 'C',
-		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-	);
-	CREATE INDEX IF NOT EXISTS idx_readings_created_at ON readings(created_at);
-	CREATE INDEX IF NOT EXISTS idx_readings_sensor ON readings(sensor);
-	CREATE INDEX IF NOT EXISTS idx_readings_metric_type_created_at ON readings(metric_type, created_at);
-	CREATE INDEX IF NOT EXISTS idx_readings_metric_type_sensor_id ON readings(metric_type, sensor, id);
-	CREATE INDEX IF NOT EXISTS idx_readings_disk_sensor_id ON readings(sensor, id DESC) WHERE metric_type = 'disk';
-	CREATE INDEX IF NOT EXISTS idx_readings_temp_sensor_id ON readings(sensor, id DESC) WHERE metric_type = 'temperature';
-	CREATE INDEX IF NOT EXISTS idx_readings_cpu_sensor_id ON readings(sensor, id DESC) WHERE metric_type = 'cpu';
-	CREATE INDEX IF NOT EXISTS idx_readings_memory_sensor_id ON readings(sensor, id DESC) WHERE metric_type = 'memory';
-	CREATE INDEX IF NOT EXISTS idx_readings_swap_sensor_id ON readings(sensor, id DESC) WHERE metric_type = 'swap';
-	CREATE INDEX IF NOT EXISTS idx_readings_load_sensor_id ON readings(sensor, id DESC) WHERE metric_type = 'load';
-	CREATE INDEX IF NOT EXISTS idx_readings_load_created_at ON readings(created_at) WHERE metric_type = 'load';
-	CREATE INDEX IF NOT EXISTS idx_readings_temp_created_at ON readings(created_at) WHERE metric_type = 'temperature';
-	CREATE INDEX IF NOT EXISTS idx_readings_cpu_created_at ON readings(created_at) WHERE metric_type = 'cpu';
-	CREATE INDEX IF NOT EXISTS idx_readings_memory_created_at ON readings(created_at) WHERE metric_type = 'memory';
-	CREATE INDEX IF NOT EXISTS idx_readings_swap_created_at ON readings(created_at) WHERE metric_type = 'swap';
-	CREATE INDEX IF NOT EXISTS idx_readings_disk_created_at ON readings(created_at) WHERE metric_type = 'disk';`); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to create Postgres schema: %v\n", err)
-		os.Exit(1)
+	if _, err := pgConn.Exec(ctx, store.PostgresSchema); err != nil {
+		fail("Failed to create Postgres schema: %v", err)
 	}
 
 	// Truncate the target table so the migration is idempotent.
 	// In a production move you would back up Postgres first; here we assume the
 	// Postgres container is fresh or the user has already backed it up.
 	if _, err := pgConn.Exec(ctx, "TRUNCATE TABLE readings RESTART IDENTITY"); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to truncate Postgres readings: %v\n", err)
-		os.Exit(1)
+		fail("Failed to truncate Postgres readings: %v", err)
 	}
 	fmt.Println("Truncated target readings table")
 
 	// Stream rows from SQLite. Order by id keeps the migration deterministic.
 	rows, err := sqliteDB.Query("SELECT sensor, temp_c, metric_type, unit, created_at FROM readings ORDER BY id")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to query SQLite: %v\n", err)
-		os.Exit(1)
+		fail("Failed to query SQLite: %v", err)
 	}
 	defer rows.Close()
 
@@ -153,8 +128,7 @@ func main() {
 	copied, err := pgConn.CopyFrom(ctx, pgx.Identifier{"readings"},
 		[]string{"sensor", "temp_c", "metric_type", "unit", "created_at"}, src)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to copy rows to PostgreSQL: %v\n", err)
-		os.Exit(1)
+		fail("Failed to copy rows to PostgreSQL: %v", err)
 	}
 
 	elapsed := time.Since(start)
@@ -163,8 +137,7 @@ func main() {
 	// Verify counts match.
 	var pgCount int64
 	if err := pgConn.QueryRow(ctx, "SELECT COUNT(*) FROM readings").Scan(&pgCount); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to count Postgres rows: %v\n", err)
-		os.Exit(1)
+		fail("Failed to count Postgres rows: %v", err)
 	}
 	fmt.Printf("Postgres row count: %d\n", pgCount)
 
