@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"sensors-temp/internal/httpapi"
 	"sensors-temp/internal/logging"
 	"sensors-temp/internal/metrics"
 	"sensors-temp/internal/poller"
@@ -127,23 +128,8 @@ func main() {
 	// Setting up HTTP routes -- ServeMux is like Flask's app or Django's urlpatterns.
 	mux := http.NewServeMux()
 
-	// Existing temperature endpoints (backward compatible).
-	mux.HandleFunc("/api/temps", handleTemps(st, db))
-	mux.HandleFunc("/api/current", handleCurrent(st, db))
-
-	// New metric-specific endpoints.
-	mux.HandleFunc("/api/cpu", handleMetricByType(st, db, "cpu"))
-	mux.HandleFunc("/api/memory", handleMetricByType(st, db, "memory"))
-	mux.HandleFunc("/api/swap", handleMetricByType(st, db, "swap"))
-	mux.HandleFunc("/api/disk", handleMetricByType(st, db, "disk"))
-	mux.HandleFunc("/api/load", handleMetricByType(st, db, "load"))
-
-	// Latest-value endpoints for each metric type (for gauge display).
-	mux.HandleFunc("/api/current/cpu", handleCurrentByType(st, db, "cpu"))
-	mux.HandleFunc("/api/current/memory", handleCurrentByType(st, db, "memory"))
-	mux.HandleFunc("/api/current/swap", handleCurrentByType(st, db, "swap"))
-	mux.HandleFunc("/api/current/disk", handleCurrentByType(st, db, "disk"))
-	mux.HandleFunc("/api/current/load", handleCurrentByType(st, db, "load"))
+	// All /api/* routes (temps, cpu, memory, swap, disk, load, current/*).
+	httpapi.Register(mux, st, db)
 
 	mux.Handle("/", http.FileServer(http.Dir("static")))
 

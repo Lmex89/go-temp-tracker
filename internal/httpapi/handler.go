@@ -1,4 +1,4 @@
-package main
+package httpapi
 
 import (
 	"sensors-temp/internal/timeutil"
@@ -12,6 +12,19 @@ import (
 	"strconv"
 	"strings"
 )
+
+// Register wires every API route onto mux.
+// Python analogy: a Flask Blueprint / Django urls.py -- main only calls this
+// one function instead of knowing each handler.
+func Register(mux *http.ServeMux, st store.Store, db *sql.DB) {
+	mux.HandleFunc("/api/temps", handleTemps(st, db))
+	mux.HandleFunc("/api/current", handleCurrent(st, db))
+
+	for _, mt := range []string{"cpu", "memory", "swap", "disk", "load"} {
+		mux.HandleFunc("/api/"+mt, handleMetricByType(st, db, mt))
+		mux.HandleFunc("/api/current/"+mt, handleCurrentByType(st, db, mt))
+	}
+}
 
 // handleTemps returns an http.HandlerFunc (a function that handles HTTP requests).
 // This is a *closure* -- like a Python nested function that captures store and db from the outer scope.
