@@ -7,6 +7,7 @@
 /temp-tracker
 /spike-report
 /migrate-to-postgres
+/sensors-temp
 
 # Compiled binaries and runtime logs (scripts write here)
 bin/
