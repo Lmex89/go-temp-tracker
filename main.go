@@ -7,6 +7,7 @@ import (
 	"os"
 	"sensors-temp/internal/logging"
 	"sensors-temp/internal/metrics"
+	"sensors-temp/internal/poller"
 	"sensors-temp/internal/sensor"
 	"sensors-temp/internal/store"
 	"strconv"
@@ -89,10 +90,10 @@ func main() {
 	// Without staggering, 6 goroutines sharing 3 conns create a thundering herd
 	// against SQLite's internal lock, causing 5s busy_timeout waits on every cycle.
 	// In Python: time.sleep(offset) before entering the while loop.
-	poller := NewPoller(sensor, st, db)
+	tempPoller := poller.New(sensor, st, db)
 	go func() {
 		time.Sleep(0 * time.Second)
-		poller.Run(*interval, *retain)
+		tempPoller.Run(*interval, *retain)
 	}()
 
 	metricDefaultInterval := 60
@@ -100,27 +101,27 @@ func main() {
 	cpuInterval := getEnvInt("CPU_POLL_INTERVAL", metricDefaultInterval)
 	go func() {
 		time.Sleep(3 * time.Second)
-		RunMetricPoller(st, db, "cpu", cpuInterval, *retain, sysMetrics.ReadCPU)
+		poller.RunMetric(st, db, "cpu", cpuInterval, *retain, sysMetrics.ReadCPU)
 	}()
 	memInterval := getEnvInt("MEMORY_POLL_INTERVAL", metricDefaultInterval)
 	go func() {
 		time.Sleep(6 * time.Second)
-		RunMetricPoller(st, db, "memory", memInterval, *retain, sysMetrics.ReadMemory)
+		poller.RunMetric(st, db, "memory", memInterval, *retain, sysMetrics.ReadMemory)
 	}()
 	swapInterval := getEnvInt("SWAP_POLL_INTERVAL", metricDefaultInterval)
 	go func() {
 		time.Sleep(9 * time.Second)
-		RunMetricPoller(st, db, "swap", swapInterval, *retain, sysMetrics.ReadSwap)
+		poller.RunMetric(st, db, "swap", swapInterval, *retain, sysMetrics.ReadSwap)
 	}()
 	diskInterval := getEnvInt("DISK_POLL_INTERVAL", metricDefaultInterval)
 	go func() {
 		time.Sleep(12 * time.Second)
-		RunMetricPoller(st, db, "disk", diskInterval, *retain, sysMetrics.ReadDisk)
+		poller.RunMetric(st, db, "disk", diskInterval, *retain, sysMetrics.ReadDisk)
 	}()
 	loadInterval := getEnvInt("LOAD_POLL_INTERVAL", metricDefaultInterval)
 	go func() {
 		time.Sleep(15 * time.Second)
-		RunMetricPoller(st, db, "load", loadInterval, *retain, sysMetrics.ReadLoad)
+		poller.RunMetric(st, db, "load", loadInterval, *retain, sysMetrics.ReadLoad)
 	}()
 
 	// Setting up HTTP routes -- ServeMux is like Flask's app or Django's urlpatterns.
