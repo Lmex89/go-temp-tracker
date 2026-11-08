@@ -8,6 +8,10 @@
 /spike-report
 /migrate-to-postgres
 
+# Compiled binaries and runtime logs (scripts write here)
+bin/
+logs/
+
 # Test binary, built with `go test -c`
 *.test
 
