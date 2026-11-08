@@ -36,7 +36,7 @@ log_warning() { echo "[$(_ts)] [WARNING] $*" >&2; }
 log_error()   { echo "[$(_ts)] [ERROR]   $*" >&2; }
 
 # -- Resolve project root ------------------------------------------------------
-# SCRIPT_DIR is the directory where this script lives (project root).
+# SCRIPT_DIR is the directory where this script lives (scripts/, NOT the project root).
 # Equivalent to: Path(__file__).resolve().parent in Python.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 log_debug "Script directory: ${SCRIPT_DIR}"

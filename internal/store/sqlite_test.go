@@ -241,3 +241,50 @@ func TestSQLiteInvalidInputs(t *testing.T) {
 	store, db := newTempSQLite(t)
 	checkInvalidInputs(t, store, db)
 }
+
+// TestSQLiteMigratesLegacySchema builds a file with the OLD readings table
+// (no metric_type/unit), runs InitDB and checks the columns, the old row's
+// defaults and the indexes. Python analogy: an Alembic upgrade test on a
+// fixture database created with the previous schema.
+func TestSQLiteMigratesLegacySchema(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.db")
+	old, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = old.Exec(`CREATE TABLE readings (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		sensor TEXT NOT NULL,
+		temp_c REAL NOT NULL,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	); INSERT INTO readings (sensor, temp_c) VALUES ('legacy/core', 42.0);`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old.Close()
+
+	db := NewSQLiteStore(path).InitDB()
+	if db == nil {
+		t.Fatal("InitDB returned nil on a legacy file")
+	}
+	defer db.Close()
+
+	var metric, unit string
+	if err := db.QueryRow("SELECT metric_type, unit FROM readings WHERE sensor='legacy/core'").Scan(&metric, &unit); err != nil {
+		t.Fatalf("legacy row not readable after migration: %v", err)
+	}
+	if metric != "temperature" || unit != "C" {
+		t.Errorf("defaults = (%q, %q), want (temperature, C)", metric, unit)
+	}
+
+	for _, idx := range []string{
+		"idx_readings_created_at",
+		"idx_readings_metric_type_created_at",
+		"idx_readings_metric_type_sensor_id",
+	} {
+		var n int
+		if err := db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=?", idx).Scan(&n); err != nil || n != 1 {
+			t.Errorf("index %s missing (n=%d, err=%v)", idx, n, err)
+		}
+	}
+}
