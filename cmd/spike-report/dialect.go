@@ -1,11 +1,14 @@
 package main
 
 import (
-	"database/sql"
 	"fmt"
-	"os"
+	"sensors-temp/internal/timeutil"
 	"time"
 )
+
+// SQL dialect helpers for the report queries. Opening the database lives in
+// internal/store (store.Open); only the placeholder/time formatting differences
+// between SQLite and PostgreSQL stay here, because the report writes its own SQL.
 
 // dbDriver holds the active backend for this run ("sqlite" or "postgres").
 // It is set by main() from the -driver flag / DB_DRIVER env var.
@@ -26,35 +29,11 @@ func setDBDriver(driver string) {
 	}
 }
 
-// openReportDB opens either a SQLite file or a PostgreSQL connection.
-// For SQLite, spec is a file path (default temps.db). For Postgres, spec is a
-// connection string; if empty it falls back to DATABASE_URL, then to the
-// project's docker-compose defaults.
-func openReportDB(driver, spec string) (*sql.DB, error) {
-	switch driver {
-	case "postgres", "":
-		dsn := spec
-		if dsn == "" {
-			dsn = os.Getenv("DATABASE_URL")
-		}
-		if dsn == "" {
-			dsn = "postgres://tracker:tracker@localhost:5432/sensors_temp?sslmode=disable"
-		}
-		return sql.Open("pgx", dsn)
-	default:
-		path := spec
-		if path == "" {
-			path = "temps.db"
-		}
-		return sql.Open("sqlite", path)
-	}
-}
-
 // formatDBTime formats a time.Time for database comparisons.
 // Both SQLite and PostgreSQL accept "2006-01-02 15:04:05" as an unambiguous
 // UTC literal when compared against TIMESTAMPTZ columns.
 func formatDBTime(t time.Time) string {
-	return t.Format("2006-01-02 15:04:05")
+	return t.Format(timeutil.DBLayout)
 }
 
 // parseDBTimestamp parses timestamps returned by either backend.
@@ -62,7 +41,7 @@ func formatDBTime(t time.Time) string {
 // the same layout. The function also accepts RFC3339 as a safety net.
 func parseDBTimestamp(s string) (time.Time, error) {
 	layouts := []string{
-		"2006-01-02 15:04:05",
+		timeutil.DBLayout,
 		"2006-01-02T15:04:05Z",
 		time.RFC3339,
 		time.RFC3339Nano,

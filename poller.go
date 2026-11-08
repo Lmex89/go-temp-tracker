@@ -5,6 +5,7 @@ import (
 	"sensors-temp/internal/logging"
 	"sensors-temp/internal/metrics"
 	"sensors-temp/internal/sensor"
+	"sensors-temp/internal/store"
 	"time"
 )
 
@@ -13,14 +14,14 @@ import (
 // In Python you'd write a class with __init__ setting self.sensor, self.store, self.db.
 type Poller struct {
 	sensor sensor.Reader
-	store  Store
+	store  store.Store
 	db     *sql.DB
 }
 
 // NewPoller constructor -- like Python's __init__, returns a pointer to a new Poller.
 // The struct literal Poller{...} fills fields by name (keyword arguments in Python).
-func NewPoller(sensor sensor.Reader, store Store, db *sql.DB) *Poller {
-	return &Poller{sensor: sensor, store: store, db: db}
+func NewPoller(sensor sensor.Reader, st store.Store, db *sql.DB) *Poller {
+	return &Poller{sensor: sensor, store: st, db: db}
 }
 
 // Run starts the infinite polling loop for temperature sensors.
@@ -45,7 +46,7 @@ func (p *Poller) Run(intervalSec, retainHours int) {
 		}
 
 		logging.Logger.Info("Recorded %d temperature reading(s)", len(temps))
-		p.store.Prune(p.db, AllMetrics, retainHours)
+		p.store.Prune(p.db, store.AllMetrics, retainHours)
 
 		logging.Logger.Debug("Sleeping for %d seconds...", intervalSec)
 		time.Sleep(time.Duration(intervalSec) * time.Second)
@@ -53,10 +54,10 @@ func (p *Poller) Run(intervalSec, retainHours int) {
 }
 
 // RunMetricPoller is a generic polling loop for any system metric type.
-// It reads metrics via readFunc, inserts them with store, prunes, then sleeps.
+// It reads metrics via readFunc, inserts them with st, prunes, then sleeps.
 // Multiple goroutines call this with different intervals and metric types.
 // In Python: threading.Thread(target=run_metric_poller, args=(interval, read_fn)).start()
-func RunMetricPoller(store Store, db *sql.DB, metricType string, intervalSec, retainHours int, readFunc func() []metrics.MetricPoint) {
+func RunMetricPoller(st store.Store, db *sql.DB, metricType string, intervalSec, retainHours int, readFunc func() []metrics.MetricPoint) {
 	logging.Logger.Info("[%s] polling loop started (interval=%ds, retain=%dh)", metricType, intervalSec, retainHours)
 
 	for {
@@ -69,14 +70,14 @@ func RunMetricPoller(store Store, db *sql.DB, metricType string, intervalSec, re
 
 		for _, p := range points {
 			logging.Logger.Debug("Recording [%s] %s: %.2f%s", metricType, p.Sensor, p.Value, p.Unit)
-			store.Insert(db, p.Sensor, p.Value, metricType, p.Unit)
+			st.Insert(db, p.Sensor, p.Value, metricType, p.Unit)
 		}
 
 		if len(points) > 0 {
 			logging.Logger.Info("Recorded %d [%s] reading(s)", len(points), metricType)
 		}
 
-		store.Prune(db, metricType, retainHours)
+		st.Prune(db, metricType, retainHours)
 
 		logging.Logger.Debug("[%s] sleeping for %d seconds...", metricType, intervalSec)
 		time.Sleep(time.Duration(intervalSec) * time.Second)

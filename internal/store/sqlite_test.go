@@ -1,9 +1,10 @@
-package main
+package store
 
 import (
 	"sensors-temp/internal/timeutil"
 
 	"database/sql"
+	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
@@ -12,34 +13,9 @@ import (
 
 // TestSQLiteQuery checks the TimeWindow x metricType contract.
 // Python analogy: pytest.mark.parametrize over (window, metric_type) pairs.
-// t.Chdir moves into a fresh temp dir, so InitDB (which hardcodes "temps.db")
-// creates a throwaway database instead of touching the real one.
+// The store gets a path inside t.TempDir(), so the real temps.db is never touched.
 func TestSQLiteQuery(t *testing.T) {
-	t.Chdir(t.TempDir())
-
-	// Known bug: InitDB on a brand-new file fails (it creates indexes on
-	// metric_type before migrateSchema adds that column). Work around it by
-	// pre-creating the table with the full schema in the temp dir.
-	pre, err := sql.Open("sqlite", "temps.db")
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	_, err = pre.Exec(`CREATE TABLE readings (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		sensor TEXT NOT NULL,
-		temp_c REAL NOT NULL,
-		metric_type TEXT NOT NULL DEFAULT 'temperature',
-		unit TEXT NOT NULL DEFAULT 'C',
-		created_at TEXT NOT NULL DEFAULT (datetime('now'))
-	)`)
-	if err != nil {
-		t.Fatalf("pre-create: %v", err)
-	}
-	pre.Close()
-
-	store := NewSQLiteStore()
-	db := store.InitDB()
-	defer db.Close()
+	store, db := newTempSQLite(t)
 
 	now := time.Now().UTC()
 	fixed := time.Date(2024, 1, 15, 12, 0, 0, 0, time.UTC)
@@ -97,29 +73,15 @@ func TestSQLiteQuery(t *testing.T) {
 	}
 }
 
-// newTempSQLite builds a throwaway SQLite store in a temp dir (same workaround
-// as TestSQLiteQuery for the fresh-DB InitDB bug).
+// newTempSQLite builds a throwaway SQLite store in a fresh temp dir.
+// Python analogy: a pytest tmp_path fixture passed to sqlite3.connect().
 func newTempSQLite(t *testing.T) (*SQLiteStore, *sql.DB) {
 	t.Helper()
-	t.Chdir(t.TempDir())
-	pre, err := sql.Open("sqlite", "temps.db")
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	_, err = pre.Exec(`CREATE TABLE readings (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		sensor TEXT NOT NULL,
-		temp_c REAL NOT NULL,
-		metric_type TEXT NOT NULL DEFAULT 'temperature',
-		unit TEXT NOT NULL DEFAULT 'C',
-		created_at TEXT NOT NULL DEFAULT (datetime('now'))
-	)`)
-	if err != nil {
-		t.Fatalf("pre-create: %v", err)
-	}
-	pre.Close()
-	store := NewSQLiteStore()
+	store := NewSQLiteStore(filepath.Join(t.TempDir(), "test.db"))
 	db := store.InitDB()
+	if db == nil {
+		t.Fatal("InitDB returned nil on a brand-new file")
+	}
 	t.Cleanup(func() { db.Close() })
 	return store, db
 }

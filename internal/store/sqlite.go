@@ -1,96 +1,39 @@
-package main
+package store
 
 import (
-	"sensors-temp/internal/timeutil"
-
 	"database/sql"
 	"fmt"
 	"sensors-temp/internal/logging"
+	"sensors-temp/internal/timeutil"
 	"strings"
 	"time"
+
+	// Register the pure-Go "sqlite" driver (side-effect import, like a Python plugin import).
+	_ "modernc.org/sqlite"
 )
-
-// Reading is a *struct* -- like a Python dataclass or a NamedTuple.
-// Fields with capital letters are "exported" (public) -- like Python's public attributes.
-// Lowercase fields would be private (only accessible within this package).
-// The backtick tags (`json:"sensor"`) tell the JSON encoder what key names to use.
-// In Python you'd use @dataclass or just a dict.
-// MetricType and Unit were added for multi-metric support (CPU, memory, disk, etc.).
-type Reading struct {
-	Sensor     string  `json:"sensor"`
-	TempC      float64 `json:"temp_c"`      // Renamed to "value" later? Kept for backward compat.
-	MetricType string  `json:"metric_type"` // "temperature", "cpu", "memory", "disk", "load"
-	Unit       string  `json:"unit"`        // "C", "%", "bytes", ""
-	CreatedAt  string  `json:"created_at"`
-}
-
-// AllMetrics is the metricType value meaning "every metric type".
-// Query and Prune accept it as a filter that matches everything; QueryLatest
-// does NOT (it needs one concrete type). Python analogy: a named constant
-// instead of passing a bare "" around.
-const AllMetrics = ""
-
-// TimeWindow describes which slice of time a query covers.
-// Python analogy: a small dataclass where unset fields keep their zero value.
-// If Hours > 0 the window is relative ("last N hours"); otherwise From/To
-// (both non-zero) describe an absolute range.
-type TimeWindow struct {
-	Hours int
-	From  time.Time
-	To    time.Time
-}
-
-// Validate reports whether the window is usable: either Hours > 0, or both
-// From and To set with From not after To. Without it a zero window would
-// silently query year 1. Python analogy: raising ValueError in __post_init__.
-func (w TimeWindow) Validate() error {
-	if w.Hours > 0 {
-		return nil
-	}
-	if w.From.IsZero() || w.To.IsZero() {
-		return fmt.Errorf("invalid time window: need Hours > 0 or both From and To")
-	}
-	if w.From.After(w.To) {
-		return fmt.Errorf("invalid time window: From is after To")
-	}
-	return nil
-}
-
-// Store is the interface for database operations -- like a Python ABC/Protocol.
-// Any type that has all these methods automatically satisfies Store (no "extends" keyword).
-// This lets us swap out SQLite for another DB later without changing other code.
-type Store interface {
-	InitDB() *sql.DB
-	Insert(db *sql.DB, sensor string, temp float64, metricType string, unit string)
-	// Query returns readings inside a TimeWindow (relative Hours or absolute
-	// From/To), optionally filtered by metric type (AllMetrics = every metric).
-	// Returns an error for an invalid window (see TimeWindow.Validate).
-	Query(db *sql.DB, window TimeWindow, metricType string) ([]Reading, error)
-	// QueryLatest: newest reading per sensor for one metric type. metricType
-	// is required: AllMetrics (empty) returns an error.
-	QueryLatest(db *sql.DB, metricType string) ([]Reading, error)
-	// Prune deletes readings older than retainHours; AllMetrics = all types.
-	Prune(db *sql.DB, metricType string, retainHours int)
-}
 
 // SQLiteStore implements the Store interface using SQLite.
 // It holds a TimeConverter for converting UTC timestamps to local time.
 type SQLiteStore struct {
 	converter timeutil.TimeConverter
+	path      string // database file, e.g. "temps.db" (chosen by the caller)
 }
 
-func NewSQLiteStore() *SQLiteStore {
-	return &SQLiteStore{converter: timeutil.NewMeridaTimeConverter()}
+// NewSQLiteStore creates a store bound to the given database file.
+// The path is a parameter (not hardcoded) so tests can point at t.TempDir().
+// Python analogy: sqlite3.connect(path) where path comes from the caller.
+func NewSQLiteStore(path string) *SQLiteStore {
+	return &SQLiteStore{converter: timeutil.NewMeridaTimeConverter(), path: path}
 }
 
-// InitDB opens (or creates) the temps.db SQLite file and ensures the readings table exists.
+// InitDB opens (or creates) the SQLite file given to NewSQLiteStore and ensures the readings table exists.
 // Also runs schema migration to add metric_type and unit columns if needed.
-// In Python with sqlite3 you'd do: conn = sqlite3.connect("temps.db") then conn.execute(CREATE TABLE...).
+// In Python with sqlite3 you'd do: conn = sqlite3.connect(path) then conn.execute(CREATE TABLE...).
 func (s *SQLiteStore) InitDB() *sql.DB {
-	logging.Logger.Info("Initializing SQLite database (temps.db)")
+	logging.Logger.Info("Initializing SQLite database (%s)", s.path)
 
 	// sql.Open opens a database driver -- it doesn't actually connect yet (like Python's sqlite3.connect).
-	db, err := sql.Open("sqlite", "temps.db")
+	db, err := sql.Open("sqlite", s.path)
 	if err != nil {
 		logging.Logger.Error("Failed to open database: %v", err)
 		return nil
@@ -121,17 +64,16 @@ func (s *SQLiteStore) InitDB() *sql.DB {
 
 	// SQL schema: CREATE TABLE IF NOT EXISTS is like Python's "CREATE TABLE IF NOT EXISTS".
 	// In Python's sqlite3 you'd run the same SQL via cursor.execute().
-	schema := `CREATE TABLE IF NOT EXISTS readings (
+	// Order matters: create the table, migrate (adds metric_type/unit on old
+	// files), and only then create the indexes that reference metric_type.
+	// Creating the indexes first fails on a brand-new file.
+	tableSchema := `CREATE TABLE IF NOT EXISTS readings (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		sensor TEXT NOT NULL,
 		temp_c REAL NOT NULL,
 		created_at TEXT NOT NULL DEFAULT (datetime('now'))
-	);
-	CREATE INDEX IF NOT EXISTS idx_readings_created_at ON readings(created_at);
-	CREATE INDEX IF NOT EXISTS idx_readings_metric_type_created_at ON readings(metric_type, created_at);
-	CREATE INDEX IF NOT EXISTS idx_readings_metric_type_sensor_id ON readings(metric_type, sensor, id);`
-
-	if _, err := db.Exec(schema); err != nil {
+	);`
+	if _, err := db.Exec(tableSchema); err != nil {
 		logging.Logger.Error("Failed to create schema: %v", err)
 		return nil
 	}
@@ -140,6 +82,14 @@ func (s *SQLiteStore) InitDB() *sql.DB {
 	// This is like Python's Alembic migration or manual ALTER TABLE.
 	// We check if the column exists first to make migration idempotent.
 	s.migrateSchema(db)
+
+	indexSchema := `CREATE INDEX IF NOT EXISTS idx_readings_created_at ON readings(created_at);
+	CREATE INDEX IF NOT EXISTS idx_readings_metric_type_created_at ON readings(metric_type, created_at);
+	CREATE INDEX IF NOT EXISTS idx_readings_metric_type_sensor_id ON readings(metric_type, sensor, id);`
+	if _, err := db.Exec(indexSchema); err != nil {
+		logging.Logger.Error("Failed to create indexes: %v", err)
+		return nil
+	}
 
 	logging.Logger.Info("Database schema ready")
 	return db

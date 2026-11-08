@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sensors-temp/internal/store"
 	"testing"
 	"time"
 )
@@ -15,16 +16,14 @@ import (
 func TestCPUViewFilter(t *testing.T) {
 	// Set up a temporary SQLite database for testing.
 	// Like Python's tempfile.NamedTemporaryFile() -- created fresh for each test run.
-	store := NewSQLiteStore()
-	db := store.InitDB()
-	defer db.Close()
+	st, db := newTempSQLite(t)
 
 	// Seed the database with test data.
 	// We insert readings with different sensor names to test filtering.
-	seedCPUData(t, db, store)
+	seedCPUData(t, db, st)
 
 	// Create the handler -- this is what we're testing.
-	handler := handleMetricByType(store, db, "cpu")
+	handler := handleMetricByType(st, db, "cpu")
 
 	// Table-driven tests -- like pytest.mark.parametrize in Python.
 	// Each test case is independent and verifies one aspect of the behavior.
@@ -78,7 +77,7 @@ func TestCPUViewFilter(t *testing.T) {
 			}
 
 			// Parse the JSON response.
-			var readings []Reading
+			var readings []store.Reading
 			if err := json.NewDecoder(w.Body).Decode(&readings); err != nil {
 				t.Fatalf("failed to decode response: %v", err)
 			}
@@ -109,13 +108,11 @@ func TestCPUViewFilter(t *testing.T) {
 // Verifies acceptance criterion: "The existing ?hours= and ?from=/to= range parameters
 // continue to work in combination with view".
 func TestCPUViewFilterWithTimeRange(t *testing.T) {
-	store := NewSQLiteStore()
-	db := store.InitDB()
-	defer db.Close()
+	st, db := newTempSQLite(t)
 
-	seedCPUData(t, db, store)
+	seedCPUData(t, db, st)
 
-	handler := handleMetricByType(store, db, "cpu")
+	handler := handleMetricByType(st, db, "cpu")
 
 	tests := []struct {
 		name        string
@@ -165,7 +162,7 @@ func TestCPUViewFilterWithTimeRange(t *testing.T) {
 				t.Errorf("expected status 200, got %d", w.Code)
 			}
 
-			var readings []Reading
+			var readings []store.Reading
 			if err := json.NewDecoder(w.Body).Decode(&readings); err != nil {
 				t.Fatalf("failed to decode response: %v", err)
 			}
@@ -186,22 +183,22 @@ func TestCPUViewFilterWithTimeRange(t *testing.T) {
 
 // seedCPUData inserts test CPU readings into the database.
 // This is a test helper -- like a pytest fixture in Python.
-func seedCPUData(t *testing.T, db *sql.DB, store Store) {
+func seedCPUData(t *testing.T, db *sql.DB, st store.Store) {
 	t.Helper()
 
 	// Insert per-core readings.
-	store.Insert(db, "cpu/Core 0", 45.2, "cpu", "%")
-	store.Insert(db, "cpu/Core 1", 32.1, "cpu", "%")
+	st.Insert(db, "cpu/Core 0", 45.2, "cpu", "%")
+	st.Insert(db, "cpu/Core 1", 32.1, "cpu", "%")
 
 	// Insert total reading.
-	store.Insert(db, "cpu/total", 38.6, "cpu", "%")
+	st.Insert(db, "cpu/total", 38.6, "cpu", "%")
 
 	// Give the database a moment to persist (SQLite WAL mode).
 	time.Sleep(10 * time.Millisecond)
 }
 
 // getSensorNames extracts sensor names from a slice of readings for error messages.
-func getSensorNames(readings []Reading) []string {
+func getSensorNames(readings []store.Reading) []string {
 	names := make([]string, len(readings))
 	for i, r := range readings {
 		names[i] = r.Sensor
