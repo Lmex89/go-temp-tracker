@@ -64,7 +64,7 @@ func main() {
 	// Choose the database backend. Defaults to SQLite for backward compatibility.
 	// DB_DRIVER env var or -db-driver flag selects postgres; DATABASE_URL configures
 	// the Postgres connection (defaults to the project's docker-compose.yml settings).
-	sensor := sensor.NewLinuxThermalSensor()
+	reader := sensor.NewLinuxThermalSensor()
 	st := newStore(*dbDriver, "temps.db")
 	db := st.InitDB()
 	defer func() {
@@ -91,7 +91,7 @@ func main() {
 	// Without staggering, 6 goroutines sharing 3 conns create a thundering herd
 	// against SQLite's internal lock, causing 5s busy_timeout waits on every cycle.
 	// In Python: time.sleep(offset) before entering the while loop.
-	tempPoller := poller.New(sensor, st, db)
+	tempPoller := poller.New(reader, st, db)
 	go func() {
 		time.Sleep(0 * time.Second)
 		tempPoller.Run(*interval, *retain)
