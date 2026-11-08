@@ -268,15 +268,16 @@ Serves the web dashboard (`static/index.html`).
 
 ```
 sensors-temp/
-|-- logger.go       Leveled logger (DEBUG/INFO/WARN/ERROR/FATAL)
-|-- main.go         Entry point -- wires sensors, metrics, store, pollers, HTTP server
-|-- sensor.go       SensorReader + LinuxThermalSensor (reads /sys/class/thermal/ and hwmon)
-|-- metrics.go      SystemMetrics (CPU, memory, swap, disk, load via gopsutil v3)
-|-- poller.go       Poller + RunMetricPoller -- one goroutine per metric type
-|-- db.go           Store + SQLiteStore (schema, migration, insert, query, prune)
-|-- pgstore.go      PostgresStore (PostgreSQL implementation of the Store interface)
-|-- timeutil.go     TimeConverter + MeridaTimeConverter (UTC -> America/Merida)
-|-- handler.go      REST API endpoints
+|-- main.go         Entry point -- wiring only (flags, store, pollers, HTTP server)
+|-- main_test.go    Tests for the wiring helpers
+|-- internal/       Private packages (see docs/adr/0003)
+|   |-- logging/    Leveled logger (DEBUG/INFO/WARN/ERROR/FATAL)
+|   |-- timeutil/   TimeConverter + MeridaTimeConverter (UTC -> America/Merida)
+|   |-- store/      Store interface, SQLiteStore, PostgresStore, Open helpers
+|   |-- sensor/     SensorReader + LinuxThermalSensor (/sys/class/thermal/ and hwmon)
+|   |-- metrics/    SystemMetrics (CPU, memory, swap, disk, load via gopsutil v3)
+|   |-- poller/     Poller + RunMetricPoller -- one goroutine per metric type
+|   `-- httpapi/    REST API handlers and Register(mux, store, db)
 |-- docker-compose.yml  PostgreSQL 17 Alpine container (port 5432)
 |-- scripts/
 |   |-- setup-systemd-service.fish/.sh  Create/enable systemd user or system service
