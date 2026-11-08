@@ -147,10 +147,10 @@ end
 # Functions (named instead of a monolithic script -- like Python modules)
 # ============================================================
 
-# resolve_project_root -- determine the directory where this script lives.
+# resolve_project_root -- determine the project root (parent of scripts/).
 #
 # In Python:
-#   SCRIPT_DIR = Path(__file__).resolve().parent
+#   PROJECT_ROOT = Path(__file__).resolve().parent.parent  # script lives in scripts/
 function resolve_project_root
     # status filename returns the path of the currently running script
     # (like __file__ in Python). dirname strips the filename, and realpath -s

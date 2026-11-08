@@ -15,6 +15,10 @@ func TestRegisterRoutes(t *testing.T) {
 	st, db := newTempSQLite(t)
 	st.Insert(db, "zz-test/temp", 55.5, "temperature", "C")
 	st.Insert(db, "zz-test/cpu", 12.0, "cpu", "%")
+	st.Insert(db, "zz-test/memory", 40.0, "memory", "%")
+	st.Insert(db, "zz-test/swap", 5.0, "swap", "%")
+	st.Insert(db, "zz-test/disk", 70.0, "disk", "%")
+	st.Insert(db, "zz-test/load", 1.5, "load", "")
 
 	mux := http.NewServeMux()
 	Register(mux, st, db)
@@ -29,14 +33,14 @@ func TestRegisterRoutes(t *testing.T) {
 		{"/api/cpu?hours=2", "zz-test/cpu"},
 		{"/api/cpu?from=2000-01-01T00:00:00Z&to=2100-01-01T00:00:00Z", "zz-test/cpu"},
 		{"/api/current/cpu", "zz-test/cpu"},
-		{"/api/memory", ""},
-		{"/api/swap", ""},
-		{"/api/disk", ""},
-		{"/api/load", ""},
-		{"/api/current/memory", ""},
-		{"/api/current/swap", ""},
-		{"/api/current/disk", ""},
-		{"/api/current/load", ""},
+		{"/api/memory", "zz-test/memory"},
+		{"/api/swap", "zz-test/swap"},
+		{"/api/disk", "zz-test/disk"},
+		{"/api/load", "zz-test/load"},
+		{"/api/current/memory", "zz-test/memory"},
+		{"/api/current/swap", "zz-test/swap"},
+		{"/api/current/disk", "zz-test/disk"},
+		{"/api/current/load", "zz-test/load"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.path, func(t *testing.T) {

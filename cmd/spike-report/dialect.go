@@ -15,6 +15,8 @@ import (
 // Package-level variables are like Python module globals -- use them sparingly.
 var dbDriver string
 
+// NOTE: an empty driver means postgres in spike-report (original behavior), unlike
+// the service where "" means sqlite; this matches store.Open.
 // setDBDriver records the selected driver so query functions can emit the right
 // SQL dialect. In Python you'd set a module-level constant.
 func setDBDriver(driver string) {

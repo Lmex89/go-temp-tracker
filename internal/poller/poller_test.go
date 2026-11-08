@@ -32,7 +32,7 @@ func TestPollerPoll(t *testing.T) {
 	st, db := newDB(t)
 	p := New(fakeSensor{map[string]float64{"Core 0": 41.5, "acpitz": 30}}, st, db)
 
-	p.Poll(24)
+	p.poll(24)
 
 	got, err := st.Query(db, store.TimeWindow{Hours: 1}, "temperature")
 	if err != nil {
@@ -55,7 +55,7 @@ func TestPollMetric(t *testing.T) {
 		return []metrics.MetricPoint{{Sensor: "cpu/total", Value: 12.5, Unit: "%"}}
 	}
 
-	PollMetric(st, db, "cpu", 24, read)
+	pollMetric(st, db, "cpu", 24, read)
 
 	got, err := st.QueryLatest(db, "cpu")
 	if err != nil {

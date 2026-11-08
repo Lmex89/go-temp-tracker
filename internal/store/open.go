@@ -9,6 +9,10 @@ import (
 // (user tracker, db sensors_temp, port 5432).
 const DefaultPostgresDSN = "postgres://tracker:tracker@localhost:5432/sensors_temp?sslmode=disable"
 
+// DefaultSQLitePath is the SQLite file used when no path is given.
+// Python analogy: a module-level DEFAULT_DB = "temps.db".
+const DefaultSQLitePath = "temps.db"
+
 // ResolvePostgresDSN picks the connection string: explicit spec first, then
 // DATABASE_URL, then DefaultPostgresDSN.
 // Python analogy: spec or os.getenv("DATABASE_URL") or DEFAULT.
@@ -22,10 +26,10 @@ func ResolvePostgresDSN(spec string) string {
 	return DefaultPostgresDSN
 }
 
-// ResolveSQLitePath returns spec, or "temps.db" when spec is empty.
+// ResolveSQLitePath returns spec, or DefaultSQLitePath when spec is empty.
 func ResolveSQLitePath(spec string) string {
 	if spec == "" {
-		return "temps.db"
+		return DefaultSQLitePath
 	}
 	return spec
 }
@@ -33,7 +37,11 @@ func ResolveSQLitePath(spec string) string {
 // Open returns a raw *sql.DB for tools that run their own read-only SQL
 // (spike-report, migrate-to-postgres). driver "postgres" (or "") uses the
 // pgx driver and a DSN; any other value is treated as "sqlite" with a file
-// path. Unlike Store.InitDB it creates no schema and runs no migration.
+// path.
+//
+// NOTE (intentional discrepancy): an empty driver means POSTGRES here, as in
+// the original spike-report. The service (main.go newStore) treats an empty
+// driver as SQLITE instead. Each binary keeps its original default. Unlike Store.InitDB it creates no schema and runs no migration.
 func Open(driver, spec string) (*sql.DB, error) {
 	switch driver {
 	case "postgres", "":

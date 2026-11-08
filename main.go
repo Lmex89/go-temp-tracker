@@ -32,6 +32,8 @@ func getEnvInt(key string, defaultVal int) int {
 }
 
 // newStore returns a Store implementation based on the requested driver.
+// NOTE: unlike store.Open (used by spike-report, where "" means postgres), an
+// empty driver means SQLite here, as in the original service.
 // "sqlite" (or empty string) keeps the existing SQLite behavior; "postgres"
 // connects to PostgreSQL via the pgx driver. This is a tiny factory function --
 // like Python's if driver == "sqlite": return SQLiteStore() else: return PostgresStore().
@@ -65,7 +67,7 @@ func main() {
 	// DB_DRIVER env var or -db-driver flag selects postgres; DATABASE_URL configures
 	// the Postgres connection (defaults to the project's docker-compose.yml settings).
 	reader := sensor.NewLinuxThermalSensor()
-	st := newStore(*dbDriver, "temps.db")
+	st := newStore(*dbDriver, store.DefaultSQLitePath)
 	db := st.InitDB()
 	defer func() {
 		if err := db.Close(); err != nil {

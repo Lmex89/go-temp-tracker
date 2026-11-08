@@ -158,12 +158,12 @@ To run a daily backup at 02:00:
 # Add to crontab interactively
 crontab -e
 # Add this line:
-0 2 * * * /home/lmex89/Documentos/probe/sensors-temp/scripts/backup-db.sh >> /home/lmex89/Documentos/probe/sensors-temp/backups/cron.log 2>&1
+0 2 * * * /full/path/to/go-temp-tracker/scripts/backup-db.sh >> /full/path/to/go-temp-tracker/backups/cron.log 2>&1
 ```
 
 ```bash
 # Or add it in one command (no editor needed)
-(crontab -l 2>/dev/null; echo "0 2 * * * /home/lmex89/Documentos/probe/sensors-temp/scripts/backup-db.sh >> /home/lmex89/Documentos/probe/sensors-temp/backups/cron.log 2>&1") | crontab -
+(crontab -l 2>/dev/null; echo "0 2 * * * /full/path/to/go-temp-tracker/scripts/backup-db.sh >> /full/path/to/go-temp-tracker/backups/cron.log 2>&1") | crontab -
 
 # Verify it was added
 crontab -l

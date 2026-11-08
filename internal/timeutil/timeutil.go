@@ -2,7 +2,7 @@ package timeutil
 
 import (
 	"fmt"
-	"log"
+	"sensors-temp/internal/logging"
 	"strings"
 	"time"
 )
@@ -35,8 +35,7 @@ type MeridaTimeConverter struct {
 func NewMeridaTimeConverter() *MeridaTimeConverter {
 	loc, err := time.LoadLocation("America/Merida")
 	if err != nil {
-		// Uses stdlib log: internal/logging does not exist yet (ticket #24).
-		log.Printf("Failed to load America/Merida timezone: %v", err)
+		logging.Logger.Warn("Failed to load America/Merida timezone: %v", err)
 		loc = time.UTC
 	}
 	return &MeridaTimeConverter{location: loc}
