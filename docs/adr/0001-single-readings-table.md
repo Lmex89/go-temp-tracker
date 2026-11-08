@@ -5,7 +5,7 @@ Los seis Metric Type viven en una unica tabla `readings`, y la columna de valor 
 ## Opciones consideradas
 
 - **Una tabla por Metric Type**: esquema mas limpio, pero duplica la superficie de consultas/poda por tipo y rompe los dashboards y herramientas existentes.
-- **Renombrar `temp_c` a `value`**: el nombre correcto, pero rompe la API JSON y los esquemas almacenados sin ganancia funcional. Diferido deliberadamente, no olvidado (ver el comentario en `db.go`).
+- **Renombrar `temp_c` a `value`**: el nombre correcto, pero rompe la API JSON y los esquemas almacenados sin ganancia funcional. Diferido deliberadamente, no olvidado (ver el comentario en `internal/store/sqlite.go`).
 
 ## Consecuencias
 
