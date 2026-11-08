@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"sensors-temp/internal/logging"
+	"sensors-temp/internal/store"
 	"strconv"
 	"strings"
 )
@@ -16,16 +17,16 @@ import (
 // This is a *closure* -- like a Python nested function that captures store and db from the outer scope.
 // In Flask you'd write @app.route("/api/temps") with a view function.
 // In Django you'd write a class-based view or a function.
-// Here we use a "factory" pattern: handleTemps(store, db) returns the actual handler function.
+// Here we use a "factory" pattern: handleTemps(st, db) returns the actual handler function.
 // Supports ?hours=N (relative) OR ?from=FROM&to=TO (absolute range).
-func handleTemps(store Store, db *sql.DB) http.HandlerFunc {
+func handleTemps(st store.Store, db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
 
 		from := strings.TrimSpace(q.Get("from"))
 		to := strings.TrimSpace(q.Get("to"))
 
-		var readings []Reading
+		var readings []store.Reading
 
 		if from != "" || to != "" {
 			if from == "" || to == "" {
@@ -55,9 +56,9 @@ func handleTemps(store Store, db *sql.DB) http.HandlerFunc {
 			}
 
 			logging.Logger.Debug("Querying range UTC from=%s to=%s", fromTime.UTC().Format(timeutil.DBLayout), toTime.UTC().Format(timeutil.DBLayout))
-			readings, err = store.Query(
+			readings, err = st.Query(
 				db,
-				TimeWindow{From: fromTime, To: toTime},
+				store.TimeWindow{From: fromTime, To: toTime},
 				"temperature",
 			)
 			if err != nil {
@@ -75,7 +76,7 @@ func handleTemps(store Store, db *sql.DB) http.HandlerFunc {
 			}
 			logging.Logger.Debug("GET /api/temps?hours=%d from %s", hours, r.RemoteAddr)
 			var err error
-			readings, err = store.Query(db, TimeWindow{Hours: hours}, "temperature")
+			readings, err = st.Query(db, store.TimeWindow{Hours: hours}, "temperature")
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
@@ -92,11 +93,11 @@ func handleTemps(store Store, db *sql.DB) http.HandlerFunc {
 }
 
 // handleCurrent returns the latest temperature reading per sensor as JSON.
-func handleCurrent(store Store, db *sql.DB) http.HandlerFunc {
+func handleCurrent(st store.Store, db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		logging.Logger.Debug("GET /api/current from %s", r.RemoteAddr)
 
-		readings, err := store.QueryLatest(db, "temperature")
+		readings, err := st.QueryLatest(db, "temperature")
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -115,13 +116,13 @@ func handleCurrent(store Store, db *sql.DB) http.HandlerFunc {
 // This is a generic factory -- used for cpu, memory, disk, load, swap.
 // In Python: def make_metric_handler(metric_type): return lambda request: ...
 // For CPU metrics, supports ?view=total|per-core|both to filter by sensor type.
-func handleMetricByType(store Store, db *sql.DB, metricType string) http.HandlerFunc {
+func handleMetricByType(st store.Store, db *sql.DB, metricType string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
 		from := strings.TrimSpace(q.Get("from"))
 		to := strings.TrimSpace(q.Get("to"))
 
-		var readings []Reading
+		var readings []store.Reading
 
 		if from != "" || to != "" {
 			if from == "" || to == "" {
@@ -146,9 +147,9 @@ func handleMetricByType(store Store, db *sql.DB, metricType string) http.Handler
 				return
 			}
 
-			readings, err = store.Query(
+			readings, err = st.Query(
 				db,
-				TimeWindow{From: fromTime, To: toTime},
+				store.TimeWindow{From: fromTime, To: toTime},
 				metricType,
 			)
 			if err != nil {
@@ -163,7 +164,7 @@ func handleMetricByType(store Store, db *sql.DB, metricType string) http.Handler
 				}
 			}
 			var err error
-			readings, err = store.Query(db, TimeWindow{Hours: hours}, metricType)
+			readings, err = st.Query(db, store.TimeWindow{Hours: hours}, metricType)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
@@ -190,11 +191,11 @@ func handleMetricByType(store Store, db *sql.DB, metricType string) http.Handler
 // This is like Python's list comprehension with a conditional filter.
 // view=total keeps only cpu/total, view=per-core keeps only cpu/Core N,
 // anything else (including empty/invalid) returns all readings unchanged.
-func filterCPUReadingsByView(readings []Reading, view string) []Reading {
+func filterCPUReadingsByView(readings []store.Reading, view string) []store.Reading {
 	switch view {
 	case "total":
 		// Keep only the total sensor.
-		filtered := make([]Reading, 0, 1)
+		filtered := make([]store.Reading, 0, 1)
 		for _, r := range readings {
 			if r.Sensor == "cpu/total" {
 				filtered = append(filtered, r)
@@ -203,7 +204,7 @@ func filterCPUReadingsByView(readings []Reading, view string) []Reading {
 		return filtered
 	case "per-core":
 		// Keep only per-core sensors (cpu/Core 0, cpu/Core 1, etc.).
-		filtered := make([]Reading, 0, len(readings))
+		filtered := make([]store.Reading, 0, len(readings))
 		for _, r := range readings {
 			if strings.HasPrefix(r.Sensor, "cpu/Core ") {
 				filtered = append(filtered, r)
@@ -217,9 +218,9 @@ func filterCPUReadingsByView(readings []Reading, view string) []Reading {
 }
 
 // handleCurrentByType returns an HTTP handler for getting the latest reading of a specific metric type.
-func handleCurrentByType(store Store, db *sql.DB, metricType string) http.HandlerFunc {
+func handleCurrentByType(st store.Store, db *sql.DB, metricType string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		readings, err := store.QueryLatest(db, metricType)
+		readings, err := st.QueryLatest(db, metricType)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

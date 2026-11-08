@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"sensors-temp/internal/logging"
+	"sensors-temp/internal/store"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -46,7 +47,7 @@ func main() {
 
 	// Open the database. sql.Open returns a *sql.DB which is a connection pool,
 	// not a single connection -- like Python's connection pool.
-	db, err := openReportDB(*dbDriver, *dbPath)
+	db, err := store.Open(*dbDriver, *dbPath)
 	if err != nil {
 		logger.Error("failed to open database: %v", err)
 		fmt.Fprintf(os.Stderr, "Failed to open database: %v\n", err)

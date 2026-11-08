@@ -1,11 +1,10 @@
-package main
+package store
 
 import (
 	"sensors-temp/internal/timeutil"
 
 	"database/sql"
 	"fmt"
-	"os"
 	"sensors-temp/internal/logging"
 	"strings"
 
@@ -15,56 +14,13 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
-// PostgresStore implements the Store interface using PostgreSQL.
-// It holds a TimeConverter for converting UTC timestamps to local time,
-// just like SQLiteStore.
-type PostgresStore struct {
-	converter timeutil.TimeConverter
-	dsn       string // connection string, e.g. postgres://user:pass@host/db?sslmode=disable
-}
-
-// NewPostgresStore creates a PostgresStore.
-// It reads DATABASE_URL from the environment, falling back to the defaults used
-// by the project's docker-compose.yml (user tracker, db sensors_temp, port 5432).
-// In Python this is like:
-//
-//	os.getenv("DATABASE_URL", "postgres://tracker:tracker@localhost:5432/sensors_temp?sslmode=disable")
-func NewPostgresStore() *PostgresStore {
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		dsn = "postgres://tracker:tracker@localhost:5432/sensors_temp?sslmode=disable"
-	}
-	return &PostgresStore{
-		converter: timeutil.NewMeridaTimeConverter(),
-		dsn:       dsn,
-	}
-}
-
-// InitDB opens a connection pool to PostgreSQL and ensures the readings table exists.
-// Unlike SQLite, PostgreSQL is a real server: it handles concurrent writers itself,
-// so we do NOT need PRAGMA journal_mode or busy_timeout, and we do NOT force
-// SetMaxOpenConns(1). The connection pool is left at sensible defaults.
-func (s *PostgresStore) InitDB() *sql.DB {
-	logging.Logger.Info("Initializing PostgreSQL database")
-
-	// sql.Open only validates the DSN format; the first real connection happens on Ping().
-	db, err := sql.Open("pgx", s.dsn)
-	if err != nil {
-		logging.Logger.Error("Failed to open PostgreSQL database: %v", err)
-		return nil
-	}
-
-	if err := db.Ping(); err != nil {
-		logging.Logger.Error("Failed to ping PostgreSQL database: %v", err)
-		return nil
-	}
-
-	logging.Logger.Debug("PostgreSQL connection established")
-
-	// PostgreSQL schema equivalent to the SQLite readings table.
-	// BIGSERIAL is the Postgres way to say "auto-incrementing 64-bit integer".
-	// TIMESTAMPTZ stores UTC timestamps with timezone awareness.
-	schema := `CREATE TABLE IF NOT EXISTS readings (
+// PostgresSchema is the readings table plus its indexes (idempotent).
+// Exported so migrate-to-postgres creates exactly the same schema.
+// BIGSERIAL is the Postgres way to say "auto-incrementing 64-bit integer".
+// TIMESTAMPTZ stores UTC timestamps with timezone awareness.
+// The partial indexes (WHERE metric_type = '...') feed the loose index scan
+// used by QueryLatest.
+const PostgresSchema = `CREATE TABLE IF NOT EXISTS readings (
 		id BIGSERIAL PRIMARY KEY,
 		sensor TEXT NOT NULL,
 		temp_c DOUBLE PRECISION NOT NULL,
@@ -89,7 +45,49 @@ func (s *PostgresStore) InitDB() *sql.DB {
 	CREATE INDEX IF NOT EXISTS idx_readings_swap_created_at ON readings(created_at) WHERE metric_type = 'swap';
 	CREATE INDEX IF NOT EXISTS idx_readings_disk_created_at ON readings(created_at) WHERE metric_type = 'disk';`
 
-	if _, err := db.Exec(schema); err != nil {
+// PostgresStore implements the Store interface using PostgreSQL.
+// It holds a TimeConverter for converting UTC timestamps to local time,
+// just like SQLiteStore.
+type PostgresStore struct {
+	converter timeutil.TimeConverter
+	dsn       string // connection string, e.g. postgres://user:pass@host/db?sslmode=disable
+}
+
+// NewPostgresStore creates a PostgresStore.
+// It reads DATABASE_URL from the environment, falling back to the defaults used
+// by the project's docker-compose.yml (user tracker, db sensors_temp, port 5432).
+// In Python this is like:
+//
+//	os.getenv("DATABASE_URL", "postgres://tracker:tracker@localhost:5432/sensors_temp?sslmode=disable")
+func NewPostgresStore() *PostgresStore {
+	return &PostgresStore{
+		converter: timeutil.NewMeridaTimeConverter(),
+		dsn:       ResolvePostgresDSN(""),
+	}
+}
+
+// InitDB opens a connection pool to PostgreSQL and ensures the readings table exists.
+// Unlike SQLite, PostgreSQL is a real server: it handles concurrent writers itself,
+// so we do NOT need PRAGMA journal_mode or busy_timeout, and we do NOT force
+// SetMaxOpenConns(1). The connection pool is left at sensible defaults.
+func (s *PostgresStore) InitDB() *sql.DB {
+	logging.Logger.Info("Initializing PostgreSQL database")
+
+	// sql.Open only validates the DSN format; the first real connection happens on Ping().
+	db, err := sql.Open("pgx", s.dsn)
+	if err != nil {
+		logging.Logger.Error("Failed to open PostgreSQL database: %v", err)
+		return nil
+	}
+
+	if err := db.Ping(); err != nil {
+		logging.Logger.Error("Failed to ping PostgreSQL database: %v", err)
+		return nil
+	}
+
+	logging.Logger.Debug("PostgreSQL connection established")
+
+	if _, err := db.Exec(PostgresSchema); err != nil {
 		logging.Logger.Error("Failed to create PostgreSQL schema: %v", err)
 		return nil
 	}

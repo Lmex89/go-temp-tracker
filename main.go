@@ -6,10 +6,9 @@ import (
 	"net/http"
 	"os"
 	"sensors-temp/internal/logging"
+	"sensors-temp/internal/store"
 	"strconv"
 	"time"
-
-	_ "modernc.org/sqlite"
 )
 
 // getEnvInt reads an environment variable and parses it as int, returning default if not set or invalid.
@@ -32,17 +31,17 @@ func getEnvInt(key string, defaultVal int) int {
 // "sqlite" (or empty string) keeps the existing SQLite behavior; "postgres"
 // connects to PostgreSQL via the pgx driver. This is a tiny factory function --
 // like Python's if driver == "sqlite": return SQLiteStore() else: return PostgresStore().
-func newStore(driver string) Store {
+func newStore(driver string, sqlitePath string) store.Store {
 	switch driver {
 	case "postgres":
 		logging.Logger.Info("Using PostgreSQL store (DATABASE_URL=%s)", os.Getenv("DATABASE_URL"))
-		return NewPostgresStore()
+		return store.NewPostgresStore()
 	case "sqlite", "":
 		logging.Logger.Info("Using SQLite store")
-		return NewSQLiteStore()
+		return store.NewSQLiteStore(sqlitePath)
 	default:
 		logging.Logger.Warn("Unknown db-driver %q, falling back to SQLite", driver)
-		return NewSQLiteStore()
+		return store.NewSQLiteStore(sqlitePath)
 	}
 }
 
@@ -62,8 +61,8 @@ func main() {
 	// DB_DRIVER env var or -db-driver flag selects postgres; DATABASE_URL configures
 	// the Postgres connection (defaults to the project's docker-compose.yml settings).
 	sensor := NewLinuxThermalSensor()
-	store := newStore(*dbDriver)
-	db := store.InitDB()
+	st := newStore(*dbDriver, "temps.db")
+	db := st.InitDB()
 	defer func() {
 		if err := db.Close(); err != nil {
 			logging.Logger.Error("Failed to close database: %v", err)
@@ -79,7 +78,7 @@ func main() {
 	// makes Go's database/sql queue all operations, eliminating lock contention.
 	// PostgreSQL is a real server and can handle multiple concurrent connections, so
 	// leave its pool at the default size.
-	if _, ok := store.(*SQLiteStore); ok {
+	if _, ok := st.(*store.SQLiteStore); ok {
 		db.SetMaxOpenConns(1)
 		db.SetMaxIdleConns(1)
 	}
@@ -88,7 +87,7 @@ func main() {
 	// Without staggering, 6 goroutines sharing 3 conns create a thundering herd
 	// against SQLite's internal lock, causing 5s busy_timeout waits on every cycle.
 	// In Python: time.sleep(offset) before entering the while loop.
-	poller := NewPoller(sensor, store, db)
+	poller := NewPoller(sensor, st, db)
 	go func() {
 		time.Sleep(0 * time.Second)
 		poller.Run(*interval, *retain)
@@ -99,49 +98,49 @@ func main() {
 	cpuInterval := getEnvInt("CPU_POLL_INTERVAL", metricDefaultInterval)
 	go func() {
 		time.Sleep(3 * time.Second)
-		RunMetricPoller(store, db, "cpu", cpuInterval, *retain, metrics.ReadCPU)
+		RunMetricPoller(st, db, "cpu", cpuInterval, *retain, metrics.ReadCPU)
 	}()
 	memInterval := getEnvInt("MEMORY_POLL_INTERVAL", metricDefaultInterval)
 	go func() {
 		time.Sleep(6 * time.Second)
-		RunMetricPoller(store, db, "memory", memInterval, *retain, metrics.ReadMemory)
+		RunMetricPoller(st, db, "memory", memInterval, *retain, metrics.ReadMemory)
 	}()
 	swapInterval := getEnvInt("SWAP_POLL_INTERVAL", metricDefaultInterval)
 	go func() {
 		time.Sleep(9 * time.Second)
-		RunMetricPoller(store, db, "swap", swapInterval, *retain, metrics.ReadSwap)
+		RunMetricPoller(st, db, "swap", swapInterval, *retain, metrics.ReadSwap)
 	}()
 	diskInterval := getEnvInt("DISK_POLL_INTERVAL", metricDefaultInterval)
 	go func() {
 		time.Sleep(12 * time.Second)
-		RunMetricPoller(store, db, "disk", diskInterval, *retain, metrics.ReadDisk)
+		RunMetricPoller(st, db, "disk", diskInterval, *retain, metrics.ReadDisk)
 	}()
 	loadInterval := getEnvInt("LOAD_POLL_INTERVAL", metricDefaultInterval)
 	go func() {
 		time.Sleep(15 * time.Second)
-		RunMetricPoller(store, db, "load", loadInterval, *retain, metrics.ReadLoad)
+		RunMetricPoller(st, db, "load", loadInterval, *retain, metrics.ReadLoad)
 	}()
 
 	// Setting up HTTP routes -- ServeMux is like Flask's app or Django's urlpatterns.
 	mux := http.NewServeMux()
 
 	// Existing temperature endpoints (backward compatible).
-	mux.HandleFunc("/api/temps", handleTemps(store, db))
-	mux.HandleFunc("/api/current", handleCurrent(store, db))
+	mux.HandleFunc("/api/temps", handleTemps(st, db))
+	mux.HandleFunc("/api/current", handleCurrent(st, db))
 
 	// New metric-specific endpoints.
-	mux.HandleFunc("/api/cpu", handleMetricByType(store, db, "cpu"))
-	mux.HandleFunc("/api/memory", handleMetricByType(store, db, "memory"))
-	mux.HandleFunc("/api/swap", handleMetricByType(store, db, "swap"))
-	mux.HandleFunc("/api/disk", handleMetricByType(store, db, "disk"))
-	mux.HandleFunc("/api/load", handleMetricByType(store, db, "load"))
+	mux.HandleFunc("/api/cpu", handleMetricByType(st, db, "cpu"))
+	mux.HandleFunc("/api/memory", handleMetricByType(st, db, "memory"))
+	mux.HandleFunc("/api/swap", handleMetricByType(st, db, "swap"))
+	mux.HandleFunc("/api/disk", handleMetricByType(st, db, "disk"))
+	mux.HandleFunc("/api/load", handleMetricByType(st, db, "load"))
 
 	// Latest-value endpoints for each metric type (for gauge display).
-	mux.HandleFunc("/api/current/cpu", handleCurrentByType(store, db, "cpu"))
-	mux.HandleFunc("/api/current/memory", handleCurrentByType(store, db, "memory"))
-	mux.HandleFunc("/api/current/swap", handleCurrentByType(store, db, "swap"))
-	mux.HandleFunc("/api/current/disk", handleCurrentByType(store, db, "disk"))
-	mux.HandleFunc("/api/current/load", handleCurrentByType(store, db, "load"))
+	mux.HandleFunc("/api/current/cpu", handleCurrentByType(st, db, "cpu"))
+	mux.HandleFunc("/api/current/memory", handleCurrentByType(st, db, "memory"))
+	mux.HandleFunc("/api/current/swap", handleCurrentByType(st, db, "swap"))
+	mux.HandleFunc("/api/current/disk", handleCurrentByType(st, db, "disk"))
+	mux.HandleFunc("/api/current/load", handleCurrentByType(st, db, "load"))
 
 	mux.Handle("/", http.FileServer(http.Dir("static")))
 

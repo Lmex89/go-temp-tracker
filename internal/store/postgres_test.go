@@ -1,9 +1,8 @@
-package main
+package store
 
 import (
 	"database/sql"
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 	"testing"
@@ -13,10 +12,7 @@ import (
 // pgTestDSN returns the DSN tests should use (DATABASE_URL or the
 // docker-compose default), mirroring NewPostgresStore.
 func pgTestDSN() string {
-	if dsn := os.Getenv("DATABASE_URL"); dsn != "" {
-		return dsn
-	}
-	return "postgres://tracker:tracker@localhost:5432/sensors_temp?sslmode=disable"
+	return ResolvePostgresDSN("")
 }
 
 // newPGTestStore builds a PostgresStore bound to a throwaway schema, so tests

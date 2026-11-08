@@ -6,12 +6,13 @@ import (
 	"fmt"
 	"os"
 	"sensors-temp/internal/logging"
+	"sensors-temp/internal/store"
+	"sensors-temp/internal/timeutil"
 	"time"
 
 	"database/sql"
 
 	"github.com/jackc/pgx/v5"
-	_ "modernc.org/sqlite"
 )
 
 // sqliteCopySource streams rows from SQLite into pgx's CopyFrom protocol.
@@ -44,7 +45,7 @@ func (s *sqliteCopySource) Values() ([]interface{}, error) {
 		return nil, err
 	}
 
-	ts, err := time.Parse("2006-01-02 15:04:05", createdAt)
+	ts, err := time.Parse(timeutil.DBLayout, createdAt)
 	if err != nil {
 		return nil, fmt.Errorf("parse created_at %q: %w", createdAt, err)
 	}
@@ -65,17 +66,13 @@ func main() {
 	postgresURL := flag.String("postgres", "", "Target PostgreSQL URL (defaults to DATABASE_URL, then docker-compose defaults)")
 	flag.Parse()
 
-	if *postgresURL == "" {
-		*postgresURL = os.Getenv("DATABASE_URL")
-		if *postgresURL == "" {
-			*postgresURL = "postgres://tracker:tracker@localhost:5432/sensors_temp?sslmode=disable"
-		}
-	}
+	// Flag, then DATABASE_URL, then docker-compose default (shared with the service).
+	*postgresURL = store.ResolvePostgresDSN(*postgresURL)
 
 	fmt.Printf("Migrating %s -> %s\n", *sqlitePath, *postgresURL)
 
 	// Open SQLite -- same driver the main app uses.
-	sqliteDB, err := sql.Open("sqlite", *sqlitePath)
+	sqliteDB, err := store.Open("sqlite", *sqlitePath)
 	if err != nil {
 		logger.Fatal("Failed to open SQLite: %v", err)
 	}
@@ -102,30 +99,7 @@ func main() {
 	defer pgConn.Close(ctx)
 
 	// Ensure the target schema exists.
-	if _, err := pgConn.Exec(ctx, `CREATE TABLE IF NOT EXISTS readings (
-		id BIGSERIAL PRIMARY KEY,
-		sensor TEXT NOT NULL,
-		temp_c DOUBLE PRECISION NOT NULL,
-		metric_type TEXT NOT NULL DEFAULT 'temperature',
-		unit TEXT NOT NULL DEFAULT 'C',
-		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-	);
-	CREATE INDEX IF NOT EXISTS idx_readings_created_at ON readings(created_at);
-	CREATE INDEX IF NOT EXISTS idx_readings_sensor ON readings(sensor);
-	CREATE INDEX IF NOT EXISTS idx_readings_metric_type_created_at ON readings(metric_type, created_at);
-	CREATE INDEX IF NOT EXISTS idx_readings_metric_type_sensor_id ON readings(metric_type, sensor, id);
-	CREATE INDEX IF NOT EXISTS idx_readings_disk_sensor_id ON readings(sensor, id DESC) WHERE metric_type = 'disk';
-	CREATE INDEX IF NOT EXISTS idx_readings_temp_sensor_id ON readings(sensor, id DESC) WHERE metric_type = 'temperature';
-	CREATE INDEX IF NOT EXISTS idx_readings_cpu_sensor_id ON readings(sensor, id DESC) WHERE metric_type = 'cpu';
-	CREATE INDEX IF NOT EXISTS idx_readings_memory_sensor_id ON readings(sensor, id DESC) WHERE metric_type = 'memory';
-	CREATE INDEX IF NOT EXISTS idx_readings_swap_sensor_id ON readings(sensor, id DESC) WHERE metric_type = 'swap';
-	CREATE INDEX IF NOT EXISTS idx_readings_load_sensor_id ON readings(sensor, id DESC) WHERE metric_type = 'load';
-	CREATE INDEX IF NOT EXISTS idx_readings_load_created_at ON readings(created_at) WHERE metric_type = 'load';
-	CREATE INDEX IF NOT EXISTS idx_readings_temp_created_at ON readings(created_at) WHERE metric_type = 'temperature';
-	CREATE INDEX IF NOT EXISTS idx_readings_cpu_created_at ON readings(created_at) WHERE metric_type = 'cpu';
-	CREATE INDEX IF NOT EXISTS idx_readings_memory_created_at ON readings(created_at) WHERE metric_type = 'memory';
-	CREATE INDEX IF NOT EXISTS idx_readings_swap_created_at ON readings(created_at) WHERE metric_type = 'swap';
-	CREATE INDEX IF NOT EXISTS idx_readings_disk_created_at ON readings(created_at) WHERE metric_type = 'disk';`); err != nil {
+	if _, err := pgConn.Exec(ctx, store.PostgresSchema); err != nil {
 		logger.Fatal("Failed to create Postgres schema: %v", err)
 	}
 
