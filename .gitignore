@@ -7,6 +7,11 @@
 /temp-tracker
 /spike-report
 /migrate-to-postgres
+/sensors-temp
+
+# Compiled binaries and runtime logs (scripts write here)
+bin/
+logs/
 
 # Test binary, built with `go test -c`
 *.test

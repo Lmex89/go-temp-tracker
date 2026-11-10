@@ -41,13 +41,13 @@ func detectSpikes(
 	// --- Step 1: Compute per-sensor baseline mean ---
 	// Query all temperature readings in the baseline window.
 	// In Python: df[(df.created_at >= baseline_since) & (df.created_at <= now)]
-	logger.debug("querying baseline readings from %s to %s",
+	logger.Debug("querying baseline readings from %s to %s",
 		baselineSince.Format("2006-01-02 15:04:05"), now.Format("2006-01-02 15:04:05"))
 	baselineRows, err := queryTemperatureRange(db, baselineSince, now)
 	if err != nil {
 		return nil, fmt.Errorf("baseline query failed: %w", err)
 	}
-	logger.debug("loaded %d baseline readings", len(baselineRows))
+	logger.Debug("loaded %d baseline readings", len(baselineRows))
 
 	// Group by sensor and accumulate values -- like Python's collections.defaultdict(list).
 	sensorTemps := make(map[string][]float64)
@@ -87,19 +87,19 @@ func detectSpikes(
 		std := math.Sqrt(sqDiff / float64(len(temps)))
 		means[sensor] = stats{mean: mean, min: mn, max: mx, std: std}
 	}
-	logger.debug("computed baseline stats for %d sensor(s)", len(means))
+	logger.Debug("computed baseline stats for %d sensor(s)", len(means))
 	for sensor, st := range means {
-		logger.debug("  %s: mean=%.1f min=%.1f max=%.1f std=%.1f", sensor, st.mean, st.min, st.max, st.std)
+		logger.Debug("  %s: mean=%.1f min=%.1f max=%.1f std=%.1f", sensor, st.mean, st.min, st.max, st.std)
 	}
 
 	// --- Step 2: Find spikes in the report window ---
-	logger.debug("querying report readings from %s to %s",
+	logger.Debug("querying report readings from %s to %s",
 		reportSince.Format("2006-01-02 15:04:05"), now.Format("2006-01-02 15:04:05"))
 	reportRows, err := queryTemperatureRange(db, reportSince, now)
 	if err != nil {
 		return nil, fmt.Errorf("report window query failed: %w", err)
 	}
-	logger.debug("loaded %d report readings, scanning for spikes (threshold=%.1f)", len(reportRows), deviationThreshold)
+	logger.Debug("loaded %d report readings, scanning for spikes (threshold=%.1f)", len(reportRows), deviationThreshold)
 
 	var spikes []Spike
 	for _, r := range reportRows {
@@ -123,9 +123,9 @@ func detectSpikes(
 		}
 	}
 
-	logger.debug("detected %d spike(s)", len(spikes))
+	logger.Debug("detected %d spike(s)", len(spikes))
 	for _, s := range spikes {
-		logger.debug("  %s: %.1fC at %s (dev=+%.1f, severity=%s)",
+		logger.Debug("  %s: %.1fC at %s (dev=+%.1f, severity=%s)",
 			s.Sensor, s.TempC, s.Timestamp.Format("2006-01-02 15:04:05"), s.Deviation, s.Severity)
 	}
 

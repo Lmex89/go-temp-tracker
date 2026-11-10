@@ -9,5 +9,5 @@ Las Reading pasan por una interfaz `Store` con dos implementaciones: `SQLiteStor
 
 ## Consecuencias
 
-- El esquema vive en dos dialectos (auto-migracion en `db.go`, DDL completo en `pgstore.go`); cada cambio de esquema debe hacerse en ambos.
+- El esquema vive en dos dialectos (auto-migracion en `internal/store/sqlite.go`, DDL completo en `internal/store/postgres.go`); cada cambio de esquema debe hacerse en ambos.
 - SQLite fuerza una sola conexion (`SetMaxOpenConns(1)`); PostgreSQL conserva el pool por defecto.

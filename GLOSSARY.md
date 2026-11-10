@@ -24,6 +24,20 @@ _Evitar_: sample, data point, record
 La cantidad medida de una Reading, expresada en la unidad de la Reading.
 _Evitar_: temp (para cualquier cosa que no sea el Metric Type temperature)
 
+### Estructura del codigo
+
+**Store**:
+Interfaz de persistencia (`Query`, `QueryLatest`, `Prune`, mas `Insert` en las implementaciones) con dos implementaciones, `SQLiteStore` y `PostgresStore`, en `internal/store`. `NewSQLiteStore(path)` recibe la ruta del archivo; `main.go` pasa `temps.db`.
+_Evitar_: repositorio, DAO, backend
+
+**Poller**:
+Bucle que lee, inserta, poda y duerme; hay uno para temperatura (`internal/poller`, `Poller`) y uno por cada metrica del sistema (`RunMetricPoller`).
+_Evitar_: worker, collector
+
+**Internal package**:
+Paquete bajo `internal/` (logging, timeutil, store, sensor, metrics, poller, httpapi); Go impide importarlo desde fuera del modulo (ver ADR-0003).
+_Evitar_: pkg, libreria
+
 ### Deteccion de anomalias
 
 **Baseline**:
