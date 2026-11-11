@@ -218,9 +218,12 @@ func (s *SQLiteStore) Query(db *sql.DB, window TimeWindow, metricType string) ([
 	)
 	if err != nil {
 		logging.Logger.Error("Query failed: %v", err)
-		return nil, nil
+		return nil, err
 	}
-	readings := s.scanRows(rows)
+	readings, err := s.scanRows(rows)
+	if err != nil {
+		return nil, err
+	}
 
 	logging.Logger.Info("Query returned %d reading(s)", len(readings))
 	return readings, nil
@@ -244,15 +247,15 @@ func (s *SQLiteStore) QueryLatest(db *sql.DB, metricType string) ([]Reading, err
 	)
 	if err != nil {
 		logging.Logger.Error("QueryLatest failed: %v", err)
-		return nil, nil
+		return nil, err
 	}
-	return s.scanRows(rows), nil
+	return s.scanRows(rows)
 }
 
 // scanRows drains rows into Reading values (written once, shared by every
 // query). It closes rows itself, like Python's "with cursor:" block, and
 // converts created_at from UTC to local time.
-func (s *SQLiteStore) scanRows(rows *sql.Rows) []Reading {
+func (s *SQLiteStore) scanRows(rows *sql.Rows) ([]Reading, error) {
 	defer func() {
 		if err := rows.Close(); err != nil {
 			logging.Logger.Error("Failed to close rows: %v", err)
@@ -264,15 +267,16 @@ func (s *SQLiteStore) scanRows(rows *sql.Rows) []Reading {
 		var r Reading
 		if err := rows.Scan(&r.Sensor, &r.TempC, &r.MetricType, &r.Unit, &r.CreatedAt); err != nil {
 			logging.Logger.Error("Failed to scan row: %v", err)
-			continue
+			return nil, err
 		}
 		r.CreatedAt = s.converter.ToLocal(r.CreatedAt)
 		readings = append(readings, r)
 	}
 	if err := rows.Err(); err != nil {
 		logging.Logger.Error("Row iteration error: %v", err)
+		return nil, err
 	}
-	return readings
+	return readings, nil
 }
 
 // Prune removes readings older than the given number of hours. AllMetrics
