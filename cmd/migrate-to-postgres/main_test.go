@@ -460,3 +460,75 @@ func TestMigrateCopiesOneConsistentSQLiteView(t *testing.T) {
 		t.Errorf("stdout should explain later writes are not included: %q", res.stdout)
 	}
 }
+
+// sentinelPassword is a recognisable fake secret: if it shows up anywhere in
+// the command output, a credential leaked.
+const sentinelPassword = "S3NTINEL-pw"
+
+// assertNoSecrets fails when any output contains the secret password or the
+// complete DSN (which embeds it).
+func assertNoSecrets(t *testing.T, dsn, secret string, outputs ...string) {
+	t.Helper()
+	for _, out := range outputs {
+		if strings.Contains(out, secret) {
+			t.Errorf("output leaks the password: %q", out)
+		}
+		if strings.Contains(out, dsn) {
+			t.Errorf("output leaks the full DSN: %q", out)
+		}
+	}
+}
+
+// Connection failures must not echo credentials, yet must keep host, port and
+// database so the operator can tell which target failed. These cases need no
+// PostgreSQL server, so they are never skipped.
+func TestMigrateConnectionFailureRedactsCredentials(t *testing.T) {
+	sqlitePath := newSQLiteSource(t, sampleReadings(3))
+	tests := []struct {
+		name string
+		dsn  string
+		keep []string // useful diagnostics that must survive the redaction
+	}{
+		{"closed port", "postgres://appuser:" + sentinelPassword + "@127.0.0.1:1/db?sslmode=disable&connect_timeout=2",
+			[]string{"127.0.0.1", "db"}},
+		{"malformed port", "postgres://appuser:" + sentinelPassword + "@127.0.0.1:notaport/db",
+			[]string{"invalid port"}},
+		{"keyword form", "host=127.0.0.1 port=1 user=appuser password=" + sentinelPassword + " dbname=db sslmode=disable connect_timeout=2",
+			[]string{"127.0.0.1", "db"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			code, stdout, stderr := runMigration(sqlitePath, tt.dsn)
+			if code != 1 {
+				t.Fatalf("exit code = %d, want 1; stderr=%q", code, stderr)
+			}
+			assertNoSecrets(t, tt.dsn, sentinelPassword, stdout, stderr)
+			for _, want := range tt.keep {
+				if !strings.Contains(stdout+stderr, want) {
+					t.Errorf("output lost useful detail %q: stdout=%q stderr=%q", want, stdout, stderr)
+				}
+			}
+		})
+	}
+}
+
+// A successful run must not print the DSN either (it used to).
+func TestMigrateSuccessDoesNotPrintCredentials(t *testing.T) {
+	pg := newPGTarget(t) // skips when MIGRATE_TEST_POSTGRES_URL is unset
+	u, err := url.Parse(pg.DSN)
+	if err != nil || u.User == nil {
+		t.Skip("test DSN has no parsable user info: success-path redaction NOT verified")
+	}
+	secret, _ := u.User.Password()
+	if secret == "" {
+		t.Skip("test DSN has no password: success-path redaction NOT verified")
+	}
+	code, stdout, stderr := runMigration(newSQLiteSource(t, sampleReadings(5)), pg.DSN)
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr=%q", code, stderr)
+	}
+	assertNoSecrets(t, pg.DSN, secret, stdout, stderr)
+	if !strings.Contains(stdout, u.Host) {
+		t.Errorf("stdout lost the target host: %q", stdout)
+	}
+}

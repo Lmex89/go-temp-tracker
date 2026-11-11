@@ -86,10 +86,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 	// Flag, then DATABASE_URL, then docker-compose default (shared with the service).
 	*postgresURL = store.ResolvePostgresDSN(*postgresURL)
 
-	fmt.Fprintf(stdout, "Migrating %s -> %s\n", *sqlitePath, *postgresURL)
+	// Never print the DSN: it may hold the password. Show host:port/database.
+	fmt.Fprintf(stdout, "Migrating %s -> %s\n", *sqlitePath, describeTarget(*postgresURL))
 
 	if err := migrate(context.Background(), stdout, *sqlitePath, *postgresURL); err != nil {
-		fmt.Fprintln(stderr, err)
+		// Errors from pgx/url.Parse may echo the DSN or password: redact the text
+		// only, so errors.Is below still sees the original error chain.
+		fmt.Fprintln(stderr, redactText(err.Error(), *postgresURL))
 		if errors.Is(err, errCommitUncertain) {
 			fmt.Fprintln(stderr, "The commit may or may not have been applied: inspect the target readings table before retrying.")
 		} else {
