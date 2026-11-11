@@ -18,6 +18,9 @@ var (
 
 // describeTarget returns "host:port/database" for log lines: enough to tell
 // which server was meant, never the user info or the query string.
+// Python analogy: urllib.parse.urlsplit(dsn), printing only the host part and
+// path. Go returns (value, err) instead of raising, so each parse attempt is an
+// `if err == nil` branch rather than a try/except.
 func describeTarget(dsn string) string {
 	if cfg, err := pgx.ParseConfig(dsn); err == nil {
 		return fmt.Sprintf("%s:%d/%s", cfg.Host, cfg.Port, cfg.Database)
