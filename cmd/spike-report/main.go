@@ -49,7 +49,7 @@ func main() {
 	// not a single connection -- like Python's connection pool.
 	db, err := store.Open(effectiveDriver, *dbPath)
 	if err != nil {
-		safeErr := safeDatabaseError(err)
+		safeErr := store.SafeDatabaseError(err, *dbPath)
 		logger.Error("failed to open %s database: %s", effectiveDriver, safeErr)
 		fmt.Fprintf(os.Stderr, "Failed to open %s database: %s\n", effectiveDriver, safeErr)
 		os.Exit(1)
@@ -58,7 +58,7 @@ func main() {
 	logger.Info("database handle opened for driver=%s (connection not yet verified)", effectiveDriver)
 
 	if err := db.Ping(); err != nil {
-		safeErr := safeDatabaseError(err)
+		safeErr := store.SafeDatabaseError(err, *dbPath)
 		logger.Error("failed to connect to %s database: %s", effectiveDriver, safeErr)
 		fmt.Fprintf(os.Stderr, "Failed to connect to %s database: %s\n", effectiveDriver, safeErr)
 		os.Exit(1)

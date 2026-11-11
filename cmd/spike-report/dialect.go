@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"regexp"
 	"sensors-temp/internal/timeutil"
 	"time"
 )
@@ -15,12 +14,6 @@ import (
 // It is set by main() from the -driver flag / DB_DRIVER env var.
 // Package-level variables are like Python module globals -- use them sparingly.
 var dbDriver string
-
-var (
-	postgresURLPattern        = regexp.MustCompile(`(?i)postgres(?:ql)?://[^\s"'<>]+`)
-	postgresCredentialPattern = regexp.MustCompile(`(?i)\b(user|password|passfile)\s*=\s*('[^']*'|"[^"]*"|[^\s]+)`)
-	postgresUserErrorPattern  = regexp.MustCompile(`(?i)(\bfor user\s+)("[^"]*"|'[^']*'|[^\s]+)`)
-)
 
 // NOTE: an empty driver means postgres in spike-report (original behavior), unlike
 // the service where "" means sqlite; this matches store.Open.
@@ -38,13 +31,6 @@ func setDBDriver(driver string) string {
 		dbDriver = "postgres"
 	}
 	return dbDriver
-}
-
-// Driver errors may include the connection details, so redact them but keep the cause.
-func safeDatabaseError(err error) string {
-	message := postgresURLPattern.ReplaceAllString(err.Error(), "PostgreSQL connection details redacted")
-	message = postgresCredentialPattern.ReplaceAllString(message, "$1=<redacted>")
-	return postgresUserErrorPattern.ReplaceAllString(message, "$1<redacted>")
 }
 
 // formatDBTime formats a time.Time for database comparisons.

@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -67,6 +69,82 @@ func TestResolveDBDriver(t *testing.T) {
 	}
 }
 
+func TestMonitorExecutableUsesCLIAndEnvironmentDriverSelection(t *testing.T) {
+	binary := filepath.Join(t.TempDir(), "temp-tracker")
+	build := exec.Command("go", "build", "-o", binary, ".")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build monitor: %v\n%s", err, output)
+	}
+
+	t.Run("unknown environment value warns and falls back to SQLite", func(t *testing.T) {
+		workDir := t.TempDir()
+		if err := os.Mkdir(filepath.Join(workDir, store.DefaultSQLitePath), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		dsn := "postgres://monitor:secret@db.example/sensors"
+		output, err := runMonitorExecutable(binary, workDir, nil, map[string]string{
+			"DB_DRIVER":    dsn,
+			"DATABASE_URL": "postgres://monitor:secret@127.0.0.1:1/sensors?connect_timeout=1",
+		})
+		if err == nil {
+			t.Fatal("expected initialization to fail on the temporary SQLite directory")
+		}
+		if !strings.Contains(output, "Unknown database driver") || !strings.Contains(output, "Using SQLite database") {
+			t.Fatalf("expected warning and SQLite fallback:\n%s", output)
+		}
+		if strings.Contains(output, dsn) || strings.Contains(output, "secret") {
+			t.Fatalf("untrusted driver value leaked:\n%s", output)
+		}
+	})
+
+	t.Run("CLI option overrides environment", func(t *testing.T) {
+		workDir := t.TempDir()
+		if err := os.Mkdir(filepath.Join(workDir, store.DefaultSQLitePath), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		dsn := "postgres://monitor:secret@127.0.0.1:1/sensors?connect_timeout=1"
+		output, err := runMonitorExecutable(binary, workDir, []string{"-db-driver=postgres"}, map[string]string{
+			"DB_DRIVER":    "sqlite",
+			"DATABASE_URL": dsn,
+		})
+		if err == nil {
+			t.Fatal("expected the controlled PostgreSQL connection to fail")
+		}
+		if !strings.Contains(output, "Using PostgreSQL database") || !strings.Contains(output, "Failed to connect to PostgreSQL database") {
+			t.Fatalf("CLI driver did not override the environment:\n%s", output)
+		}
+		if !strings.Contains(output, "connection refused") {
+			t.Fatalf("connection cause not reported:\n%s", output)
+		}
+		if strings.Contains(output, dsn) || strings.Contains(output, "secret") {
+			t.Fatalf("database credentials or DSN leaked:\n%s", output)
+		}
+	})
+}
+
+func runMonitorExecutable(binary, workDir string, args []string, overrides map[string]string) (string, error) {
+	cmd := exec.Command(binary, args...)
+	cmd.Dir = workDir
+	cmd.Env = monitorTestEnv(overrides)
+	output, err := cmd.CombinedOutput()
+	return string(output), err
+}
+
+func monitorTestEnv(overrides map[string]string) []string {
+	var env []string
+	for _, entry := range os.Environ() {
+		key, _, _ := strings.Cut(entry, "=")
+		if key == "DB_DRIVER" || key == "DATABASE_URL" || key == "LOG_LEVEL" {
+			continue
+		}
+		env = append(env, entry)
+	}
+	for key, value := range overrides {
+		env = append(env, key+"="+value)
+	}
+	return env
+}
+
 func TestOpenDatabaseUsesEffectiveDriverAndSQLitePool(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -121,7 +199,30 @@ func TestNewStoreUsesPostgresWithoutLoggingDSN(t *testing.T) {
 	if !strings.Contains(logs, "Using PostgreSQL database") || !strings.Contains(logs, "Failed to connect to PostgreSQL database") {
 		t.Fatalf("PostgreSQL selection or safe connection error was not logged: %s", logs)
 	}
+	if !strings.Contains(logs, "connection refused") {
+		t.Fatalf("underlying PostgreSQL connection error was not logged: %s", logs)
+	}
 	if strings.Contains(logs, "secret") || strings.Contains(logs, dsn) || strings.Contains(logs, "DATABASE_URL=") {
 		t.Fatalf("database credentials or DSN were logged: %s", output.String())
+	}
+}
+
+func TestSQLiteInitializationLogsUsefulSanitizedError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "private-secret", "readings.sqlite")
+	oldLogger := logging.Logger
+	var output bytes.Buffer
+	logging.Logger = logging.New(&output, "INFO")
+	t.Cleanup(func() { logging.Logger = oldLogger })
+
+	if db := store.NewSQLiteStore(path).InitDB(); db != nil {
+		db.Close()
+		t.Fatal("expected SQLite initialization to fail for a missing parent directory")
+	}
+	logs := output.String()
+	if !strings.Contains(logs, "Failed to connect to SQLite database") || !strings.Contains(logs, "unable to open database file") {
+		t.Fatalf("expected useful SQLite connection error:\n%s", logs)
+	}
+	if strings.Contains(logs, path) || strings.Contains(logs, "private-secret") {
+		t.Fatalf("SQLite path was logged:\n%s", logs)
 	}
 }

@@ -132,7 +132,7 @@ func TestSpikeReportDatabaseSelection(t *testing.T) {
 
 func TestSafeDatabaseErrorRedactsConnectionDetails(t *testing.T) {
 	err := fmt.Errorf("connection refused for postgres://report:secret@db.example:5432/readings?sslmode=require; user=report password=secret; password authentication failed for user %q", "report")
-	got := safeDatabaseError(err)
+	got := store.SafeDatabaseError(err)
 	if !strings.Contains(got, "connection refused") {
 		t.Fatalf("underlying error detail was lost: %q", got)
 	}
@@ -156,17 +156,25 @@ func TestSpikeReportPostgresQueries(t *testing.T) {
 		t.Skip("PostgreSQL integration omitted: PostgreSQL is unavailable")
 	}
 	if err := admin.Ping(); err != nil {
-		admin.Close()
+		if closeErr := admin.Close(); closeErr != nil {
+			t.Errorf("close PostgreSQL admin connection: %v", closeErr)
+		}
 		t.Skip("PostgreSQL integration omitted: PostgreSQL is unavailable")
 	}
 	schema := fmt.Sprintf("spike_report_test_%d", time.Now().UnixNano())
 	if _, err := admin.Exec("CREATE SCHEMA " + schema); err != nil {
-		admin.Close()
+		if closeErr := admin.Close(); closeErr != nil {
+			t.Errorf("close PostgreSQL admin connection: %v", closeErr)
+		}
 		t.Skip("PostgreSQL integration omitted: cannot create an isolated schema")
 	}
 	t.Cleanup(func() {
-		_, _ = admin.Exec("DROP SCHEMA " + schema + " CASCADE")
-		_ = admin.Close()
+		if _, err := admin.Exec("DROP SCHEMA " + schema + " CASCADE"); err != nil {
+			t.Errorf("drop isolated PostgreSQL schema %s: %v", schema, err)
+		}
+		if err := admin.Close(); err != nil {
+			t.Errorf("close PostgreSQL admin connection: %v", err)
+		}
 	})
 
 	query := parsed.Query()
@@ -196,7 +204,9 @@ func TestSpikeReportPostgresQueries(t *testing.T) {
 			t.Fatal("could not seed isolated PostgreSQL schema")
 		}
 	}
-	db.Close()
+	if err := db.Close(); err != nil {
+		t.Fatalf("close isolated PostgreSQL test connection: %v", err)
+	}
 
 	binary := buildSpikeReport(t)
 	stdout, stderr, err := runSpikeReport(binary, []string{"-days=1", "-baseline-days=30", "-format=json"}, map[string]string{

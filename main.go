@@ -45,7 +45,7 @@ func resolveDBDriver(flagDriver, envDriver string, flagWasSet bool) string {
 	case "", "sqlite":
 		return "sqlite"
 	default:
-		logging.Logger.Warn("Unknown database driver %q, using SQLite", driver)
+		logging.Logger.Warn("Unknown database driver, using SQLite")
 		return "sqlite"
 	}
 }
