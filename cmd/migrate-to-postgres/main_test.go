@@ -532,3 +532,101 @@ func TestMigrateSuccessDoesNotPrintCredentials(t *testing.T) {
 		t.Errorf("stdout lost the target host: %q", stdout)
 	}
 }
+
+// brokenSQLiteSource creates a SQLite file whose readings table lacks the
+// "unit" column: COUNT(*) works but the row query fails. That is a read failure
+// that happens AFTER the PostgreSQL transaction already truncated the target.
+func brokenSQLiteSource(t *testing.T) string {
+	t.Helper()
+	path := t.TempDir() + "/broken.db"
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`CREATE TABLE readings (id INTEGER PRIMARY KEY, sensor TEXT, temp_c REAL, metric_type TEXT, created_at TEXT);
+		INSERT INTO readings (sensor, temp_c, metric_type, created_at) VALUES ('s', 1, 'temperature', '2024-03-01 10:00:00')`); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestMigrateSQLiteQueryFailureAfterTruncateKeepsTarget(t *testing.T) {
+	pg := newPGTarget(t) // skips when MIGRATE_TEST_POSTGRES_URL is unset
+	before := sampleReadings(3)
+	pg.seed(t, before)
+
+	code, stdout, stderr := runMigration(brokenSQLiteSource(t), pg.DSN)
+	if code == 0 {
+		t.Fatalf("exit 0, want failure; stdout=%q", stdout)
+	}
+	if strings.Contains(stdout, "Migration committed") {
+		t.Errorf("success reported on failure: %q", stdout)
+	}
+	if !strings.Contains(stderr, "query SQLite") || !strings.Contains(stderr, "rolled back") {
+		t.Errorf("stderr should name the SQLite query failure and the rollback: %q", stderr)
+	}
+	assertTargetUntouched(t, pg, before)
+}
+
+// The "left as they were" claim is only true once a PostgreSQL transaction was
+// opened and rolled back. Failures before that never touched the target, and
+// the message must say exactly that. No PostgreSQL server is needed here.
+func TestMigrateFailureMessageMatchesWhatHappened(t *testing.T) {
+	const unreachable = "postgres://u:p@127.0.0.1:1/db?sslmode=disable&connect_timeout=2"
+	tests := []struct {
+		name   string
+		source func(t *testing.T) string
+	}{
+		{"source cannot be read", func(t *testing.T) string {
+			p := t.TempDir() + "/empty.db" // valid SQLite file without a readings table
+			db, err := sql.Open("sqlite", p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			if _, err := db.Exec("CREATE TABLE other (x INTEGER)"); err != nil {
+				t.Fatal(err)
+			}
+			return p
+		}},
+		{"target unreachable", func(t *testing.T) string { return newSQLiteSource(t, sampleReadings(2)) }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			code, _, stderr := runMigration(tt.source(t), unreachable)
+			if code != 1 {
+				t.Fatalf("exit code = %d, want 1; stderr=%q", code, stderr)
+			}
+			if !strings.Contains(stderr, "not changed") {
+				t.Errorf("stderr should say the target was not changed: %q", stderr)
+			}
+			for _, bad := range []string{"left as they were", "rolled back", "UNCERTAIN"} {
+				if strings.Contains(stderr, bad) {
+					t.Errorf("stderr must not claim %q here: %q", bad, stderr)
+				}
+			}
+		})
+	}
+}
+
+func TestRowsPerSecond(t *testing.T) {
+	tests := []struct {
+		name    string
+		copied  int64
+		elapsed time.Duration
+		want    float64
+	}{
+		{"normal", 100, 2 * time.Second, 50},
+		{"zero rows", 0, time.Second, 0},
+		{"zero rows zero time (NaN)", 0, 0, 0},
+		{"rows but zero time (+Inf)", 10, 0, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := rowsPerSecond(tt.copied, tt.elapsed); got != tt.want {
+				t.Errorf("rowsPerSecond(%d, %v) = %v, want %v", tt.copied, tt.elapsed, got, tt.want)
+			}
+		})
+	}
+}
