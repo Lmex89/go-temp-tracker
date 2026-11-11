@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"regexp"
 	"sensors-temp/internal/timeutil"
 	"time"
 )
@@ -15,20 +16,35 @@ import (
 // Package-level variables are like Python module globals -- use them sparingly.
 var dbDriver string
 
+var (
+	postgresURLPattern        = regexp.MustCompile(`(?i)postgres(?:ql)?://[^\s"'<>]+`)
+	postgresCredentialPattern = regexp.MustCompile(`(?i)\b(user|password|passfile)\s*=\s*('[^']*'|"[^"]*"|[^\s]+)`)
+	postgresUserErrorPattern  = regexp.MustCompile(`(?i)(\bfor user\s+)("[^"]*"|'[^']*'|[^\s]+)`)
+)
+
 // NOTE: an empty driver means postgres in spike-report (original behavior), unlike
 // the service where "" means sqlite; this matches store.Open.
 // setDBDriver records the selected driver so query functions can emit the right
-// SQL dialect. In Python you'd set a module-level constant.
-func setDBDriver(driver string) {
+// SQL dialect and returns the same driver for database opening. In Python you'd
+// set a module-level constant.
+func setDBDriver(driver string) string {
 	switch driver {
 	case "postgres", "":
 		dbDriver = "postgres"
 	case "sqlite":
 		dbDriver = "sqlite"
 	default:
-		logger.Warn("unknown driver %q, falling back to postgres", driver)
+		logger.Warn("unknown database driver; falling back to postgres")
 		dbDriver = "postgres"
 	}
+	return dbDriver
+}
+
+// Driver errors may include the connection details, so redact them but keep the cause.
+func safeDatabaseError(err error) string {
+	message := postgresURLPattern.ReplaceAllString(err.Error(), "PostgreSQL connection details redacted")
+	message = postgresCredentialPattern.ReplaceAllString(message, "$1=<redacted>")
+	return postgresUserErrorPattern.ReplaceAllString(message, "$1<redacted>")
 }
 
 // formatDBTime formats a time.Time for database comparisons.

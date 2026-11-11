@@ -24,8 +24,8 @@ func main() {
 	days := flag.Int("days", 7, "Report window: look for spikes in the last N days")
 	baselineDays := flag.Int("baseline-days", 30, "Baseline window: calculate per-sensor average over the last N days")
 	deviation := flag.Float64("deviation", 10.0, "Spike threshold: degrees Celsius above the sensor's baseline average")
-	dbDriver := flag.String("driver", os.Getenv("DB_DRIVER"), "Database driver: sqlite or postgres (also env DB_DRIVER)")
-	dbPath := flag.String("db", "", "SQLite database path, or Postgres connection string/DATABASE_URL (defaults: temps.db for sqlite, env DATABASE_URL or docker-compose DSN for postgres)")
+	dbDriver := flag.String("driver", os.Getenv("DB_DRIVER"), "Database driver: sqlite or postgres (defaults to postgres; unknown values warn and use postgres; flag overrides DB_DRIVER)")
+	dbPath := flag.String("db", "", "SQLite database path or PostgreSQL connection string (defaults: temps.db for SQLite; PostgreSQL uses -db, DATABASE_URL, then docker-compose DSN)")
 	format := flag.String("format", "table", "Output format: table, json, csv")
 	outputPath := flag.String("output", "-", "Output file path (- for stdout)")
 	verbose := flag.Bool("verbose", false, "Enable debug logging (also via LOG_LEVEL=DEBUG)")
@@ -40,27 +40,30 @@ func main() {
 	}
 	logger = logging.New(os.Stderr, logLevel)
 
-	setDBDriver(*dbDriver)
+	effectiveDriver := setDBDriver(*dbDriver)
 
-	logger.Info("spike-report starting (days=%d, baseline=%d, deviation=%.1f, driver=%s, db=%s, format=%s)",
-		*days, *baselineDays, *deviation, *dbDriver, *dbPath, *format)
+	logger.Info("spike-report starting (days=%d, baseline=%d, deviation=%.1f, effective_driver=%s, format=%s)",
+		*days, *baselineDays, *deviation, effectiveDriver, *format)
 
 	// Open the database. sql.Open returns a *sql.DB which is a connection pool,
 	// not a single connection -- like Python's connection pool.
-	db, err := store.Open(*dbDriver, *dbPath)
+	db, err := store.Open(effectiveDriver, *dbPath)
 	if err != nil {
-		logger.Error("failed to open database: %v", err)
-		fmt.Fprintf(os.Stderr, "Failed to open database: %v\n", err)
+		safeErr := safeDatabaseError(err)
+		logger.Error("failed to open %s database: %s", effectiveDriver, safeErr)
+		fmt.Fprintf(os.Stderr, "Failed to open %s database: %s\n", effectiveDriver, safeErr)
 		os.Exit(1)
 	}
 	defer db.Close() // Ensure cleanup when main() returns -- like Python's `with db:`.
+	logger.Info("database handle opened for driver=%s (connection not yet verified)", effectiveDriver)
 
 	if err := db.Ping(); err != nil {
-		logger.Error("failed to connect to database: %v", err)
-		fmt.Fprintf(os.Stderr, "Failed to connect to database: %v\n", err)
+		safeErr := safeDatabaseError(err)
+		logger.Error("failed to connect to %s database: %s", effectiveDriver, safeErr)
+		fmt.Fprintf(os.Stderr, "Failed to connect to %s database: %s\n", effectiveDriver, safeErr)
 		os.Exit(1)
 	}
-	logger.Debug("database connection established: driver=%s, spec=%s", *dbDriver, *dbPath)
+	logger.Info("database connection verified: driver=%s", effectiveDriver)
 
 	// Load the America/Merida timezone for display -- like pytz.timezone("America/Merida").
 	// If the system doesn't have this timezone, fall back to UTC.
