@@ -67,15 +67,20 @@ func handleTemps(st store.Store, db *sql.DB) http.HandlerFunc {
 				http.Error(w, "from must be before to", http.StatusBadRequest)
 				return
 			}
+			window := store.TimeWindow{From: fromTime, To: toTime}
+			if err := window.Validate(); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
 
 			logging.Logger.Debug("Querying range UTC from=%s to=%s", fromTime.UTC().Format(timeutil.DBLayout), toTime.UTC().Format(timeutil.DBLayout))
 			readings, err = st.Query(
 				db,
-				store.TimeWindow{From: fromTime, To: toTime},
+				window,
 				"temperature",
 			)
 			if err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
+				queryError(w, err)
 				return
 			}
 		} else {
@@ -91,7 +96,7 @@ func handleTemps(st store.Store, db *sql.DB) http.HandlerFunc {
 			var err error
 			readings, err = st.Query(db, store.TimeWindow{Hours: hours}, "temperature")
 			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
+				queryError(w, err)
 				return
 			}
 		}
@@ -112,7 +117,7 @@ func handleCurrent(st store.Store, db *sql.DB) http.HandlerFunc {
 
 		readings, err := st.QueryLatest(db, "temperature")
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			queryError(w, err)
 			return
 		}
 
@@ -159,14 +164,19 @@ func handleMetricByType(st store.Store, db *sql.DB, metricType string) http.Hand
 				http.Error(w, "from must be before to", http.StatusBadRequest)
 				return
 			}
+			window := store.TimeWindow{From: fromTime, To: toTime}
+			if err := window.Validate(); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
 
 			readings, err = st.Query(
 				db,
-				store.TimeWindow{From: fromTime, To: toTime},
+				window,
 				metricType,
 			)
 			if err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
+				queryError(w, err)
 				return
 			}
 		} else {
@@ -179,7 +189,7 @@ func handleMetricByType(st store.Store, db *sql.DB, metricType string) http.Hand
 			var err error
 			readings, err = st.Query(db, store.TimeWindow{Hours: hours}, metricType)
 			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
+				queryError(w, err)
 				return
 			}
 		}
@@ -235,7 +245,7 @@ func handleCurrentByType(st store.Store, db *sql.DB, metricType string) http.Han
 	return func(w http.ResponseWriter, r *http.Request) {
 		readings, err := st.QueryLatest(db, metricType)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			queryError(w, err)
 			return
 		}
 
@@ -244,4 +254,9 @@ func handleCurrentByType(st store.Store, db *sql.DB, metricType string) http.Han
 			logging.Logger.Error("Failed to encode JSON response: %v", err)
 		}
 	}
+}
+
+func queryError(w http.ResponseWriter, err error) {
+	logging.Logger.Error("Store query failed: %v", err)
+	http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 }

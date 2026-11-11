@@ -10,6 +10,34 @@ import (
 	"time"
 )
 
+type queryCountingStore struct {
+	store.Store
+	queries int
+}
+
+func (s *queryCountingStore) Query(_ *sql.DB, _ store.TimeWindow, _ string) ([]store.Reading, error) {
+	s.queries++
+	return nil, nil
+}
+
+func TestRegisteredRoutesRejectZeroTimeWindow(t *testing.T) {
+	st := &queryCountingStore{}
+	mux := http.NewServeMux()
+	Register(mux, st, nil)
+	for _, path := range []string{"/api/temps", "/api/cpu", "/api/memory", "/api/swap", "/api/disk", "/api/load"} {
+		t.Run(path, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path+"?from=0001-01-01T00:00:00Z&to=2000-01-01T00:00:00Z", nil))
+			if rec.Code != http.StatusBadRequest {
+				t.Errorf("status = %d, want 400", rec.Code)
+			}
+			if st.queries != 0 {
+				t.Errorf("store queried %d times, want 0", st.queries)
+			}
+		})
+	}
+}
+
 // TestCPUViewFilter tests the /api/cpu endpoint with the view parameter.
 // This is a table-driven integration test that verifies the handler filters
 // CPU readings correctly based on the view query parameter.

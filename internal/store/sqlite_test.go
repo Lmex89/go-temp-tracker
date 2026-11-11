@@ -50,8 +50,10 @@ func TestSQLiteQuery(t *testing.T) {
 		{"hours all metrics", TimeWindow{Hours: 1}, "", []string{"cpu/total", "temp/a"}},
 		{"hours temperature", TimeWindow{Hours: 1}, "temperature", []string{"temp/a"}},
 		{"hours cpu", TimeWindow{Hours: 1}, "cpu", []string{"cpu/total"}},
+		{"hours empty", TimeWindow{Hours: 1}, "disk", nil},
 		{"range all metrics", rangeWin, "", []string{"cpu/r1", "temp/r1"}},
 		{"range temperature", rangeWin, "temperature", []string{"temp/r1"}},
+		{"range empty", rangeWin, "disk", nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -240,6 +242,52 @@ func checkInvalidInputs(t *testing.T, s Store, db *sql.DB) {
 func TestSQLiteInvalidInputs(t *testing.T) {
 	store, db := newTempSQLite(t)
 	checkInvalidInputs(t, store, db)
+}
+
+func TestSQLiteQueryExecutionErrors(t *testing.T) {
+	st, db := newTempSQLite(t)
+	if _, err := db.Exec("DROP TABLE readings"); err != nil {
+		t.Fatal(err)
+	}
+	var s Store = st
+	for _, query := range []struct {
+		name string
+		run  func() ([]Reading, error)
+	}{
+		{"historical", func() ([]Reading, error) { return s.Query(db, TimeWindow{Hours: 1}, "temperature") }},
+		{"latest", func() ([]Reading, error) { return s.QueryLatest(db, "temperature") }},
+	} {
+		t.Run(query.name, func(t *testing.T) {
+			got, err := query.run()
+			if err == nil || len(got) != 0 {
+				t.Fatalf("got readings %v, error %v; want error and no readings", got, err)
+			}
+		})
+	}
+}
+
+func TestSQLiteQueryScanErrorsDiscardReadings(t *testing.T) {
+	st, db := newTempSQLite(t)
+	if _, err := db.Exec(`INSERT INTO readings (sensor, temp_c, metric_type, unit, created_at) VALUES
+		('a-good', 42, 'temperature', 'C', datetime('now', '-1 minute')),
+		('b-bad', 'not-a-number', 'temperature', 'C', datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
+	var s Store = st
+	for _, query := range []struct {
+		name string
+		run  func() ([]Reading, error)
+	}{
+		{"historical", func() ([]Reading, error) { return s.Query(db, TimeWindow{Hours: 1}, "temperature") }},
+		{"latest", func() ([]Reading, error) { return s.QueryLatest(db, "temperature") }},
+	} {
+		t.Run(query.name, func(t *testing.T) {
+			got, err := query.run()
+			if err == nil || len(got) != 0 {
+				t.Fatalf("got readings %v, error %v; want error and no partial readings", got, err)
+			}
+		})
+	}
 }
 
 // TestSQLiteMigratesLegacySchema builds a file with the OLD readings table
