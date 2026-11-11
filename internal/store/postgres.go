@@ -76,12 +76,12 @@ func (s *PostgresStore) InitDB() *sql.DB {
 	// sql.Open only validates the DSN format; the first real connection happens on Ping().
 	db, err := sql.Open("pgx", s.dsn)
 	if err != nil {
-		logging.Logger.Error("Failed to open PostgreSQL database: %v", err)
+		logging.Logger.Error("Failed to open PostgreSQL database")
 		return nil
 	}
 
 	if err := db.Ping(); err != nil {
-		logging.Logger.Error("Failed to ping PostgreSQL database: %v", err)
+		logging.Logger.Error("Failed to connect to PostgreSQL database; check host, port, database, and credentials")
 		return nil
 	}
 
