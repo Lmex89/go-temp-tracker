@@ -153,11 +153,11 @@ func (s *PostgresStore) Query(db *sql.DB, window TimeWindow, metricType string) 
 	)
 	if err != nil {
 		logging.Logger.Error("Query failed: %v", err)
-		return nil, nil
+		return nil, err
 	}
 	defer rows.Close()
 
-	return s.scanRows(rows, "Query", metricType, window.Hours), nil
+	return s.scanRows(rows, "Query")
 }
 
 // QueryLatest returns the newest reading per sensor for one metric type.
@@ -190,11 +190,11 @@ func (s *PostgresStore) QueryLatest(db *sql.DB, metricType string) ([]Reading, e
 	)
 	if err != nil {
 		logging.Logger.Error("QueryLatest failed: %v", err)
-		return nil, nil
+		return nil, err
 	}
 	defer rows.Close()
 
-	return s.scanRows(rows, "QueryLatest", metricType), nil
+	return s.scanRows(rows, "QueryLatest")
 }
 
 // Prune removes readings older than N hours. AllMetrics prunes every
@@ -224,14 +224,13 @@ func (s *PostgresStore) Prune(db *sql.DB, metricType string, hours int) {
 }
 
 // scanRows reads rows into Reading values, converting created_at to local time.
-// The variadic "context" args are only used for logging (query name, parameters).
-func (s *PostgresStore) scanRows(rows *sql.Rows, queryName string, context ...interface{}) []Reading {
+func (s *PostgresStore) scanRows(rows *sql.Rows, queryName string) ([]Reading, error) {
 	var readings []Reading
 	for rows.Next() {
 		var r Reading
 		if err := rows.Scan(&r.Sensor, &r.TempC, &r.MetricType, &r.Unit, &r.CreatedAt); err != nil {
 			logging.Logger.Error("Failed to scan row: %v", err)
-			continue
+			return nil, err
 		}
 		r.CreatedAt = s.converter.ToLocal(r.CreatedAt)
 		readings = append(readings, r)
@@ -239,8 +238,9 @@ func (s *PostgresStore) scanRows(rows *sql.Rows, queryName string, context ...in
 
 	if err := rows.Err(); err != nil {
 		logging.Logger.Error("Row iteration error: %v", err)
+		return nil, err
 	}
 
 	logging.Logger.Info("Postgres %s returned %d reading(s)", queryName, len(readings))
-	return readings
+	return readings, nil
 }
