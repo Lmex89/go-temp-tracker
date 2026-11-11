@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"sensors-temp/internal/store"
 	"sensors-temp/internal/timeutil"
@@ -57,98 +59,133 @@ func (s *sqliteCopySource) Err() error {
 	return s.err
 }
 
-// fail prints a plain message to stderr (no timestamp, no level, no LOG_LEVEL
-// filtering, as the original tool did) and exits with code 1.
-// Python analogy: print(msg, file=sys.stderr); sys.exit(1).
-func fail(format string, args ...interface{}) {
-	fmt.Fprintf(os.Stderr, format+"\n", args...)
-	os.Exit(1)
+// main only wires os.Args/os.Stdout/os.Stderr into run and turns its result
+// into a process exit code. Python analogy: sys.exit(main(sys.argv[1:])).
+// Keeping the logic in run() lets tests call the command in-process with
+// their own buffers instead of spawning a subprocess.
+func main() {
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
 
-func main() {
-	sqlitePath := flag.String("sqlite", store.DefaultSQLitePath, "Source SQLite database file")
-	postgresURL := flag.String("postgres", "", "Target PostgreSQL URL (defaults to DATABASE_URL, then docker-compose defaults)")
-	flag.Parse()
+// errCommitUncertain marks a COMMIT that failed in a way that does not tell us
+// whether PostgreSQL applied it (for example the connection dropped). The
+// operator must inspect the target before retrying.
+var errCommitUncertain = errors.New("commit result UNCERTAIN")
+
+// run executes the migration and returns the process exit code
+// (0 = success, 1 = failure, 2 = bad command line).
+func run(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("migrate-to-postgres", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	sqlitePath := fs.String("sqlite", store.DefaultSQLitePath, "Source SQLite database file")
+	postgresURL := fs.String("postgres", "", "Target PostgreSQL URL (defaults to DATABASE_URL, then docker-compose defaults)")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
 
 	// Flag, then DATABASE_URL, then docker-compose default (shared with the service).
 	*postgresURL = store.ResolvePostgresDSN(*postgresURL)
 
-	fmt.Printf("Migrating %s -> %s\n", *sqlitePath, *postgresURL)
+	fmt.Fprintf(stdout, "Migrating %s -> %s\n", *sqlitePath, *postgresURL)
 
+	if err := migrate(context.Background(), stdout, *sqlitePath, *postgresURL); err != nil {
+		fmt.Fprintln(stderr, err)
+		if errors.Is(err, errCommitUncertain) {
+			fmt.Fprintln(stderr, "The commit may or may not have been applied: inspect the target readings table before retrying.")
+		} else {
+			fmt.Fprintln(stderr, "Migration FAILED before commit: the target readings and identity sequence were left as they were.")
+		}
+		return 1
+	}
+	return 0
+}
+
+// migrate replaces the target readings with a consistent snapshot of the
+// SQLite readings. Everything that changes PostgreSQL (schema, truncate, copy,
+// verification) runs in ONE transaction, so any error before COMMIT rolls the
+// target back. Python analogy: `with conn:` around the whole job -- commit on
+// success, rollback on exception.
+func migrate(ctx context.Context, stdout io.Writer, sqlitePath, postgresURL string) error {
 	// Open SQLite -- same driver the main app uses.
-	sqliteDB, err := store.Open("sqlite", *sqlitePath)
+	sqliteDB, err := store.Open("sqlite", sqlitePath)
 	if err != nil {
-		fail("Failed to open SQLite: %v", err)
+		return fmt.Errorf("Failed to open SQLite: %w", err)
 	}
 	defer sqliteDB.Close()
 
 	if err := sqliteDB.Ping(); err != nil {
-		fail("Failed to connect to SQLite: %v", err)
+		return fmt.Errorf("Failed to connect to SQLite: %w", err)
 	}
 
-	// Count source rows first so the user knows what to expect.
-	var total int64
-	if err := sqliteDB.QueryRow("SELECT COUNT(*) FROM readings").Scan(&total); err != nil {
-		fail("Failed to count SQLite rows: %v", err)
-	}
-	fmt.Printf("Source rows: %d\n", total)
-
-	// Connect to Postgres using the native pgx API (not database/sql) so we can
-	// use CopyFrom for high-throughput bulk loading.
-	ctx := context.Background()
-	pgConn, err := pgx.Connect(ctx, *postgresURL)
+	// One read transaction = one snapshot (the DB runs in WAL mode). The count
+	// and the row stream below both read from it, so they always agree even if
+	// temp-tracker keeps writing. Writes made after the first read are invisible.
+	snapshot, err := sqliteDB.BeginTx(ctx, nil)
 	if err != nil {
-		fail("Failed to connect to PostgreSQL: %v", err)
+		return fmt.Errorf("Failed to start SQLite snapshot: %w", err)
+	}
+	defer snapshot.Rollback() // read-only: nothing to commit
+
+	var total int64
+	if err := snapshot.QueryRow("SELECT COUNT(*) FROM readings").Scan(&total); err != nil {
+		return fmt.Errorf("Failed to count SQLite rows: %w", err)
+	}
+	fmt.Fprintf(stdout, "Source rows (snapshot): %d\n", total)
+	fmt.Fprintln(stdout, "Rows written to SQLite after this snapshot are not included; to be exact, stop temp-tracker and re-run.")
+
+	// Native pgx API (not database/sql) so we can use CopyFrom for bulk loading.
+	pgConn, err := pgx.Connect(ctx, postgresURL)
+	if err != nil {
+		return fmt.Errorf("Failed to connect to PostgreSQL: %w", err)
 	}
 	defer pgConn.Close(ctx)
 
-	// Ensure the target schema exists.
-	if _, err := pgConn.Exec(ctx, store.PostgresSchema); err != nil {
-		fail("Failed to create Postgres schema: %v", err)
-	}
-
-	// Truncate the target table so the migration is idempotent.
-	// In a production move you would back up Postgres first; here we assume the
-	// Postgres container is fresh or the user has already backed it up.
-	if _, err := pgConn.Exec(ctx, "TRUNCATE TABLE readings RESTART IDENTITY"); err != nil {
-		fail("Failed to truncate Postgres readings: %v", err)
-	}
-	fmt.Println("Truncated target readings table")
-
-	// Stream rows from SQLite. Order by id keeps the migration deterministic.
-	rows, err := sqliteDB.Query("SELECT sensor, temp_c, metric_type, unit, created_at FROM readings ORDER BY id")
+	tx, err := pgConn.Begin(ctx)
 	if err != nil {
-		fail("Failed to query SQLite: %v", err)
+		return fmt.Errorf("Failed to start PostgreSQL transaction: %w", err)
+	}
+	// After a successful Commit this is a harmless no-op (pgx.ErrTxClosed).
+	defer tx.Rollback(ctx)
+
+	// Schema DDL is transactional in PostgreSQL, so it is undone on rollback too.
+	if _, err := tx.Exec(ctx, store.PostgresSchema); err != nil {
+		return fmt.Errorf("Failed to create Postgres schema: %w", err)
+	}
+
+	// Destructive by design (a full replace), but only once the commit succeeds.
+	// Back up PostgreSQL first: this is not a substitute for a backup.
+	if _, err := tx.Exec(ctx, "TRUNCATE TABLE readings RESTART IDENTITY"); err != nil {
+		return fmt.Errorf("Failed to truncate Postgres readings: %w", err)
+	}
+
+	// Stream rows from the snapshot. Order by id keeps the migration deterministic.
+	rows, err := snapshot.Query("SELECT sensor, temp_c, metric_type, unit, created_at FROM readings ORDER BY id")
+	if err != nil {
+		return fmt.Errorf("Failed to query SQLite: %w", err)
 	}
 	defer rows.Close()
 
-	src := &sqliteCopySource{rows: rows}
-
+	fmt.Fprintln(stdout, "Copy started (pending)")
 	start := time.Now()
-	copied, err := pgConn.CopyFrom(ctx, pgx.Identifier{"readings"},
-		[]string{"sensor", "temp_c", "metric_type", "unit", "created_at"}, src)
+	copied, err := tx.CopyFrom(ctx, pgx.Identifier{"readings"},
+		[]string{"sensor", "temp_c", "metric_type", "unit", "created_at"}, &sqliteCopySource{rows: rows})
 	if err != nil {
-		fail("Failed to copy rows to PostgreSQL: %v", err)
+		return fmt.Errorf("Failed to copy rows to PostgreSQL: %w", err)
 	}
-
 	elapsed := time.Since(start)
-	fmt.Printf("Copied %d rows in %v (%.0f rows/sec)\n", copied, elapsed, float64(copied)/elapsed.Seconds())
+	fmt.Fprintf(stdout, "Copied %d rows in %v (%.0f rows/sec), pending commit\n", copied, elapsed, float64(copied)/elapsed.Seconds())
 
-	// Verify counts match.
 	var pgCount int64
-	if err := pgConn.QueryRow(ctx, "SELECT COUNT(*) FROM readings").Scan(&pgCount); err != nil {
-		fail("Failed to count Postgres rows: %v", err)
+	if err := tx.QueryRow(ctx, "SELECT COUNT(*) FROM readings").Scan(&pgCount); err != nil {
+		return fmt.Errorf("Failed to count Postgres rows: %w", err)
 	}
-	fmt.Printf("Postgres row count: %d\n", pgCount)
+	if copied != total || pgCount != total {
+		return fmt.Errorf("Verification failed, count mismatch: snapshot=%d copied=%d target=%d", total, copied, pgCount)
+	}
 
-	if pgCount != total {
-		// The source SQLite database may still be receiving writes from a running
-		// temp-tracker service. If so, the initial count and the copied count will
-		// differ by the number of rows inserted during the migration. This is not
-		// a corruption error; report it so the user can decide whether to re-run.
-		fmt.Printf("Note: SQLite was modified during migration. SQLite count at start: %d, copied to Postgres: %d\n", total, pgCount)
-		fmt.Println("Migration completed. If you want the very latest rows, stop temp-tracker and re-run the migration.")
-		return
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("%w: %v", errCommitUncertain, err)
 	}
-	fmt.Println("Migration complete and counts match.")
+	fmt.Fprintf(stdout, "Migration committed: target readings replaced with %d rows.\n", total)
+	return nil
 }
