@@ -33,47 +33,42 @@ func getEnvInt(key string, defaultVal int) int {
 }
 
 // resolveDBDriver applies the CLI-over-environment precedence and returns one
-// canonical backend. Like Python's args.driver if set else os.getenv(...).
+// canonical database engine for the whole run. flagWasSet distinguishes
+// "-db-driver=" (explicit empty, still wins) from "flag not given".
+// Python analogy: args.driver if args.driver is not None else os.getenv(...).
 func resolveDBDriver(flagDriver, envDriver string, flagWasSet bool) string {
-	driver := envDriver
+	requested := envDriver
 	if flagWasSet {
-		driver = flagDriver
+		requested = flagDriver
 	}
-	switch driver {
-	case "postgres":
-		return "postgres"
-	case "", "sqlite":
-		return "sqlite"
-	default:
+	driver, known := store.ResolveDriver(requested, store.DriverSQLite)
+	if !known {
 		logging.Logger.Warn("Unknown database driver, using SQLite")
-		return "sqlite"
 	}
+	return driver
 }
 
-// newStore builds the backend selected by resolveDBDriver. Python analogy:
-// an if/elif factory that uses an already-resolved configuration value.
-func newStore(driver string, sqlitePath string) store.Store {
-	switch driver {
-	case "postgres":
-		logging.Logger.Info("Using PostgreSQL database")
-		return store.NewPostgresStore()
-	case "sqlite":
-		logging.Logger.Info("Using SQLite database")
-		return store.NewSQLiteStore(sqlitePath)
-	default:
-		return nil
-	}
-}
-
-// openDatabase opens and configures the effective backend before polling starts.
-// It preserves SQLite's single connection without changing PostgreSQL's pool.
+// openDatabase builds the Store for the already-resolved driver, opens it and
+// tunes the pool before polling starts. Like Python's
+// store = PostgresStore() if driver == "postgres" else SQLiteStore(path).
+// It returns a nil *sql.DB when initialization fails (already logged).
 func openDatabase(driver, sqlitePath string) (store.Store, *sql.DB) {
-	st := newStore(driver, sqlitePath)
-	if st == nil {
-		return nil, nil
+	var st store.Store
+	if driver == store.DriverPostgres {
+		logging.Logger.Info("Using PostgreSQL database")
+		st = store.NewPostgresStore()
+	} else {
+		logging.Logger.Info("Using SQLite database")
+		st = store.NewSQLiteStore(sqlitePath)
 	}
 	db := st.InitDB()
-	if db != nil && driver == "sqlite" {
+
+	// SQLite only allows one writer at a time (even in WAL mode). A single connection
+	// makes Go's database/sql queue all operations, eliminating lock contention --
+	// like sharing one sqlite3.Connection behind a lock in Python.
+	// PostgreSQL is a real server and can handle multiple concurrent connections, so
+	// leave its pool at the default size.
+	if db != nil && driver == store.DriverSQLite {
 		db.SetMaxOpenConns(1)
 		db.SetMaxIdleConns(1)
 	}
@@ -98,7 +93,7 @@ func main() {
 	logging.Logger.Info("Starting System Monitor")
 	logging.Logger.Debug("Config: port=%d, interval=%ds, retain=%dh", *port, *interval, *retain)
 
-	// Resolve the backend once before opening it. DATABASE_URL configures PostgreSQL
+	// Resolve the database engine once before opening it. DATABASE_URL configures PostgreSQL
 	// (defaults to the project's docker-compose.yml settings).
 	effectiveDBDriver := resolveDBDriver(*dbDriver, os.Getenv("DB_DRIVER"), dbDriverFlagSet)
 	reader := sensor.NewLinuxThermalSensor()

@@ -128,17 +128,29 @@ func TestSpikeReportDatabaseSelection(t *testing.T) {
 			t.Fatalf("unexpected SQLite database was created: %v", statErr)
 		}
 	})
-}
 
-func TestSafeDatabaseErrorRedactsConnectionDetails(t *testing.T) {
-	err := fmt.Errorf("connection refused for postgres://report:secret@db.example:5432/readings?sslmode=require; user=report password=secret; password authentication failed for user %q", "report")
-	got := store.SafeDatabaseError(err)
-	if !strings.Contains(got, "connection refused") {
-		t.Fatalf("underlying error detail was lost: %q", got)
-	}
-	if strings.Contains(got, "postgres://") || strings.Contains(got, "secret") || strings.Contains(got, "report") || strings.Contains(got, "user=report") {
-		t.Fatalf("connection credentials leaked: %q", got)
-	}
+	t.Run("environment selects PostgreSQL", func(t *testing.T) {
+		dsn := "postgres://report:secret@127.0.0.1:1/report"
+		_, stderr, err := runSpikeReport(binary, nil, map[string]string{"DB_DRIVER": "postgres", "DATABASE_URL": dsn})
+		if err == nil {
+			t.Fatal("expected the unreachable PostgreSQL connection to fail")
+		}
+		assertPostgresFailureIsSafe(t, stderr)
+	})
+
+	t.Run("unknown environment value warns and uses PostgreSQL without creating SQLite", func(t *testing.T) {
+		unexpectedSQLite := filepath.Join(t.TempDir(), "must-not-exist.sqlite")
+		_, stderr, err := runSpikeReport(binary, []string{"-db", unexpectedSQLite}, map[string]string{"DB_DRIVER": "mysql"})
+		if err == nil {
+			t.Fatal("expected the PostgreSQL connection to fail")
+		}
+		if !strings.Contains(stderr, "unknown database driver; falling back to postgres") || !strings.Contains(stderr, "driver=postgres") {
+			t.Fatalf("expected warning and PostgreSQL fallback:\n%s", stderr)
+		}
+		if _, statErr := os.Stat(unexpectedSQLite); !os.IsNotExist(statErr) {
+			t.Fatalf("unexpected SQLite database was created: %v", statErr)
+		}
+	})
 }
 
 func TestSpikeReportPostgresQueries(t *testing.T) {

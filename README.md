@@ -178,19 +178,21 @@ Backups are saved in `backups/` (gitignored). Cron logs go to `backups/cron.log`
 | `-port`     | `8080`   | HTTP server port                       |
 | `-interval` | `60`     | Temperature polling interval in seconds |
 | `-retain`   | `8760`   | Delete ALL readings older than N hours (~12 months) |
-| `-db-driver`| `sqlite` | Motor de base de datos: `sqlite` o `postgres`; prevalece sobre `DB_DRIVER` |
+| `-db-driver`| `sqlite` | Database engine: `sqlite` or `postgres`; overrides `DB_DRIVER` |
 
 ## Environment variables
 
-`-db-driver` prevalece sobre `DB_DRIVER`, incluso cuando se establece explícitamente como valor vacío. Si el driver no está establecido o está vacío, se selecciona SQLite; un driver desconocido genera una advertencia y usa SQLite como alternativa. `DATABASE_URL` se usa solo para PostgreSQL, con la cadena de conexión de Docker Compose como valor predeterminado. El monitor registra el motor seleccionado, nunca la cadena de conexión.
+`-db-driver` overrides `DB_DRIVER`, even when explicitly set to an empty value. An unset or empty driver selects SQLite; an unknown driver logs a warning and falls back to SQLite. `DATABASE_URL` is only used for PostgreSQL and defaults to the Docker Compose DSN. The monitor logs the selected engine, never the connection string.
+
+`spike-report` keeps its own defaults: `-driver` overrides `DB_DRIVER` (also when explicitly empty); an unset, empty or unknown driver selects PostgreSQL (unknown values log a warning), and that same engine is used both to open the database and for every query. It never creates a SQLite file for an unknown driver. PostgreSQL connection: `-db`, then `DATABASE_URL`, then the Docker Compose DSN.
 
 All polling intervals are overridable via environment variables. See `.env.example` for a complete reference.
 
 | Variable              | Default | Description                                      |
 |-----------------------|---------|--------------------------------------------------|
 | `LOG_LEVEL`           | `INFO`  | Log level: `DEBUG`, `INFO`, `WARN`, or `ERROR`   |
-| `DB_DRIVER`           | `sqlite`| Database backend: `sqlite` or `postgres`         |
-| `DATABASE_URL`        | Docker Compose DSN | Cadena de conexión de PostgreSQL cuando el motor efectivo es postgres |
+| `DB_DRIVER`           | `sqlite`| Database engine: `sqlite` or `postgres`          |
+| `DATABASE_URL`        | Docker Compose DSN | PostgreSQL connection string when the effective engine is postgres |
 | `CPU_POLL_INTERVAL`   | `60`    | CPU polling interval in seconds                  |
 | `MEMORY_POLL_INTERVAL`| `60`    | Memory polling interval in seconds               |
 | `SWAP_POLL_INTERVAL`  | `60`    | Swap polling interval in seconds                 |

@@ -30,18 +30,18 @@ func NewSQLiteStore(path string) *SQLiteStore {
 // Also runs schema migration to add metric_type and unit columns if needed.
 // In Python with sqlite3 you'd do: conn = sqlite3.connect(path) then conn.execute(CREATE TABLE...).
 func (s *SQLiteStore) InitDB() *sql.DB {
-	logging.Logger.Info("Initializing SQLite database")
+	logging.Logger.Info("Initializing SQLite database (%s)", s.path)
 
 	// sql.Open opens a database driver -- it doesn't actually connect yet (like Python's sqlite3.connect).
 	db, err := sql.Open("sqlite", s.path)
 	if err != nil {
-		logging.Logger.Error("Failed to open SQLite database: %s", SafeDatabaseError(err, s.path))
+		logging.Logger.Error("Failed to open SQLite database: %v", err)
 		return nil
 	}
 
 	// Ping actually tests the connection -- similar to conn = sqlite3.connect() which connects immediately.
 	if err := db.Ping(); err != nil {
-		logging.Logger.Error("Failed to connect to SQLite database: %s", SafeDatabaseError(err, s.path))
+		logging.Logger.Error("Failed to connect to SQLite database: %v", err)
 		return nil
 	}
 

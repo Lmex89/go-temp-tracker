@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"sensors-temp/internal/store"
 	"sensors-temp/internal/timeutil"
 	"time"
 )
@@ -10,27 +11,24 @@ import (
 // internal/store (store.Open); only the placeholder/time formatting differences
 // between SQLite and PostgreSQL stay here, because the report writes its own SQL.
 
-// dbDriver holds the active backend for this run ("sqlite" or "postgres").
-// It is set by main() from the -driver flag / DB_DRIVER env var.
+// dbDriver holds the effective database engine for this run ("sqlite" or
+// "postgres"). It is set once by resolveDBDriver from the -driver flag /
+// DB_DRIVER env var, and the same value is used to open the database.
 // Package-level variables are like Python module globals -- use them sparingly.
 var dbDriver string
 
-// NOTE: an empty driver means postgres in spike-report (original behavior), unlike
-// the service where "" means sqlite; this matches store.Open.
-// setDBDriver records the selected driver so query functions can emit the right
-// SQL dialect and returns the same driver for database opening. In Python you'd
-// set a module-level constant.
-func setDBDriver(driver string) string {
-	switch driver {
-	case "postgres", "":
-		dbDriver = "postgres"
-	case "sqlite":
-		dbDriver = "sqlite"
-	default:
+// resolveDBDriver turns the requested driver into the effective one, records it
+// so query functions emit the matching SQL dialect, and returns it so main()
+// opens the same engine. Empty or unknown values mean postgres here (original
+// spike-report behavior), unlike the monitor where they mean sqlite.
+// In Python you'd set a module-level constant and return it.
+func resolveDBDriver(requested string) string {
+	driver, known := store.ResolveDriver(requested, store.DriverPostgres)
+	if !known {
 		logger.Warn("unknown database driver; falling back to postgres")
-		dbDriver = "postgres"
 	}
-	return dbDriver
+	dbDriver = driver
+	return driver
 }
 
 // formatDBTime formats a time.Time for database comparisons.
@@ -61,7 +59,7 @@ func parseDBTimestamp(s string) (time.Time, error) {
 // placeholder returns the dialect-specific parameter placeholder for 1-based index.
 // SQLite uses ? for every parameter; PostgreSQL uses $1, $2, etc.
 func placeholder(index int) string {
-	if dbDriver == "postgres" {
+	if dbDriver == store.DriverPostgres {
 		return fmt.Sprintf("$%d", index)
 	}
 	return "?"

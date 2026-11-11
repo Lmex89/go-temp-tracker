@@ -38,3 +38,42 @@ func TestResolvePostgresDSN(t *testing.T) {
 		t.Errorf("default: got %q", got)
 	}
 }
+
+// TestOpenPostgresIsDeferredAndUnknownIsRejected: opening PostgreSQL only
+// builds a pool (no connection until Ping, like a lazy SQLAlchemy engine), and
+// an unknown driver is an error instead of a silent SQLite file.
+func TestOpenPostgresIsDeferredAndUnknownIsRejected(t *testing.T) {
+	db, err := Open(DriverPostgres, "postgres://user:secret@127.0.0.1:1/x?connect_timeout=1")
+	if err != nil {
+		t.Fatalf("Open postgres should defer connecting: %v", err)
+	}
+	defer db.Close()
+	if err := db.Ping(); err == nil {
+		t.Fatal("expected Ping to fail against an unreachable server")
+	}
+	if _, err := Open("mysql", filepath.Join(t.TempDir(), "x.db")); err == nil {
+		t.Fatal("expected an unknown driver to be rejected")
+	}
+}
+
+// TestResolveDriver: canonical names pass through, empty uses the binary's
+// fallback, unknown uses it too but reports known=false so callers warn.
+func TestResolveDriver(t *testing.T) {
+	tests := []struct {
+		requested, fallback, want string
+		known                     bool
+	}{
+		{"sqlite", DriverPostgres, DriverSQLite, true},
+		{"postgres", DriverSQLite, DriverPostgres, true},
+		{"", DriverSQLite, DriverSQLite, true},
+		{"", DriverPostgres, DriverPostgres, true},
+		{"mysql", DriverSQLite, DriverSQLite, false},
+		{"mysql", DriverPostgres, DriverPostgres, false},
+	}
+	for _, tt := range tests {
+		got, known := ResolveDriver(tt.requested, tt.fallback)
+		if got != tt.want || known != tt.known {
+			t.Errorf("ResolveDriver(%q, %q) = (%q, %t), want (%q, %t)", tt.requested, tt.fallback, got, known, tt.want, tt.known)
+		}
+	}
+}

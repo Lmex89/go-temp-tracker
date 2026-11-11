@@ -54,10 +54,7 @@ func TestResolveDBDriver(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			oldLogger := logging.Logger
-			var output bytes.Buffer
-			logging.Logger = logging.New(&output, "INFO")
-			t.Cleanup(func() { logging.Logger = oldLogger })
+			output := captureLogs(t)
 
 			if got := resolveDBDriver(tt.flag, tt.env, tt.flagSet); got != tt.want {
 				t.Fatalf("resolveDBDriver() = %q, want %q", got, tt.want)
@@ -120,6 +117,48 @@ func TestMonitorExecutableUsesCLIAndEnvironmentDriverSelection(t *testing.T) {
 			t.Fatalf("database credentials or DSN leaked:\n%s", output)
 		}
 	})
+
+	t.Run("environment selects PostgreSQL", func(t *testing.T) {
+		dsn := "postgres://monitor:secret@127.0.0.1:1/sensors?connect_timeout=1"
+		output, err := runMonitorExecutable(binary, t.TempDir(), nil, map[string]string{
+			"DB_DRIVER":    "postgres",
+			"DATABASE_URL": dsn,
+		})
+		if err == nil {
+			t.Fatal("expected the controlled PostgreSQL connection to fail")
+		}
+		if !strings.Contains(output, "Using PostgreSQL database") || strings.Contains(output, "secret") {
+			t.Fatalf("expected safe PostgreSQL selection from DB_DRIVER:\n%s", output)
+		}
+	})
+
+	t.Run("explicit empty option overrides environment and selects SQLite", func(t *testing.T) {
+		workDir := t.TempDir()
+		if err := os.Mkdir(filepath.Join(workDir, store.DefaultSQLitePath), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		output, err := runMonitorExecutable(binary, workDir, []string{"-db-driver="}, map[string]string{
+			"DB_DRIVER":    "postgres",
+			"DATABASE_URL": "postgres://monitor:secret@127.0.0.1:1/sensors?connect_timeout=1",
+		})
+		if err == nil {
+			t.Fatal("expected initialization to fail on the temporary SQLite directory")
+		}
+		if !strings.Contains(output, "Using SQLite database") || strings.Contains(output, "Unknown database driver") {
+			t.Fatalf("explicit empty option did not select SQLite silently:\n%s", output)
+		}
+	})
+}
+
+// captureLogs swaps the global logger for a buffer and restores it after the
+// test -- like pytest's caplog fixture.
+func captureLogs(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	oldLogger := logging.Logger
+	var output bytes.Buffer
+	logging.Logger = logging.New(&output, "INFO")
+	t.Cleanup(func() { logging.Logger = oldLogger })
+	return &output
 }
 
 func runMonitorExecutable(binary, workDir string, args []string, overrides map[string]string) (string, error) {
@@ -178,20 +217,17 @@ func TestOpenDatabaseUsesEffectiveDriverAndSQLitePool(t *testing.T) {
 	}
 }
 
-func TestNewStoreUsesPostgresWithoutLoggingDSN(t *testing.T) {
+func TestOpenDatabaseUsesPostgresWithoutLoggingDSN(t *testing.T) {
 	dsn := "postgres://user:secret@127.0.0.1:1/sensors?connect_timeout=1"
 	t.Setenv("DATABASE_URL", dsn)
-	oldLogger := logging.Logger
-	var output bytes.Buffer
-	logging.Logger = logging.New(&output, "INFO")
-	t.Cleanup(func() { logging.Logger = oldLogger })
+	output := captureLogs(t)
 
 	driver := resolveDBDriver("postgres", "sqlite", true)
-	st, ok := newStore(driver, "").(*store.PostgresStore)
-	if !ok {
-		t.Fatalf("newStore selected the wrong backend for %q", driver)
+	st, db := openDatabase(driver, "")
+	if _, ok := st.(*store.PostgresStore); !ok {
+		t.Fatalf("openDatabase selected %T for %q, want PostgresStore", st, driver)
 	}
-	if db := st.InitDB(); db != nil {
+	if db != nil {
 		db.Close()
 		t.Fatal("expected the isolated PostgreSQL connection to fail")
 	}
@@ -207,12 +243,9 @@ func TestNewStoreUsesPostgresWithoutLoggingDSN(t *testing.T) {
 	}
 }
 
-func TestSQLiteInitializationLogsUsefulSanitizedError(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "private-secret", "readings.sqlite")
-	oldLogger := logging.Logger
-	var output bytes.Buffer
-	logging.Logger = logging.New(&output, "INFO")
-	t.Cleanup(func() { logging.Logger = oldLogger })
+func TestSQLiteInitializationLogsUsefulError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "missing-dir", "readings.sqlite")
+	output := captureLogs(t)
 
 	if db := store.NewSQLiteStore(path).InitDB(); db != nil {
 		db.Close()
@@ -222,7 +255,7 @@ func TestSQLiteInitializationLogsUsefulSanitizedError(t *testing.T) {
 	if !strings.Contains(logs, "Failed to connect to SQLite database") || !strings.Contains(logs, "unable to open database file") {
 		t.Fatalf("expected useful SQLite connection error:\n%s", logs)
 	}
-	if strings.Contains(logs, path) || strings.Contains(logs, "private-secret") {
-		t.Fatalf("SQLite path was logged:\n%s", logs)
+	if !strings.Contains(logs, path) {
+		t.Fatalf("SQLite path missing from the error, operator cannot tell which file failed:\n%s", logs)
 	}
 }
