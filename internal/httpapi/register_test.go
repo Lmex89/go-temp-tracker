@@ -29,9 +29,13 @@ func TestRegisterRoutes(t *testing.T) {
 	}{
 		{"/api/temps", "zz-test/temp"},
 		{"/api/temps?from=2000-01-01T00:00:00Z&to=2100-01-01T00:00:00Z", "zz-test/temp"},
+		{"/api/temps?hours=bad", "zz-test/temp"},
+		{"/api/temps?hours=100&from=2000-01-01T00:00:00Z&to=2000-01-02T00:00:00Z", ""},
 		{"/api/current", "zz-test/temp"},
 		{"/api/cpu?hours=2", "zz-test/cpu"},
 		{"/api/cpu?from=2000-01-01T00:00:00Z&to=2100-01-01T00:00:00Z", "zz-test/cpu"},
+		{"/api/cpu?hours=bad", "zz-test/cpu"},
+		{"/api/cpu?hours=100&from=2000-01-01T00:00:00Z&to=2000-01-02T00:00:00Z", ""},
 		{"/api/current/cpu", "zz-test/cpu"},
 		{"/api/memory", "zz-test/memory"},
 		{"/api/swap", "zz-test/swap"},
@@ -63,5 +67,58 @@ func TestRegisterRoutes(t *testing.T) {
 				t.Fatalf("rows = %v, want only %s", getSensorNames(got), tt.wantSensor)
 			}
 		})
+	}
+}
+
+func TestRegisteredRoutesEmptyResults(t *testing.T) {
+	st, db := newTempSQLite(t)
+	mux := http.NewServeMux()
+	Register(mux, st, db)
+	for _, path := range []string{"/api/temps", "/api/current", "/api/cpu", "/api/current/cpu"} {
+		t.Run(path, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+			if rec.Code != http.StatusOK || rec.Body.String() != "null\n" {
+				t.Fatalf("status = %d, body = %q; want 200 and null", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestRegisteredRoutesQueryErrors(t *testing.T) {
+	st, db := newTempSQLite(t)
+	if _, err := db.Exec("DROP TABLE readings"); err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	Register(mux, st, db)
+	for _, path := range []string{
+		"/api/temps", "/api/temps?from=2000-01-01T00:00:00Z&to=2100-01-01T00:00:00Z",
+		"/api/current", "/api/cpu", "/api/cpu?from=2000-01-01T00:00:00Z&to=2100-01-01T00:00:00Z",
+		"/api/current/cpu", "/api/memory", "/api/current/memory", "/api/swap", "/api/current/swap",
+		"/api/disk", "/api/current/disk", "/api/load", "/api/current/load",
+	} {
+		t.Run(path, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+			if rec.Code != http.StatusInternalServerError || rec.Body.String() != "Internal Server Error\n" {
+				t.Fatalf("status = %d, body = %q", rec.Code, rec.Body.String())
+			}
+		})
+	}
+	for _, base := range []string{"/api/temps", "/api/cpu"} {
+		for _, query := range []string{
+			"?from=2000-01-01T00:00:00Z", "?to=2000-01-01T00:00:00Z",
+			"?from=bad&to=bad", "?from=2000-01-01T00:00:00Z&to=bad",
+			"?from=2100-01-01T00:00:00Z&to=2000-01-01T00:00:00Z",
+		} {
+			t.Run(base+query, func(t *testing.T) {
+				rec := httptest.NewRecorder()
+				mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, base+query, nil))
+				if rec.Code != http.StatusBadRequest {
+					t.Fatalf("status = %d, want 400", rec.Code)
+				}
+			})
+		}
 	}
 }

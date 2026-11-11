@@ -226,3 +226,35 @@ func TestPostgresInvalidInputs(t *testing.T) {
 	store, db := newPGTestStore(t)
 	checkInvalidInputs(t, store, db)
 }
+
+func TestPostgresQueryFailures(t *testing.T) {
+	for _, failure := range []string{"scan", "execution"} {
+		t.Run(failure, func(t *testing.T) {
+			st, db := newPGTestStore(t)
+			if failure == "scan" {
+				if _, err := db.Exec(`ALTER TABLE readings ALTER COLUMN temp_c TYPE text;
+					INSERT INTO readings (sensor, temp_c, metric_type, unit, created_at) VALUES
+					('a', '1', 'temperature', 'C', NOW() - INTERVAL '1 minute'),
+					('b', 'invalid', 'temperature', 'C', NOW())`); err != nil {
+					t.Fatal(err)
+				}
+			} else if _, err := db.Exec("DROP TABLE readings"); err != nil {
+				t.Fatal(err)
+			}
+			for _, query := range []struct {
+				name string
+				run  func() ([]Reading, error)
+			}{
+				{"historical", func() ([]Reading, error) { return st.Query(db, TimeWindow{Hours: 1}, "temperature") }},
+				{"latest", func() ([]Reading, error) { return st.QueryLatest(db, "temperature") }},
+			} {
+				t.Run(query.name, func(t *testing.T) {
+					readings, err := query.run()
+					if err == nil || readings != nil {
+						t.Fatalf("got readings %v, error %v; want nil readings and error", readings, err)
+					}
+				})
+			}
+		})
+	}
+}
