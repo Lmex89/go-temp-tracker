@@ -67,11 +67,16 @@ func handleTemps(st store.Store, db *sql.DB) http.HandlerFunc {
 				http.Error(w, "from must be before to", http.StatusBadRequest)
 				return
 			}
+			window := store.TimeWindow{From: fromTime, To: toTime}
+			if err := window.Validate(); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
 
 			logging.Logger.Debug("Querying range UTC from=%s to=%s", fromTime.UTC().Format(timeutil.DBLayout), toTime.UTC().Format(timeutil.DBLayout))
 			readings, err = st.Query(
 				db,
-				store.TimeWindow{From: fromTime, To: toTime},
+				window,
 				"temperature",
 			)
 			if err != nil {
@@ -159,10 +164,15 @@ func handleMetricByType(st store.Store, db *sql.DB, metricType string) http.Hand
 				http.Error(w, "from must be before to", http.StatusBadRequest)
 				return
 			}
+			window := store.TimeWindow{From: fromTime, To: toTime}
+			if err := window.Validate(); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
 
 			readings, err = st.Query(
 				db,
-				store.TimeWindow{From: fromTime, To: toTime},
+				window,
 				metricType,
 			)
 			if err != nil {

@@ -3,21 +3,20 @@ package httpapi
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"sensors-temp/internal/store"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func TestPostgresRegisteredRoutes(t *testing.T) {
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		t.Skip("PostgreSQL tests skipped: DATABASE_URL not set")
-	}
+	dsn := store.ResolvePostgresDSN("")
 	admin, err := sql.Open("pgx", dsn)
 	if err != nil {
 		t.Fatal(err)
@@ -28,6 +27,10 @@ func TestPostgresRegisteredRoutes(t *testing.T) {
 	}
 	schema := fmt.Sprintf("http_test_%d", time.Now().UnixNano())
 	if _, err := admin.Exec("CREATE SCHEMA " + schema); err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "42501" {
+			t.Skipf("PostgreSQL tests skipped: cannot create test schema: %v", err)
+		}
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
