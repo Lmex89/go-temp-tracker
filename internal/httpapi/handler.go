@@ -41,7 +41,7 @@ func handleTemps(st store.Store, db *sql.DB) http.HandlerFunc {
 
 		var readings []store.Reading
 
-		if from != "" || to != "" {
+		if q.Has("from") || q.Has("to") {
 			if from == "" || to == "" {
 				http.Error(w, "from and to must be provided together", http.StatusBadRequest)
 				return
@@ -142,7 +142,7 @@ func handleMetricByType(st store.Store, db *sql.DB, metricType string) http.Hand
 
 		var readings []store.Reading
 
-		if from != "" || to != "" {
+		if q.Has("from") || q.Has("to") {
 			if from == "" || to == "" {
 				http.Error(w, "from and to must be provided together", http.StatusBadRequest)
 				return

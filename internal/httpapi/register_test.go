@@ -109,6 +109,7 @@ func TestRegisteredRoutesQueryErrors(t *testing.T) {
 	for _, base := range []string{"/api/temps", "/api/cpu"} {
 		for _, query := range []string{
 			"?from=2000-01-01T00:00:00Z", "?to=2000-01-01T00:00:00Z",
+			"?from=", "?to=", "?from=&to=", "?from=+&to=+", "?from=&to=&hours=2",
 			"?from=bad&to=bad", "?from=2000-01-01T00:00:00Z&to=bad",
 			"?from=2100-01-01T00:00:00Z&to=2000-01-01T00:00:00Z",
 		} {
