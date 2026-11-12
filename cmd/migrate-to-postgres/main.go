@@ -9,11 +9,13 @@ import (
 	"os"
 	"sensors-temp/internal/store"
 	"sensors-temp/internal/timeutil"
+	"strings"
 	"time"
 
 	"database/sql"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // sqliteCopySource streams rows from SQLite into pgx's CopyFrom protocol.
@@ -105,6 +107,22 @@ func rowsPerSecond(copied int64, elapsed time.Duration) float64 {
 	return float64(copied) / elapsed.Seconds()
 }
 
+// commitRejected reports whether a COMMIT error is a definitive refusal from the
+// server (for example a deferred constraint failing), which aborts the
+// transaction. Network errors, and server errors of the connection (08) or
+// operator-intervention (57) classes, say nothing about whether it was applied.
+// Python analogy: telling psycopg2.IntegrityError apart from OperationalError.
+func commitRejected(err error) bool {
+	if errors.Is(err, pgx.ErrTxCommitRollback) {
+		return true
+	}
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		return false
+	}
+	return !strings.HasPrefix(pgErr.Code, "08") && !strings.HasPrefix(pgErr.Code, "57")
+}
+
 // run executes the migration and returns the process exit code
 // (0 = success, 1 = failure, 2 = bad command line).
 // Python analogy: the body of main(argv, stdout, stderr). Passing the writers
@@ -116,6 +134,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 	sqlitePath := fs.String("sqlite", store.DefaultSQLitePath, "Source SQLite database file")
 	postgresURL := fs.String("postgres", "", "Target PostgreSQL URL (defaults to DATABASE_URL, then docker-compose defaults)")
 	if err := fs.Parse(args); err != nil {
+		// -h is not an error: the old flag.ExitOnError behaviour exited with 0.
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
 		return 2
 	}
 
@@ -124,20 +146,26 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 	// Never print the DSN: it may hold the password. Show host:port/database.
 	fmt.Fprintf(stdout, "Migrating %s -> %s\n", *sqlitePath, describeTarget(*postgresURL))
+	fmt.Fprintln(stdout, "WARNING: on success this REPLACES the target readings table (destructive). Atomicity only protects against failures, it is not a substitute for a backup: run scripts/backup-db.sh first.")
 
 	if err := migrate(context.Background(), stdout, *sqlitePath, *postgresURL); err != nil {
 		// Errors from pgx/url.Parse may echo the DSN or password: redact the text
 		// only, so errors.Is below still sees the original error chain.
 		fmt.Fprintln(stderr, redactText(err.Error(), *postgresURL))
 		// Only claim what is true: "left as they were" needs a confirmed rollback.
+		// One errors.As up front (Python: isinstance once, then compare the field).
+		state := stateUnknown
 		var me *migrationError
+		if errors.As(err, &me) {
+			state = me.state
+		}
 		switch {
 		case errors.Is(err, errCommitUncertain):
 			fmt.Fprintln(stderr, "The commit may or may not have been applied: inspect the target readings table before retrying.")
-		case errors.As(err, &me) && me.state == stateUntouched:
+		case state == stateUntouched:
 			fmt.Fprintln(stderr, "Migration FAILED before touching PostgreSQL: the target was not changed.")
-		case errors.As(err, &me) && me.state == stateRolledBack:
-			fmt.Fprintln(stderr, "Migration FAILED before commit: the transaction was rolled back, so the target readings and identity sequence were left as they were.")
+		case state == stateRolledBack:
+			fmt.Fprintln(stderr, "Migration FAILED and was NOT committed: the transaction was rolled back, so the target readings and identity sequence were left as they were.")
 		default:
 			fmt.Fprintln(stderr, "Migration FAILED and the target state could not be confirmed: inspect the target readings table before retrying.")
 		}
@@ -182,9 +210,11 @@ func migrate(ctx context.Context, stdout io.Writer, sqlitePath, postgresURL stri
 		return fmt.Errorf("Failed to connect to SQLite: %w", err)
 	}
 
-	// One read transaction = one snapshot (the DB runs in WAL mode). The count
-	// and the row stream below both read from it, so they always agree even if
-	// temp-tracker keeps writing. Writes made after the first read are invisible.
+	// One read transaction = one snapshot. The count and the row stream below both
+	// read from it, so they always agree. In WAL mode (what the service uses)
+	// temp-tracker keeps writing and those writes stay invisible here; in a
+	// classic rollback-journal file writers would instead wait until we finish.
+	// Either way the view is consistent. Writes after the first read are not seen.
 	snapshot, err := sqliteDB.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("Failed to start SQLite snapshot: %w", err)
@@ -213,7 +243,7 @@ func migrate(ctx context.Context, stdout io.Writer, sqlitePath, postgresURL stri
 	// Registered after pgConn's Close, so (LIFO) it runs BEFORE the connection
 	// closes: the rollback needs a live connection to be confirmed.
 	defer func() {
-		if err != nil && !committed {
+		if err != nil && !committed && !rolledBack {
 			rolledBack = tx.Rollback(ctx) == nil
 		}
 	}()
@@ -256,6 +286,12 @@ func migrate(ctx context.Context, stdout io.Writer, sqlitePath, postgresURL stri
 
 	committed = true // from here neither "untouched" nor "rolled back" may be claimed
 	if err := tx.Commit(ctx); err != nil {
+		if commitRejected(err) {
+			// PostgreSQL answered and refused: the transaction is gone, so the
+			// rollback claim is true (unlike a dropped connection).
+			committed, rolledBack = false, true
+			return fmt.Errorf("Failed to commit PostgreSQL transaction: %w", err)
+		}
 		return fmt.Errorf("%w: %v", errCommitUncertain, err)
 	}
 	fmt.Fprintf(stdout, "Migration committed: target readings replaced with %d rows.\n", total)

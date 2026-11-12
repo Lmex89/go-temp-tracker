@@ -13,6 +13,9 @@ import (
 	"time"
 
 	"sensors-temp/internal/store"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // testPostgresEnv is the ONLY way these tests reach PostgreSQL. It is
@@ -309,8 +312,13 @@ func TestMigrateCommitRejectedKeepsTarget(t *testing.T) {
 	if strings.Contains(stdout, "Migration committed") {
 		t.Errorf("success reported on failed commit: %q", stdout)
 	}
-	if stderr == "" {
-		t.Error("stderr empty on failed commit")
+	// The server answered and refused: this is a confirmed rollback, NOT the
+	// "uncertain" case reserved for a dropped connection.
+	if !strings.Contains(stderr, "commit blocked by test") || !strings.Contains(stderr, "rolled back") {
+		t.Errorf("stderr should show the server's reason and the confirmed rollback: %q", stderr)
+	}
+	if strings.Contains(stderr, "UNCERTAIN") || strings.Contains(stderr, "may or may not") {
+		t.Errorf("a rejected commit must not be reported as uncertain: %q", stderr)
 	}
 	// Remove the trigger so the assertions' own inserts are not rejected too.
 	if _, err := pg.DB.Exec("DROP TRIGGER fail_at_commit ON readings"); err != nil {
@@ -607,6 +615,104 @@ func TestMigrateFailureMessageMatchesWhatHappened(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// A definitive server refusal at COMMIT is a rollback; network trouble and
+// connection-class server errors are not. No PostgreSQL server is needed.
+func TestCommitRejected(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"constraint violation", &pgconn.PgError{Code: "23514"}, true},
+		{"serialization failure", &pgconn.PgError{Code: "40001"}, true},
+		{"commit turned into rollback", pgx.ErrTxCommitRollback, true},
+		{"wrapped server error", fmt.Errorf("x: %w", &pgconn.PgError{Code: "23505"}), true},
+		{"connection exception class", &pgconn.PgError{Code: "08006"}, false},
+		{"admin shutdown", &pgconn.PgError{Code: "57P01"}, false},
+		{"dropped connection", io.ErrUnexpectedEOF, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := commitRejected(tt.err); got != tt.want {
+				t.Errorf("commitRejected(%v) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
+	}
+}
+
+// A short or common password must not wreck the readable part of an error, and
+// the password must still disappear in its escaped spellings. No PostgreSQL needed.
+func TestRedactTextKeepsDiagnosticsReadable(t *testing.T) {
+	tests := []struct {
+		name     string
+		password string
+		msg      string
+		want     string
+	}{
+		{"one letter password", "p", "dial tcp: map lookup failed for host", "dial tcp: map lookup failed for host"},
+		{"one letter password in url form", "p", "bad dsn postgres://u:p@h:1/db", "bad dsn h:1/db"},
+		{"common word password", "tracker", "database tracker_db rejected password tracker", "database tracker_db rejected password ***"},
+		{"quote escaped", `a"b\c`, `auth failed for "a\"b\\c"`, `auth failed for "***"`},
+		{"url escaped", "p@ss", "token p%40ss and p@ss", "token *** and ***"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dsn := "postgres://u:" + url.QueryEscape(tt.password) + "@h:1/db"
+			if tt.name == "url escaped" {
+				dsn = "postgres://u:p%40ss@h:1/db"
+			}
+			if got := redactText(tt.msg, dsn); got != tt.want {
+				t.Errorf("redactText(%q) = %q, want %q", tt.msg, got, tt.want)
+			}
+		})
+	}
+}
+
+// Precedence is flag, then DATABASE_URL, then the docker-compose default. The
+// default is deliberately NOT exercised here: it could hit a real local server.
+// Port 1 on loopback is closed, so both cases fail fast without PostgreSQL.
+func TestRunTargetPrecedence(t *testing.T) {
+	sqlitePath := newSQLiteSource(t, sampleReadings(2))
+	const envDSN = "postgres://u:p@127.0.0.1:1/envdb?sslmode=disable&connect_timeout=2"
+	t.Setenv("DATABASE_URL", envDSN)
+
+	var out, errOut bytes.Buffer
+	run([]string{"-sqlite", sqlitePath}, &out, &errOut)
+	if !strings.Contains(out.String(), "127.0.0.1:1/envdb") {
+		t.Errorf("without -postgres the target should come from DATABASE_URL: %q", out.String())
+	}
+
+	out.Reset()
+	errOut.Reset()
+	run([]string{"-sqlite", sqlitePath, "-postgres", "postgres://u:p@127.0.0.1:1/flagdb?sslmode=disable&connect_timeout=2"}, &out, &errOut)
+	if !strings.Contains(out.String(), "127.0.0.1:1/flagdb") || strings.Contains(out.String(), "envdb") {
+		t.Errorf("-postgres must win over DATABASE_URL: %q", out.String())
+	}
+}
+
+// The operator must be told, on the command's own output, that success is
+// destructive and not a backup. No PostgreSQL server is needed.
+func TestRunWarnsAboutDestructiveReplace(t *testing.T) {
+	code, stdout, _ := runMigration(newSQLiteSource(t, sampleReadings(1)), "postgres://u:p@127.0.0.1:1/db?sslmode=disable&connect_timeout=2")
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1", code)
+	}
+	if !strings.Contains(stdout, "REPLACES") || !strings.Contains(stdout, "not a substitute for a backup") {
+		t.Errorf("stdout should warn about the destructive replace and backups: %q", stdout)
+	}
+}
+
+// -h prints usage and exits 0, as it did with flag.ExitOnError.
+func TestRunHelpExitsZero(t *testing.T) {
+	var out, errOut bytes.Buffer
+	if code := run([]string{"-h"}, &out, &errOut); code != 0 {
+		t.Errorf("exit code = %d, want 0", code)
+	}
+	if !strings.Contains(errOut.String(), "-sqlite") {
+		t.Errorf("usage should list the flags: %q", errOut.String())
 	}
 }
 

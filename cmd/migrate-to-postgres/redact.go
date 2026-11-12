@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -44,6 +46,10 @@ func dsnSecrets(dsn string) []string {
 		if dec, err := url.PathUnescape(p); err == nil && dec != p {
 			secrets = append(secrets, dec)
 		}
+		// Go's %q (used by some error messages) escapes quotes and backslashes.
+		if q := strconv.Quote(p); q[1:len(q)-1] != p {
+			secrets = append(secrets, q[1:len(q)-1])
+		}
 	}
 	if cfg, err := pgx.ParseConfig(dsn); err == nil {
 		add(cfg.Password)
@@ -64,8 +70,48 @@ func dsnSecrets(dsn string) []string {
 func redactText(msg, dsn string) string {
 	// The whole DSN first (it contains the password), shown as host:port/db.
 	msg = strings.ReplaceAll(msg, dsn, describeTarget(dsn))
-	for _, s := range dsnSecrets(dsn)[1:] {
-		msg = strings.ReplaceAll(msg, s, "***")
+	// Longest first, so a secret that contains another one is replaced whole.
+	secrets := dsnSecrets(dsn)[1:]
+	sort.Slice(secrets, func(i, j int) bool { return len(secrets[i]) > len(secrets[j]) })
+	for _, s := range secrets {
+		msg = replaceSecret(msg, s)
 	}
 	return msg
+}
+
+func isWordByte(b byte) bool {
+	return b == '_' || (b >= '0' && b <= '9') || (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
+}
+
+// replaceSecret swaps every occurrence of secret in msg for "***". If the secret
+// begins or ends with a letter/digit, a match glued to another letter/digit is
+// skipped: a short password such as "p" must not turn "map" into "ma***" and
+// make the error unreadable. Delimited uses (":p@", "password=p") are still hit.
+func replaceSecret(msg, secret string) string {
+	if secret == "" {
+		return msg
+	}
+	checkStart, checkEnd := isWordByte(secret[0]), isWordByte(secret[len(secret)-1])
+	var b strings.Builder
+	pos := 0
+	for {
+		i := strings.Index(msg[pos:], secret)
+		if i < 0 {
+			break
+		}
+		i += pos
+		end := i + len(secret)
+		glued := (checkStart && i > 0 && isWordByte(msg[i-1])) ||
+			(checkEnd && end < len(msg) && isWordByte(msg[end]))
+		if glued {
+			b.WriteString(msg[pos : i+1])
+			pos = i + 1
+			continue
+		}
+		b.WriteString(msg[pos:i])
+		b.WriteString("***")
+		pos = end
+	}
+	b.WriteString(msg[pos:])
+	return b.String()
 }
