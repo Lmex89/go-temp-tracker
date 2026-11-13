@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"net/mail"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 )
 
 type Rule struct {
@@ -21,16 +23,20 @@ type Rule struct {
 }
 
 type Config struct {
-	Enabled bool
-	ChatID  string
-	Rules   []Rule
+	Enabled             bool
+	ChatID              string
+	BrevoSenderEmail    string
+	BrevoSenderName     string
+	BrevoRecipientEmail string
+	Rules               []Rule
 }
 
 var safeID = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 var safeToken = regexp.MustCompile(`^[A-Za-z0-9:_-]+$`)
+var safeAPIKey = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
 // LoadConfig validates everything before the caller opens a database.
-func LoadConfig(path, publicDir, token string) (Config, error) {
+func LoadConfig(path, publicDir, token, apiKey string) (Config, error) {
 	var cfg Config
 	if path == "" {
 		return cfg, nil
@@ -40,9 +46,12 @@ func LoadConfig(path, publicDir, token string) (Config, error) {
 		return cfg, errors.New("cannot read alert configuration")
 	}
 	var raw struct {
-		Enabled bool   `json:"enabled"`
-		ChatID  string `json:"chat_id"`
-		Rules   []struct {
+		Enabled             bool   `json:"enabled"`
+		ChatID              string `json:"chat_id"`
+		BrevoSenderEmail    string `json:"brevo_sender_email"`
+		BrevoSenderName     string `json:"brevo_sender_name"`
+		BrevoRecipientEmail string `json:"brevo_recipient_email"`
+		Rules               []struct {
 			ID         string   `json:"id"`
 			MetricType string   `json:"metric_type"`
 			Sensor     string   `json:"sensor"`
@@ -82,6 +91,15 @@ func LoadConfig(path, publicDir, token string) (Config, error) {
 	if token == "" || !safeToken.MatchString(token) {
 		return cfg, errors.New("valid TELEGRAM_BOT_TOKEN is required")
 	}
+	if !safeAPIKey.MatchString(apiKey) {
+		return cfg, errors.New("valid BREVO_API_KEY is required")
+	}
+	if !validEmail(raw.BrevoSenderEmail) || !validEmail(raw.BrevoRecipientEmail) {
+		return cfg, errors.New("valid Brevo sender and recipient email addresses are required")
+	}
+	if strings.TrimSpace(raw.BrevoSenderName) == "" || strings.IndexFunc(raw.BrevoSenderName, unicode.IsControl) >= 0 {
+		return cfg, errors.New("valid Brevo sender name is required")
+	}
 	if len(raw.Rules) == 0 {
 		return cfg, errors.New("at least one alert rule is required")
 	}
@@ -103,5 +121,11 @@ func LoadConfig(path, publicDir, token string) (Config, error) {
 		cfg.Rules = append(cfg.Rules, Rule{r.ID, r.MetricType, r.Sensor, *r.Threshold, time.Duration(*r.Minutes * float64(time.Minute))})
 	}
 	cfg.Enabled, cfg.ChatID = true, raw.ChatID
+	cfg.BrevoSenderEmail, cfg.BrevoSenderName, cfg.BrevoRecipientEmail = raw.BrevoSenderEmail, raw.BrevoSenderName, raw.BrevoRecipientEmail
 	return cfg, nil
+}
+
+func validEmail(s string) bool {
+	a, err := mail.ParseAddress(s)
+	return err == nil && a.Address == s && strings.Contains(s, "@")
 }
