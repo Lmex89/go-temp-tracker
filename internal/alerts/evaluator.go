@@ -64,7 +64,11 @@ func (e *Evaluator) Observe(metricType string, now time.Time, points []metrics.M
 			}
 			continue
 		}
-		if !s.last.IsZero() && (now.Sub(s.last) > 10*time.Second || now.Before(s.last)) {
+		at := now
+		if !point.At.IsZero() {
+			at = point.At
+		}
+		if !s.last.IsZero() && (at.Sub(s.last) > 10*time.Second || at.Before(s.last)) {
 			s.pending = time.Time{}
 			if !s.lost {
 				logging.Logger.Warn("Alert observation gap for rule %s", s.rule.ID)
@@ -73,12 +77,12 @@ func (e *Evaluator) Observe(metricType string, now time.Time, points []metrics.M
 		} else {
 			s.lost = false
 		}
-		s.last = now
+		s.last = at
 		if point.Value < s.rule.Threshold {
 			s.pending = time.Time{}
 			if s.active {
 				s.active = false
-				e.event("recovery", s.rule, point, now)
+				e.event("recovery", s.rule, point, at)
 			}
 			continue
 		}
@@ -86,13 +90,13 @@ func (e *Evaluator) Observe(metricType string, now time.Time, points []metrics.M
 			continue
 		}
 		if s.pending.IsZero() {
-			s.pending = now
+			s.pending = at
 			continue
 		}
-		if now.Sub(s.pending) >= s.rule.Duration {
+		if at.Sub(s.pending) >= s.rule.Duration {
 			s.active = true
 			s.pending = time.Time{}
-			e.event("activation", s.rule, point, now)
+			e.event("activation", s.rule, point, at)
 		}
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"sensors-temp/internal/metrics"
 	"sensors-temp/internal/sensor"
 	"sensors-temp/internal/store"
+	"sync"
 	"time"
 )
 
@@ -15,9 +16,11 @@ import (
 // It runs an infinite loop: read -> insert -> prune -> sleep.
 // In Python you'd write a class with __init__ setting self.sensor, self.store, self.db.
 type Poller struct {
-	reader sensor.Reader // named reader (not sensor) so it does not shadow the sensor package
-	store  store.Store
-	db     *sql.DB
+	reader  sensor.Reader // named reader (not sensor) so it does not shadow the sensor package
+	store   store.Store
+	db      *sql.DB
+	warnMu  sync.Mutex
+	missing bool
 }
 
 // New is the constructor (called as poller.New from main) -- like Python's __init__,
@@ -51,18 +54,37 @@ func (p *Poller) poll(retainHours int) {
 // Poll observes fresh temperature readings before storing every sensor.
 func (p *Poller) Poll(retainHours int, observe func([]metrics.MetricPoint)) {
 	logging.Logger.Debug("Reading CPU temperatures...")
-	temps := p.reader.Read()
-
-	if observe != nil {
-		points := make([]metrics.MetricPoint, 0, len(temps))
+	var temps map[string]float64
+	var points []metrics.MetricPoint
+	if timed, ok := p.reader.(interface {
+		ReadTimed() map[string]sensor.Reading
+	}); ok && observe != nil {
+		readings := timed.ReadTimed()
+		temps = make(map[string]float64, len(readings))
+		for name, reading := range readings {
+			temps[name] = reading.Value
+			points = append(points, metrics.MetricPoint{Sensor: name, Value: reading.Value, Unit: "C", At: reading.At})
+		}
+	} else {
+		temps = p.reader.Read()
 		for name, temp := range temps {
 			points = append(points, metrics.MetricPoint{Sensor: name, Value: temp, Unit: "C"})
 		}
+	}
+
+	if observe != nil {
 		observe(points)
 	}
-	if len(temps) == 0 && observe == nil {
-		logging.Logger.Warn("No temperature sensors found")
+	p.warnMu.Lock()
+	if len(temps) == 0 {
+		if observe == nil || !p.missing {
+			logging.Logger.Warn("No temperature sensors found")
+		}
+		p.missing = true
+	} else {
+		p.missing = false
 	}
+	p.warnMu.Unlock()
 
 	// range over a map gives (key, value) -- like Python's dict.items().
 	for name, temp := range temps {

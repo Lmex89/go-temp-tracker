@@ -1,24 +1,117 @@
 package poller
 
 import (
+	"bytes"
 	"database/sql"
 	"math"
+	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"sensors-temp/internal/alerts"
+	"sensors-temp/internal/logging"
 	"sensors-temp/internal/metrics"
+	"sensors-temp/internal/sensor"
 	"sensors-temp/internal/store"
 )
+
+func TestObservedTemperatureMissingWarnsOncePerOutage(t *testing.T) {
+	var output bytes.Buffer
+	old := logging.Logger
+	logging.Logger = logging.New(&output, "INFO")
+	t.Cleanup(func() { logging.Logger = old })
+	st, db := newDB(t)
+	reader := &fakeSensor{}
+	p := New(reader, st, db)
+	for i := 0; i < 3; i++ {
+		p.Poll(24, func([]metrics.MetricPoint) {})
+	}
+	reader.temps = map[string]float64{"selected": 60}
+	p.Poll(24, func([]metrics.MetricPoint) {})
+	reader.temps = nil
+	p.Poll(24, func([]metrics.MetricPoint) {})
+	if got := strings.Count(output.String(), "No temperature sensors found"); got != 2 {
+		t.Fatalf("warnings = %d, logs: %s", got, output.String())
+	}
+}
+
+func TestMissingThermalZonesDoNotFloodLogs(t *testing.T) {
+	var output bytes.Buffer
+	old := logging.Logger
+	logging.Logger = logging.New(&output, "INFO")
+	t.Cleanup(func() { logging.Logger = old })
+	st, db := newDB(t)
+	root := t.TempDir()
+	p := New(sensor.NewLinuxThermalSensorAt(root), st, db)
+	for i := 0; i < 3; i++ {
+		p.Poll(24, func([]metrics.MetricPoint) {})
+	}
+	zone := filepath.Join(root, "class/thermal/thermal_zone0")
+	if err := os.MkdirAll(zone, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(zone, "temp"), []byte("65000"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(zone, "type"), []byte("selected"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	p.Poll(24, func([]metrics.MetricPoint) {})
+	if err := os.Remove(filepath.Join(zone, "temp")); err != nil {
+		t.Fatal(err)
+	}
+	p.Poll(24, func([]metrics.MetricPoint) {})
+	p.Poll(24, func([]metrics.MetricPoint) {})
+	got := output.String()
+	if strings.Count(got, "No thermal zones found") != 1 || strings.Count(got, "Cannot read thermal_zone0/temp") != 1 || strings.Count(got, "No temperature sensors found") != 2 {
+		t.Fatalf("unexpected logs: %s", got)
+	}
+}
 
 // fakeSensor satisfies sensor.Reader (Go interfaces are structural, like
 // Python's duck typing / typing.Protocol), so no real hardware is needed.
 type fakeSensor struct{ temps map[string]float64 }
 
 func (f fakeSensor) Read() map[string]float64 { return f.temps }
+
+type timedSensor struct{ readings map[string]sensor.Reading }
+
+func (s timedSensor) Read() map[string]float64             { panic("expected timed readings") }
+func (s timedSensor) ReadTimed() map[string]sensor.Reading { return s.readings }
+
+func TestTemperatureUsesEachReadingTime(t *testing.T) {
+	st, db := newDB(t)
+	start := time.Now()
+	reader := &timedSensor{}
+	p := New(reader, st, db)
+	var events []alerts.Event
+	e := alerts.NewEvaluator([]alerts.Rule{{ID: "hot", MetricType: "temperature", Sensor: "selected", Threshold: 65, Duration: 10 * time.Second}}, func(event alerts.Event) { events = append(events, event) })
+	for _, seconds := range []int{0, 5, 9} {
+		delay := 5
+		if seconds == 0 {
+			delay = 0
+		}
+		reader.readings = map[string]sensor.Reading{
+			"selected": {Value: 65, At: start.Add(time.Duration(seconds) * time.Second)},
+			"slow":     {Value: 40, At: start.Add(time.Duration(seconds+delay) * time.Second)},
+		}
+		p.Poll(24, func(points []metrics.MetricPoint) {
+			e.Observe("temperature", start.Add(time.Duration(seconds+delay)*time.Second), points)
+		})
+		if len(events) != 0 {
+			t.Fatalf("early activation: %+v", events)
+		}
+	}
+	reader.readings = map[string]sensor.Reading{"selected": {Value: 65, At: start.Add(10 * time.Second)}}
+	p.Poll(24, func(points []metrics.MetricPoint) { e.Observe("temperature", start.Add(19*time.Second), points) })
+	if len(events) != 1 || !events[0].At.Equal(start.Add(10*time.Second)) {
+		t.Fatalf("events = %+v", events)
+	}
+}
 
 // newDB builds a throwaway SQLite store in t.TempDir(); temps.db is never touched.
 func newDB(t *testing.T) (store.Store, *sql.DB) {

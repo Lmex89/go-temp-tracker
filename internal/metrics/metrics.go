@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sensors-temp/internal/logging"
 	"strings"
+	"sync"
 	"time"
 
 	// gopsutil v3 -- pure Go system metrics library (like Python's psutil, but for Go).
@@ -21,16 +22,28 @@ type MetricPoint struct {
 	Sensor string
 	Value  float64
 	Unit   string
+	At     time.Time
 }
 
 // SystemMetrics wraps gopsutil calls for CPU, memory, swap, disk, and load.
-// This is a struct with no fields (like a module/namespace in Python).
 // Each method returns a slice of MetricPoint (like a list of dataclass instances).
-type SystemMetrics struct{}
+type SystemMetrics struct {
+	cpuPercent func(time.Duration, bool) ([]float64, error)
+	cpuMu      sync.Mutex
+	cpuError   string
+	quietCPU   bool
+}
+
+// SuppressRepeatedCPUWarnings limits repeated failures at the alert polling cadence.
+func (sm *SystemMetrics) SuppressRepeatedCPUWarnings() {
+	sm.cpuMu.Lock()
+	defer sm.cpuMu.Unlock()
+	sm.quietCPU = true
+}
 
 // NewSystemMetrics constructor -- returns a pointer to a new SystemMetrics.
 func NewSystemMetrics() *SystemMetrics {
-	return &SystemMetrics{}
+	return &SystemMetrics{cpuPercent: cpu.Percent}
 }
 
 // ReadCPU measures CPU usage per core and total.
@@ -42,11 +55,24 @@ func (sm *SystemMetrics) ReadCPU() []MetricPoint {
 	// percpu=true returns one float per logical core + total as the last element.
 	// Wait -- actually without percpu=false, the total is NOT included.
 	// Let's call with percpu=true and compute total manually.
-	percents, err := cpu.Percent(time.Second, true)
+	read := sm.cpuPercent
+	if read == nil {
+		read = cpu.Percent
+	}
+	percents, err := read(time.Second, true)
+	sm.cpuMu.Lock()
+	defer sm.cpuMu.Unlock()
 	if err != nil {
-		logging.Logger.Warn("Failed to read CPU: %v", err)
+		if !sm.quietCPU || sm.cpuError != err.Error() {
+			logging.Logger.Warn("Failed to read CPU: %v", err)
+			sm.cpuError = err.Error()
+		}
 		return nil
 	}
+	if sm.quietCPU && sm.cpuError != "" {
+		logging.Logger.Info("CPU reading recovered")
+	}
+	sm.cpuError = ""
 	// Build MetricPoint slice -- like a list comprehension in Python.
 	// In Python: [MetricPoint(f"cpu/Core {i}", p, "%") for i, p in enumerate(percents)]
 	points := make([]MetricPoint, 0, len(percents)+1)
