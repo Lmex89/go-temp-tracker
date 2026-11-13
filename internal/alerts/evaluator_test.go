@@ -9,6 +9,7 @@ import (
 
 	"sensors-temp/internal/alerts"
 	"sensors-temp/internal/metrics"
+	"sensors-temp/internal/timeutil"
 )
 
 func TestRuleContinuity(t *testing.T) {
@@ -43,7 +44,7 @@ func TestRuleContinuity(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var got []string
-			e := alerts.NewEvaluator(rules, func(event alerts.Event) { got = append(got, event.Rule.ID+":"+event.Kind) })
+			e := alerts.NewEvaluator(rules, func(event alerts.Event) { got = append(got, event.Rule.ID+":"+string(event.Kind)) })
 			start := time.Now()
 			for _, s := range tt.steps {
 				got = nil
@@ -99,10 +100,10 @@ func TestRestartDoesNotRecoverOrCreditTime(t *testing.T) {
 func TestSuspendBreaksPendingButDoesNotRecoverActiveRule(t *testing.T) {
 	start := time.Now()
 	var events []string
-	e := alerts.NewEvaluator([]alerts.Rule{{ID: "high", MetricType: "cpu", Sensor: "cpu/total", Threshold: 50, Duration: 10 * time.Second}}, func(event alerts.Event) { events = append(events, event.Kind) })
+	e := alerts.NewEvaluator([]alerts.Rule{{ID: "high", MetricType: "cpu", Sensor: "cpu/total", Threshold: 50, Duration: 10 * time.Second}}, func(event alerts.Event) { events = append(events, string(event.Kind)) })
 	observe := func(monotonicSeconds, bootSeconds int, value float64) {
 		at := start.Add(time.Duration(monotonicSeconds) * time.Second)
-		e.ObserveAt("cpu", at, time.Duration(bootSeconds)*time.Second, []metrics.MetricPoint{{Sensor: "cpu/total", Value: value, At: at, BootAt: time.Duration(bootSeconds) * time.Second}})
+		e.ObserveAt("cpu", at, time.Duration(bootSeconds)*time.Second, []metrics.MetricPoint{{Sensor: "cpu/total", Value: value, Observation: timeutil.Observation{At: at, BootAt: time.Duration(bootSeconds) * time.Second}}})
 	}
 	observe(0, 100, 50)
 	observe(5, 105, 50)
@@ -128,10 +129,10 @@ func TestSuspendBreaksPendingButDoesNotRecoverActiveRule(t *testing.T) {
 func TestUncertainAcquisitionDoesNotCreditTimeOrRecover(t *testing.T) {
 	start := time.Now()
 	var events []string
-	e := alerts.NewEvaluator([]alerts.Rule{{ID: "hot", MetricType: "temperature", Sensor: "selected", Threshold: 65, Duration: 10 * time.Second}}, func(event alerts.Event) { events = append(events, event.Kind) })
+	e := alerts.NewEvaluator([]alerts.Rule{{ID: "hot", MetricType: "temperature", Sensor: "selected", Threshold: 65, Duration: 10 * time.Second}}, func(event alerts.Event) { events = append(events, string(event.Kind)) })
 	observe := func(sec int, boot time.Duration, value float64) {
 		at := start.Add(time.Duration(sec) * time.Second)
-		e.ObserveAt("temperature", at, time.Duration(100+sec)*time.Second, []metrics.MetricPoint{{Sensor: "selected", Value: value, At: at, BootAt: boot}})
+		e.ObserveAt("temperature", at, time.Duration(100+sec)*time.Second, []metrics.MetricPoint{{Sensor: "selected", Value: value, Observation: timeutil.Observation{At: at, BootAt: boot}}})
 	}
 	observe(0, 100*time.Second, 65)
 	observe(5, -1, 64)
@@ -162,13 +163,13 @@ func TestUncertainAcquisitionDoesNotCreditTimeOrRecover(t *testing.T) {
 func TestChangingClockAvailabilityBreaksContinuity(t *testing.T) {
 	start := time.Now()
 	var events []string
-	e := alerts.NewEvaluator([]alerts.Rule{{ID: "cpu", MetricType: "cpu", Sensor: "cpu/total", Threshold: 50, Duration: 10 * time.Second}}, func(event alerts.Event) { events = append(events, event.Kind) })
+	e := alerts.NewEvaluator([]alerts.Rule{{ID: "cpu", MetricType: "cpu", Sensor: "cpu/total", Threshold: 50, Duration: 10 * time.Second}}, func(event alerts.Event) { events = append(events, string(event.Kind)) })
 	for _, step := range []struct {
 		sec  int
 		boot time.Duration
 	}{{0, 100 * time.Second}, {5, 105 * time.Second}, {10, 0}, {15, 115 * time.Second}, {20, 120 * time.Second}, {25, 125 * time.Second}} {
 		at := start.Add(time.Duration(step.sec) * time.Second)
-		e.ObserveAt("cpu", at, time.Duration(100+step.sec)*time.Second, []metrics.MetricPoint{{Sensor: "cpu/total", Value: 50, At: at, BootAt: step.boot}})
+		e.ObserveAt("cpu", at, time.Duration(100+step.sec)*time.Second, []metrics.MetricPoint{{Sensor: "cpu/total", Value: 50, Observation: timeutil.Observation{At: at, BootAt: step.boot}}})
 		if step.sec < 25 && len(events) != 0 {
 			t.Fatalf("credited time across clock change: %v", events)
 		}
@@ -181,11 +182,11 @@ func TestChangingClockAvailabilityBreaksContinuity(t *testing.T) {
 func TestCPUDelayedReturnDoesNotCreditUnobservedTime(t *testing.T) {
 	start := time.Now()
 	var events []string
-	e := alerts.NewEvaluator([]alerts.Rule{{ID: "cpu", MetricType: "cpu", Sensor: "cpu/total", Threshold: 50, Duration: 10 * time.Second}}, func(event alerts.Event) { events = append(events, event.Kind) })
+	e := alerts.NewEvaluator([]alerts.Rule{{ID: "cpu", MetricType: "cpu", Sensor: "cpu/total", Threshold: 50, Duration: 10 * time.Second}}, func(event alerts.Event) { events = append(events, string(event.Kind)) })
 	for _, step := range []struct{ begin, end int }{{0, 1}, {5, 6}, {10, 15}, {15, 16}} {
 		begin := start.Add(time.Duration(step.begin) * time.Second)
 		end := start.Add(time.Duration(step.end) * time.Second)
-		e.Observe("cpu", end, []metrics.MetricPoint{{Sensor: "cpu/total", Value: 50, StartedAt: begin, At: end}})
+		e.Observe("cpu", end, []metrics.MetricPoint{{Sensor: "cpu/total", Value: 50, Observation: timeutil.Observation{StartedAt: begin, At: end}}})
 		if step.begin < 15 && len(events) != 0 {
 			t.Fatalf("early activation after delayed return: %v", events)
 		}
@@ -207,12 +208,12 @@ func TestCPUAcquisitionGapBoundary(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			start := time.Now()
 			var events []string
-			e := alerts.NewEvaluator([]alerts.Rule{{ID: "cpu", MetricType: "cpu", Sensor: "cpu/total", Threshold: 50, Duration: 10 * time.Second}}, func(event alerts.Event) { events = append(events, event.Kind) })
+			e := alerts.NewEvaluator([]alerts.Rule{{ID: "cpu", MetricType: "cpu", Sensor: "cpu/total", Threshold: 50, Duration: 10 * time.Second}}, func(event alerts.Event) { events = append(events, string(event.Kind)) })
 			for i := 0; i < 3; i++ {
 				begin := time.Duration(i) * tt.gap
 				end := begin + time.Second
 				at := start.Add(end)
-				point := metrics.MetricPoint{Sensor: "cpu/total", Value: 50, StartedAt: start.Add(begin), At: at, BootStart: 100*time.Second + begin, BootAt: 100*time.Second + end}
+				point := metrics.MetricPoint{Sensor: "cpu/total", Value: 50, Observation: timeutil.Observation{StartedAt: start.Add(begin), At: at, BootStart: 100*time.Second + begin, BootAt: 100*time.Second + end}}
 				e.ObserveAt("cpu", at, point.BootAt, []metrics.MetricPoint{point})
 				if i == 1 && (len(events) > 0) != tt.wantSecond {
 					t.Fatalf("second reading: %v", events)
@@ -236,9 +237,9 @@ func TestCPUAcquisitionGapChecksBothBounds(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			start := time.Now()
 			var events []string
-			e := alerts.NewEvaluator([]alerts.Rule{{ID: "cpu", MetricType: "cpu", Sensor: "cpu/total", Threshold: 50, Duration: 10 * time.Second}}, func(event alerts.Event) { events = append(events, event.Kind) })
+			e := alerts.NewEvaluator([]alerts.Rule{{ID: "cpu", MetricType: "cpu", Sensor: "cpu/total", Threshold: 50, Duration: 10 * time.Second}}, func(event alerts.Event) { events = append(events, string(event.Kind)) })
 			for _, interval := range [][2]time.Duration{{0, time.Second}, {tt.secondStart, tt.secondEnd}, {tt.secondStart + 10*time.Second, tt.secondEnd + 10*time.Second}} {
-				point := metrics.MetricPoint{Sensor: "cpu/total", Value: 50, StartedAt: start.Add(interval[0]), At: start.Add(interval[1]), BootStart: 100*time.Second + interval[0], BootAt: 100*time.Second + interval[1]}
+				point := metrics.MetricPoint{Sensor: "cpu/total", Value: 50, Observation: timeutil.Observation{StartedAt: start.Add(interval[0]), At: start.Add(interval[1]), BootStart: 100*time.Second + interval[0], BootAt: 100*time.Second + interval[1]}}
 				e.ObserveAt("cpu", point.At, point.BootAt, []metrics.MetricPoint{point})
 			}
 			if len(events) != 0 {
@@ -253,11 +254,11 @@ func TestStaleTemperatureCannotRecoverActiveRule(t *testing.T) {
 		t.Run(fmt.Sprintf("suspended=%v", suspended), func(t *testing.T) {
 			start := time.Now()
 			var events []string
-			e := alerts.NewEvaluator([]alerts.Rule{{ID: "hot", MetricType: "temperature", Sensor: "selected", Threshold: 65, Duration: 10 * time.Second}}, func(event alerts.Event) { events = append(events, event.Kind) })
+			e := alerts.NewEvaluator([]alerts.Rule{{ID: "hot", MetricType: "temperature", Sensor: "selected", Threshold: 65, Duration: 10 * time.Second}}, func(event alerts.Event) { events = append(events, string(event.Kind)) })
 			for _, sec := range []int{0, 5, 10} {
 				at := start.Add(time.Duration(sec) * time.Second)
 				boot := time.Duration(100+sec) * time.Second
-				e.ObserveAt("temperature", at, boot, []metrics.MetricPoint{{Sensor: "selected", Value: 65, At: at, BootAt: boot}})
+				e.ObserveAt("temperature", at, boot, []metrics.MetricPoint{{Sensor: "selected", Value: 65, Observation: timeutil.Observation{At: at, BootAt: boot}}})
 			}
 			acquired := start.Add(15 * time.Second)
 			processed := acquired.Add(time.Hour)
@@ -265,11 +266,11 @@ func TestStaleTemperatureCannotRecoverActiveRule(t *testing.T) {
 				processed = acquired
 			}
 			bootNow := time.Duration(3715) * time.Second
-			e.ObserveAt("temperature", processed, bootNow, []metrics.MetricPoint{{Sensor: "selected", Value: 64, At: acquired, BootAt: 115 * time.Second}})
+			e.ObserveAt("temperature", processed, bootNow, []metrics.MetricPoint{{Sensor: "selected", Value: 64, Observation: timeutil.Observation{At: acquired, BootAt: 115 * time.Second}}})
 			if !reflect.DeepEqual(events, []string{"activation"}) {
 				t.Fatalf("stale reading recovered active rule: %v", events)
 			}
-			e.ObserveAt("temperature", processed, bootNow, []metrics.MetricPoint{{Sensor: "selected", Value: 64, At: processed, BootAt: bootNow}})
+			e.ObserveAt("temperature", processed, bootNow, []metrics.MetricPoint{{Sensor: "selected", Value: 64, Observation: timeutil.Observation{At: processed, BootAt: bootNow}}})
 			if !reflect.DeepEqual(events, []string{"activation", "recovery"}) {
 				t.Fatalf("events = %v", events)
 			}
@@ -280,12 +281,12 @@ func TestStaleTemperatureCannotRecoverActiveRule(t *testing.T) {
 func TestStaleReadingResetsPendingPeriod(t *testing.T) {
 	start := time.Now()
 	var events []string
-	e := alerts.NewEvaluator([]alerts.Rule{{ID: "hot", MetricType: "temperature", Sensor: "selected", Threshold: 65, Duration: 10 * time.Second}}, func(event alerts.Event) { events = append(events, event.Kind) })
+	e := alerts.NewEvaluator([]alerts.Rule{{ID: "hot", MetricType: "temperature", Sensor: "selected", Threshold: 65, Duration: 10 * time.Second}}, func(event alerts.Event) { events = append(events, string(event.Kind)) })
 	for _, step := range []struct{ acquired, processed int }{{0, 0}, {5, 5}, {10, 21}, {22, 22}, {27, 27}, {32, 32}} {
 		at := start.Add(time.Duration(step.acquired) * time.Second)
 		now := start.Add(time.Duration(step.processed) * time.Second)
 		boot := time.Duration(100+step.acquired) * time.Second
-		e.ObserveAt("temperature", now, time.Duration(100+step.processed)*time.Second, []metrics.MetricPoint{{Sensor: "selected", Value: 65, At: at, BootAt: boot}})
+		e.ObserveAt("temperature", now, time.Duration(100+step.processed)*time.Second, []metrics.MetricPoint{{Sensor: "selected", Value: 65, Observation: timeutil.Observation{At: at, BootAt: boot}}})
 		if step.processed < 32 && len(events) != 0 {
 			t.Fatalf("stale reading credited: %v", events)
 		}
@@ -298,13 +299,13 @@ func TestStaleReadingResetsPendingPeriod(t *testing.T) {
 func TestFreshnessUsesEarliestPossibleAcquisition(t *testing.T) {
 	start := time.Now()
 	var events []string
-	e := alerts.NewEvaluator([]alerts.Rule{{ID: "cpu", MetricType: "cpu", Sensor: "cpu/total", Threshold: 50, Duration: 10 * time.Second}}, func(event alerts.Event) { events = append(events, event.Kind) })
+	e := alerts.NewEvaluator([]alerts.Rule{{ID: "cpu", MetricType: "cpu", Sensor: "cpu/total", Threshold: 50, Duration: 10 * time.Second}}, func(event alerts.Event) { events = append(events, string(event.Kind)) })
 	for _, sec := range []int{0, 5, 10} {
 		at := start.Add(time.Duration(sec) * time.Second)
 		boot := time.Duration(100+sec) * time.Second
-		e.ObserveAt("cpu", at, boot, []metrics.MetricPoint{{Sensor: "cpu/total", Value: 50, At: at, BootAt: boot}})
+		e.ObserveAt("cpu", at, boot, []metrics.MetricPoint{{Sensor: "cpu/total", Value: 50, Observation: timeutil.Observation{At: at, BootAt: boot}}})
 	}
-	point := metrics.MetricPoint{Sensor: "cpu/total", Value: 49, StartedAt: start.Add(15 * time.Second), At: start.Add(23 * time.Second), BootStart: 115 * time.Second, BootAt: 123 * time.Second}
+	point := metrics.MetricPoint{Sensor: "cpu/total", Value: 49, Observation: timeutil.Observation{StartedAt: start.Add(15 * time.Second), At: start.Add(23 * time.Second), BootStart: 115 * time.Second, BootAt: 123 * time.Second}}
 	e.ObserveAt("cpu", start.Add(26*time.Second), 126*time.Second, []metrics.MetricPoint{point})
 	if !reflect.DeepEqual(events, []string{"activation"}) {
 		t.Fatalf("uncertain old acquisition recovered rule: %v", events)

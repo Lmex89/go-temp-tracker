@@ -19,20 +19,30 @@ type Reader interface {
 	Read() map[string]float64
 }
 
+// TimedReader is a Reader that can also say WHEN each value was acquired.
+// Interfaces can embed other interfaces, like a Protocol that extends another.
+// The alert path needs this; plain storage only needs Read().
+type TimedReader interface {
+	Reader
+	ReadTimed() map[string]Reading
+}
+
+// Reading is one temperature plus its acquisition times.
+// In Python: @dataclass class Reading(Observation): value: float
 type Reading struct {
-	Value     float64
-	At        time.Time
-	StartedAt time.Time
-	BootAt    time.Duration
-	BootStart time.Duration
+	Value float64
+	timeutil.Observation
 }
 
 // LinuxThermalSensor is a *struct* (like a Python class with only attributes, no methods defined inline).
 // root is the sysfs base ("/sys" in production). Tests point it at a temp dir,
 // like passing a base path into a Python class so pytest's tmp_path can fake /sys.
 type LinuxThermalSensor struct {
-	root   string
-	mu     sync.Mutex
+	root string
+	// mu serializes reads (like threading.Lock) because the poller and tests
+	// may call Read and ReadTimed from different goroutines.
+	mu sync.Mutex
+	// warned holds the warning keys already logged, used as a Python set().
 	warned map[string]bool
 }
 
@@ -62,6 +72,8 @@ func (s *LinuxThermalSensor) Read() map[string]float64 {
 }
 
 // ReadTimed preserves the acquisition time of each individual sensor.
+// It also throttles repeated warnings, because the alert cadence (5s) would
+// otherwise flood the log with the same message.
 func (s *LinuxThermalSensor) ReadTimed() map[string]Reading {
 	return s.readTimed(true)
 }
@@ -69,6 +81,9 @@ func (s *LinuxThermalSensor) ReadTimed() map[string]Reading {
 func (s *LinuxThermalSensor) readTimed(throttle bool) map[string]Reading {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// seen collects the warnings raised in THIS read. The deferred closure runs
+	// at function exit (like a finally block) and forgets warnings that did not
+	// repeat, so a problem that comes back later is logged again.
 	seen := make(map[string]bool)
 	defer func() {
 		for key := range s.warned {
@@ -94,6 +109,7 @@ func (s *LinuxThermalSensor) readTimed(throttle bool) map[string]Reading {
 	return s.readThermalZones(throttle, seen)
 }
 
+// warn logs a warning once per key while throttled; args ...any is Go's *args.
 func (s *LinuxThermalSensor) warn(throttle bool, seen map[string]bool, key, format string, args ...any) {
 	seen[key] = true
 	if !throttle || !s.warned[key] {
@@ -163,11 +179,9 @@ func (s *LinuxThermalSensor) readHwmonSensors() map[string]Reading {
 
 			// Read the temperature value from tempN_input file.
 			// Value is in millidegrees Celsius (e.g., 45000 = 45C).
-			bootStart := timeutil.BootTime()
-			startedAt := time.Now()
+			obs := timeutil.StartObservation(time.Now())
 			raw, err := os.ReadFile(tempInput)
-			at := time.Now()
-			bootAt := timeutil.ObservationBootTime(bootStart)
+			obs = obs.End(time.Now())
 			if err != nil {
 				logging.Logger.Debug("Cannot read %s: %v", baseName, err)
 				continue
@@ -200,7 +214,8 @@ func (s *LinuxThermalSensor) readHwmonSensors() map[string]Reading {
 			}
 
 			logging.Logger.Debug("Sensor %s: %.2fC", sensorName, tempC)
-			temps[sensorName] = Reading{Value: tempC, At: at, StartedAt: startedAt, BootAt: bootAt, BootStart: bootStart}
+			// Like Python: temps[sensor_name] = Reading(value=temp_c, **obs)
+			temps[sensorName] = Reading{Value: tempC, Observation: obs}
 		}
 	}
 
@@ -239,11 +254,9 @@ func (s *LinuxThermalSensor) readThermalZones(throttle bool, seen map[string]boo
 
 		// os.ReadFile reads a whole file into memory -- like Python's open().read().
 		// Returns []byte (byte slice, similar to Python's bytes) and error.
-		bootStart := timeutil.BootTime()
-		startedAt := time.Now()
+		obs := timeutil.StartObservation(time.Now())
 		raw, err := os.ReadFile(filepath.Join(zone, "temp"))
-		at := time.Now()
-		bootAt := timeutil.ObservationBootTime(bootStart)
+		obs = obs.End(time.Now())
 		if err != nil {
 			s.warn(throttle, seen, zoneName+"/temp", "Cannot read %s/temp: %v", zoneName, err)
 			continue
@@ -269,7 +282,7 @@ func (s *LinuxThermalSensor) readThermalZones(throttle bool, seen map[string]boo
 		// Linux reports temperature in millidegrees (e.g. 45000 = 45C).
 		tempC := val / 1000.0
 		logging.Logger.Debug("Sensor %s (%s): %.2fC", zoneName, name, tempC)
-		temps[name] = Reading{Value: tempC, At: at, StartedAt: startedAt, BootAt: bootAt, BootStart: bootStart}
+		temps[name] = Reading{Value: tempC, Observation: obs} // Assigning to a map -- like Python dict: temps[name] = ...
 	}
 
 	return temps // Returns the map (Go passes maps by reference, like Python dicts)

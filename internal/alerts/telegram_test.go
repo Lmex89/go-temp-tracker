@@ -16,6 +16,7 @@ import (
 	"sensors-temp/internal/logging"
 	"sensors-temp/internal/metrics"
 	"sensors-temp/internal/poller"
+	"sensors-temp/internal/sensor"
 	"sensors-temp/internal/store"
 )
 
@@ -164,6 +165,15 @@ type thermalReader struct{ values map[string]float64 }
 
 func (r *thermalReader) Read() map[string]float64 { return r.values }
 
+// ReadTimed returns untimed readings; the evaluator then uses the test's "now".
+func (r *thermalReader) ReadTimed() map[string]sensor.Reading {
+	out := make(map[string]sensor.Reading, len(r.values))
+	for name, v := range r.values {
+		out[name] = sensor.Reading{Value: v}
+	}
+	return out
+}
+
 func TestInitialRulesPollerDeliveryAndCoexistence(t *testing.T) {
 	st := store.NewSQLiteStore(filepath.Join(t.TempDir(), "readings.db"))
 	db := st.InitDB()
@@ -197,7 +207,7 @@ func TestInitialRulesPollerDeliveryAndCoexistence(t *testing.T) {
 	}
 	var events []string
 	e := NewEvaluator(rules, func(event Event) {
-		events = append(events, event.Rule.ID+":"+event.Kind)
+		events = append(events, event.Rule.ID+":"+string(event.Kind))
 		s.Enqueue(event)
 		b.Enqueue(event)
 	})
@@ -424,5 +434,34 @@ func TestTelegramQueueIsBounded(t *testing.T) {
 		case <-time.After(5 * time.Second):
 			t.Fatal("delivery stalled")
 		}
+	}
+}
+
+// Provider wait hints are honored but capped, so a huge value cannot park a
+// channel while its queue fills (table-driven, like pytest.mark.parametrize).
+func TestRetryDelayIsCapped(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		header string
+		body   int64
+		want   time.Duration
+	}{
+		{"default", "", 0, time.Second},
+		{"body hint", "", 7, 7 * time.Second},
+		{"header hint", "9", 0, 9 * time.Second},
+		{"larger hint wins", "3", 8, 8 * time.Second},
+		{"huge body hint", "", 1 << 62, maxRetryDelay},
+		{"overflowing header", "99999999999999999999", 0, maxRetryDelay},
+		{"far http date", time.Now().Add(24 * time.Hour).UTC().Format(http.TimeFormat), 0, maxRetryDelay},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			h := make(http.Header)
+			if tt.header != "" {
+				h.Set("Retry-After", tt.header)
+			}
+			if got := retryDelay(h, tt.body); got != tt.want {
+				t.Fatalf("retryDelay = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }

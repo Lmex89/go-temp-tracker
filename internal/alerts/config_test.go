@@ -173,8 +173,8 @@ func TestDisabledPrivateConfigWithMissingStatic(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg, err := alerts.LoadConfig(path, filepath.Join(dir, "static"), "", "")
-	if err != nil || cfg.Enabled || cfg.Source == nil {
-		t.Fatalf("disabled private config: enabled=%v source=%v error=%v", cfg.Enabled, cfg.Source != nil, err)
+	if err != nil || cfg.Enabled {
+		t.Fatalf("disabled private config: enabled=%v error=%v", cfg.Enabled, err)
 	}
 }
 

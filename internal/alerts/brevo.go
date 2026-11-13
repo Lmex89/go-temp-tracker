@@ -7,39 +7,30 @@ import (
 	"net/http"
 	"strings"
 	"time"
-
-	"sensors-temp/internal/logging"
 )
 
-// Brevo owns an independent bounded FIFO so a slow provider cannot block Telegram.
+// Brevo sends events by e-mail through its HTTPS API. It embeds its own queue,
+// independent of Telegram's, so a slow provider cannot block the other channel.
 type Brevo struct {
-	queue                     chan Event
+	queue
 	key, from, name, to, host string
 	client                    *http.Client
-	wait                      func(time.Duration)
 }
 
+// NewBrevo starts the Brevo worker with production defaults.
 func NewBrevo(key, from, name, to, host string) *Brevo {
 	return newBrevo(key, from, name, to, host, &http.Client{}, queueCapacity, time.Sleep)
 }
 
+// newBrevo mirrors newTelegram: injectable client, capacity and wait for tests.
 func newBrevo(key, from, name, to, host string, client *http.Client, capacity int, wait func(time.Duration)) *Brevo {
-	c := *client
-	c.Timeout = 10 * time.Second
-	c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	b := &Brevo{make(chan Event, capacity), key, from, name, to, host, &c, wait}
-	go runDelivery("Brevo", b.queue, b.send, b.wait)
+	b := &Brevo{key: key, from: from, name: name, to: to, host: host, client: safeClient(client)}
+	b.queue = startQueue("Brevo", capacity, b.send, wait)
 	return b
 }
 
-func (b *Brevo) Enqueue(e Event) {
-	select {
-	case b.queue <- e:
-	default:
-		logging.Logger.Error("Brevo delivery queue full; lost %s for rule %s", e.Kind, e.Rule.ID)
-	}
-}
-
+// send makes ONE delivery attempt; see Telegram.send. The local "type address"
+// is scoped to this function, like a class defined inside a Python function.
 func (b *Brevo) send(e Event) (bool, time.Duration) {
 	type address struct {
 		Email string `json:"email"`
@@ -50,7 +41,7 @@ func (b *Brevo) send(e Event) (bool, time.Duration) {
 		To      []address `json:"to"`
 		Subject string    `json:"subject"`
 		Text    string    `json:"textContent"`
-	}{address{b.from, b.name}, []address{{Email: b.to}}, "Alert " + e.Kind + ": " + e.Rule.ID, eventText(e, b.host)})
+	}{address{b.from, b.name}, []address{{Email: b.to}}, "Alert " + string(e.Kind) + ": " + e.Rule.ID, eventText(e, b.host)})
 	if err != nil {
 		return false, time.Second
 	}

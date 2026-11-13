@@ -8,7 +8,6 @@ import (
 	"sensors-temp/internal/metrics"
 	"sensors-temp/internal/sensor"
 	"sensors-temp/internal/store"
-	"sensors-temp/internal/timeutil"
 	"sync"
 	"time"
 )
@@ -17,11 +16,12 @@ import (
 // It runs an infinite loop: read -> insert -> prune -> sleep.
 // In Python you'd write a class with __init__ setting self.sensor, self.store, self.db.
 type Poller struct {
-	reader  sensor.Reader // named reader (not sensor) so it does not shadow the sensor package
-	store   store.Store
-	db      *sql.DB
-	warnMu  sync.Mutex
-	missing bool
+	reader sensor.Reader // named reader (not sensor) so it does not shadow the sensor package
+	store  store.Store
+	db     *sql.DB
+	// warnMu guards noSensorsWarned (like a threading.Lock around a flag).
+	warnMu          sync.Mutex
+	noSensorsWarned bool
 }
 
 // New is the constructor (called as poller.New from main) -- like Python's __init__,
@@ -39,58 +39,51 @@ func (p *Poller) Run(intervalSec, retainHours int) {
 
 	// Infinite loop -- same as "while True:" in Python.
 	for {
-		p.poll(retainHours)
+		p.Poll(retainHours, nil)
 
 		logging.Logger.Debug("Sleeping for %d seconds...", intervalSec)
 		time.Sleep(time.Duration(intervalSec) * time.Second)
 	}
 }
 
-// poll runs ONE cycle (read -> insert -> prune) without sleeping.
+// Poll runs ONE cycle (read -> observe -> insert -> prune) without sleeping.
 // Split out of Run so tests can exercise a cycle without an infinite loop.
-func (p *Poller) poll(retainHours int) {
-	p.Poll(retainHours, nil)
-}
-
-// Poll observes fresh temperature readings before storing every sensor.
+// observe may be nil (no alerts); in Python it would be an Optional[Callable].
+// It is exported because the alerts package drives its end-to-end tests
+// (Poller -> rules -> notifications) through it.
 func (p *Poller) Poll(retainHours int, observe func([]metrics.MetricPoint)) {
 	logging.Logger.Debug("Reading CPU temperatures...")
 	var temps map[string]float64
 	var points []metrics.MetricPoint
-	if timed, ok := p.reader.(interface {
-		ReadTimed() map[string]sensor.Reading
-	}); ok && observe != nil {
+	// Type assertion with ", ok": like isinstance(p.reader, TimedReader) in Python.
+	// A reader without acquisition times yields no points, which the evaluator
+	// logs as lost observation instead of guessing when the value was read.
+	timed, ok := p.reader.(sensor.TimedReader)
+	if observe != nil && ok {
 		readings := timed.ReadTimed()
 		temps = make(map[string]float64, len(readings))
 		for name, reading := range readings {
 			temps[name] = reading.Value
-			points = append(points, metrics.MetricPoint{Sensor: name, Value: reading.Value, Unit: "C", At: reading.At, StartedAt: reading.StartedAt, BootAt: reading.BootAt, BootStart: reading.BootStart})
+			points = append(points, metrics.MetricPoint{Sensor: name, Value: reading.Value, Unit: "C", Observation: reading.Observation})
 		}
 	} else {
-		var bootStart, bootAt time.Duration
-		if observe != nil {
-			bootStart = timeutil.BootTime()
-		}
 		temps = p.reader.Read()
-		if observe != nil {
-			bootAt = timeutil.ObservationBootTime(bootStart)
-		}
-		for name, temp := range temps {
-			points = append(points, metrics.MetricPoint{Sensor: name, Value: temp, Unit: "C", BootAt: bootAt, BootStart: bootStart})
-		}
 	}
 
+	// Alerts see the fresh values even if the database insert below fails.
 	if observe != nil {
 		observe(points)
 	}
+	// With alerts on, the 5s cadence would repeat this warning constantly,
+	// so it is logged once until sensors come back.
 	p.warnMu.Lock()
 	if len(temps) == 0 {
-		if observe == nil || !p.missing {
+		if observe == nil || !p.noSensorsWarned {
 			logging.Logger.Warn("No temperature sensors found")
 		}
-		p.missing = true
+		p.noSensorsWarned = true
 	} else {
-		p.missing = false
+		p.noSensorsWarned = false
 	}
 	p.warnMu.Unlock()
 
@@ -106,11 +99,7 @@ func (p *Poller) Poll(retainHours int, observe func([]metrics.MetricPoint)) {
 
 // RunObserved schedules temperature cycles between their starts.
 func (p *Poller) RunObserved(intervalSec, retainHours int, observe func([]metrics.MetricPoint)) {
-	p.runObserved(intervalSec, retainHours, observe, time.Now, func(d time.Duration) bool { time.Sleep(d); return true })
-}
-
-func (p *Poller) runObserved(intervalSec, retainHours int, observe func([]metrics.MetricPoint), now func() time.Time, sleep func(time.Duration) bool) {
-	runObserved("temperature", intervalSec, retainHours, func() { p.Poll(retainHours, observe) }, now, sleep)
+	runObserved("temperature", intervalSec, retainHours, func() { p.Poll(retainHours, observe) }, time.Now, sleepAlways)
 }
 
 // RunMetric is a generic polling loop for any system metric type.
@@ -121,7 +110,7 @@ func RunMetric(st store.Store, db *sql.DB, metricType string, intervalSec, retai
 	logging.Logger.Info("[%s] polling loop started (interval=%ds, retain=%dh)", metricType, intervalSec, retainHours)
 
 	for {
-		pollMetric(st, db, metricType, retainHours, readFunc)
+		PollMetric(st, db, metricType, retainHours, readFunc, nil)
 
 		logging.Logger.Debug("[%s] sleeping for %d seconds...", metricType, intervalSec)
 		time.Sleep(time.Duration(intervalSec) * time.Second)
@@ -130,28 +119,31 @@ func RunMetric(st store.Store, db *sql.DB, metricType string, intervalSec, retai
 
 // RunMetricObserved schedules cycles between their starts, including read time.
 func RunMetricObserved(st store.Store, db *sql.DB, metricType string, intervalSec, retainHours int, readFunc func() []metrics.MetricPoint, observe func([]metrics.MetricPoint)) {
-	runMetricObserved(st, db, metricType, intervalSec, retainHours, readFunc, observe, time.Now, func(d time.Duration) bool { time.Sleep(d); return true })
+	runObserved(metricType, intervalSec, retainHours, func() { PollMetric(st, db, metricType, retainHours, readFunc, observe) }, time.Now, sleepAlways)
 }
 
-func runMetricObserved(st store.Store, db *sql.DB, metricType string, intervalSec, retainHours int, readFunc func() []metrics.MetricPoint, observe func([]metrics.MetricPoint), now func() time.Time, sleep func(time.Duration) bool) {
-	runObserved(metricType, intervalSec, retainHours, func() { PollMetric(st, db, metricType, retainHours, readFunc, observe) }, now, sleep)
-}
+// sleepAlways is the production sleep: it never asks the loop to stop.
+func sleepAlways(d time.Duration) bool { time.Sleep(d); return true }
 
+// runObserved keeps a fixed cadence measured from the START of each cycle, so
+// slow reads (CPU blocks ~1s) do not stretch the interval. now and sleep are
+// injected (like passing a fake clock to a Python function) so tests can stop
+// the loop by returning false from sleep.
 func runObserved(metricType string, intervalSec, retainHours int, poll func(), now func() time.Time, sleep func(time.Duration) bool) {
 	logging.Logger.Info("[%s] observed polling loop started (target interval=%ds, retain=%dh)", metricType, intervalSec, retainHours)
-	delayed := false
+	overrunWarned := false
 	for {
 		start := now()
 		poll()
 		wait := time.Duration(intervalSec)*time.Second - now().Sub(start)
 		if wait <= 0 {
-			if !delayed {
+			if !overrunWarned {
 				logging.Logger.Warn("[%s] polling cycle exceeded target interval", metricType)
 			}
-			delayed = true
+			overrunWarned = true
 			wait = 0
 		} else {
-			delayed = false
+			overrunWarned = false
 		}
 		if !sleep(wait) {
 			return
@@ -159,12 +151,8 @@ func runObserved(metricType string, intervalSec, retainHours int, poll func(), n
 	}
 }
 
-// pollMetric runs ONE cycle (read -> insert -> prune) for a system metric.
-func pollMetric(st store.Store, db *sql.DB, metricType string, retainHours int, readFunc func() []metrics.MetricPoint) {
-	PollMetric(st, db, metricType, retainHours, readFunc, nil)
-}
-
-// PollMetric runs one cycle and observes the fresh readings before persistence.
+// PollMetric runs ONE cycle (read -> observe -> insert -> prune) for a system
+// metric. observe may be nil; it sees the fresh readings before persistence.
 func PollMetric(st store.Store, db *sql.DB, metricType string, retainHours int, readFunc func() []metrics.MetricPoint, observe func([]metrics.MetricPoint)) {
 	logging.Logger.Debug("Reading [%s] metrics...", metricType)
 	points := readFunc()

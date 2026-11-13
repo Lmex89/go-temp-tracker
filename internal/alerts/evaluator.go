@@ -10,25 +10,42 @@ import (
 	"sensors-temp/internal/timeutil"
 )
 
+// EventKind says whether an alert started or ended. A named string type is
+// Go's lightweight enum (like class EventKind(str, Enum) in Python).
+type EventKind string
+
+const (
+	Activation EventKind = "activation"
+	Recovery   EventKind = "recovery"
+)
+
+// Event is what the evaluator hands to the delivery queues.
 type Event struct {
-	Kind  string
+	Kind  EventKind
 	Rule  Rule
 	Point metrics.MetricPoint
 	At    time.Time
 }
 
+// ruleState is the in-memory progress of one rule. pending is the start of
+// the current above-threshold streak (zero time = no streak, like None);
+// last is the normalized acquisition window of the previous valid reading.
 type ruleState struct {
-	rule        Rule
-	pending     time.Time
-	last        time.Time
-	lastEnd     time.Time
-	lastBoot    time.Duration
-	lastBootEnd time.Duration
-	active      bool
-	lost        bool
+	rule    Rule
+	pending time.Time
+	last    timeutil.Observation
+	active  bool
+	lost    bool
+}
+
+// reset forgets the streak and the previous reading after a gap or bad data.
+func (s *ruleState) reset() {
+	s.pending, s.last = time.Time{}, timeutil.Observation{}
 }
 
 // Evaluator protects independent rule states shared by the polling goroutines.
+// emit is a callback (a plain function value, like passing a lambda in Python)
+// that main wires to the Telegram and Brevo queues.
 type Evaluator struct {
 	mu     sync.Mutex
 	states []ruleState
@@ -48,15 +65,20 @@ func (e *Evaluator) Observe(metricType string, now time.Time, points []metrics.M
 	e.observe(metricType, now, points, timeutil.BootTime)
 }
 
-// ObserveAt allows callers with a controlled suspend-aware clock to evaluate readings.
+// ObserveAt is Observe with an explicit suspend-aware clock. It stays exported
+// because the cross-package Poller -> rules tests need a controlled clock
+// (in Python you would monkeypatch the clock instead).
 func (e *Evaluator) ObserveAt(metricType string, now time.Time, bootNow time.Duration, points []metrics.MetricPoint) {
 	e.observe(metricType, now, points, func() time.Duration { return bootNow })
 }
 
 func (e *Evaluator) observe(metricType string, now time.Time, points []metrics.MetricPoint, bootClock func() time.Duration) {
+	// Both pollers call this from their own goroutines; the mutex is the Go
+	// version of "with self._lock:".
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	for i := range e.states {
+		// Take a pointer so changes stick; ranging by value would edit a copy.
 		s := &e.states[i]
 		if s.rule.MetricType != metricType {
 			continue
@@ -70,7 +92,7 @@ func (e *Evaluator) observe(metricType string, now time.Time, points []metrics.M
 			}
 		}
 		if !found || math.IsNaN(point.Value) || math.IsInf(point.Value, 0) {
-			s.pending, s.last, s.lastEnd, s.lastBoot, s.lastBootEnd = time.Time{}, time.Time{}, time.Time{}, 0, 0
+			s.reset()
 			if !s.lost {
 				logging.Logger.Warn("Alert observation lost for rule %s", s.rule.ID)
 				s.lost = true
@@ -86,7 +108,7 @@ func (e *Evaluator) observe(metricType string, now time.Time, points []metrics.M
 			startedAt = at
 		}
 		if point.BootAt < 0 {
-			s.pending, s.last, s.lastEnd, s.lastBoot, s.lastBootEnd = time.Time{}, time.Time{}, time.Time{}, 0, 0
+			s.reset()
 			if !s.lost {
 				if point.BootAt == timeutil.ClockUnavailable {
 					logging.Logger.Warn("Alert observation clock unavailable for rule %s", s.rule.ID)
@@ -107,16 +129,17 @@ func (e *Evaluator) observe(metricType string, now time.Time, points []metrics.M
 			stale = stale || bootNow <= 0 || point.BootAt > bootNow || bootStart > point.BootAt || bootNow-bootStart > 10*time.Second
 		}
 		if stale {
-			s.pending, s.last, s.lastEnd, s.lastBoot, s.lastBootEnd = time.Time{}, time.Time{}, time.Time{}, 0, 0
+			s.reset()
 			if !s.lost {
 				logging.Logger.Warn("Alert observation stale for rule %s", s.rule.ID)
 				s.lost = true
 			}
 			continue
 		}
-		bootGap := (point.BootAt == 0) != (s.lastBootEnd == 0) ||
-			(point.BootAt > 0 && s.lastBootEnd > 0 && (bootStart-s.lastBoot > 10*time.Second || point.BootAt-s.lastBootEnd > 10*time.Second || bootStart < s.lastBoot || point.BootAt < s.lastBootEnd))
-		if !s.last.IsZero() && (startedAt.Sub(s.last) > 10*time.Second || at.Sub(s.lastEnd) > 10*time.Second || startedAt.Before(s.last) || at.Before(s.lastEnd) || bootGap) {
+		last := s.last
+		bootGap := (point.BootAt == 0) != (last.BootAt == 0) ||
+			(point.BootAt > 0 && last.BootAt > 0 && (bootStart-last.BootStart > 10*time.Second || point.BootAt-last.BootAt > 10*time.Second || bootStart < last.BootStart || point.BootAt < last.BootAt))
+		if !last.StartedAt.IsZero() && (startedAt.Sub(last.StartedAt) > 10*time.Second || at.Sub(last.At) > 10*time.Second || startedAt.Before(last.StartedAt) || at.Before(last.At) || bootGap) {
 			s.pending = time.Time{}
 			if !s.lost {
 				logging.Logger.Warn("Alert observation gap for rule %s", s.rule.ID)
@@ -125,15 +148,12 @@ func (e *Evaluator) observe(metricType string, now time.Time, points []metrics.M
 		} else {
 			s.lost = false
 		}
-		s.last = startedAt
-		s.lastEnd = at
-		s.lastBoot = bootStart
-		s.lastBootEnd = point.BootAt
+		s.last = timeutil.Observation{StartedAt: startedAt, At: at, BootStart: bootStart, BootAt: point.BootAt}
 		if point.Value < s.rule.Threshold {
 			s.pending = time.Time{}
 			if s.active {
 				s.active = false
-				e.event("recovery", s.rule, point, at)
+				e.event(Recovery, s.rule, point, at)
 			}
 			continue
 		}
@@ -144,15 +164,17 @@ func (e *Evaluator) observe(metricType string, now time.Time, points []metrics.M
 			s.pending = at
 			continue
 		}
+		// Conservative on purpose: the streak counts only up to the START of
+		// the current reading, so a 1s CPU sample cannot round the duration up.
 		if startedAt.Sub(s.pending) >= s.rule.Duration {
 			s.active = true
 			s.pending = time.Time{}
-			e.event("activation", s.rule, point, at)
+			e.event(Activation, s.rule, point, at)
 		}
 	}
 }
 
-func (e *Evaluator) event(kind string, rule Rule, point metrics.MetricPoint, at time.Time) {
+func (e *Evaluator) event(kind EventKind, rule Rule, point metrics.MetricPoint, at time.Time) {
 	logging.Logger.Info("Alert %s for rule %s", kind, rule.ID)
 	e.emit(Event{kind, rule, point, at})
 }

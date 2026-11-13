@@ -35,7 +35,7 @@ Bucle que lee, inserta, poda y duerme; hay uno para temperatura (`internal/polle
 _Evitar_: worker, collector
 
 **Internal package**:
-Paquete bajo `internal/` (logging, timeutil, store, sensor, metrics, poller, httpapi); Go impide importarlo desde fuera del modulo (ver ADR-0003).
+Paquete bajo `internal/` (logging, timeutil, store, sensor, metrics, poller, httpapi, alerts); Go impide importarlo desde fuera del modulo (ver ADR-0003).
 _Evitar_: pkg, libreria
 
 ### Deteccion de anomalias

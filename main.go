@@ -3,10 +3,8 @@ package main
 import (
 	"flag"
 	"fmt"
-	"io/fs"
 	"net/http"
 	"os"
-	"path/filepath"
 	"sensors-temp/internal/alerts"
 	"sensors-temp/internal/httpapi"
 	"sensors-temp/internal/logging"
@@ -15,8 +13,6 @@ import (
 	"sensors-temp/internal/sensor"
 	"sensors-temp/internal/store"
 	"strconv"
-	"strings"
-	"sync/atomic"
 	"time"
 )
 
@@ -36,131 +32,14 @@ func getEnvInt(key string, defaultVal int) int {
 	return parsed
 }
 
+// pollingIntervals returns (temperature, cpu) intervals in seconds. Go functions
+// can return several values, like returning a tuple in Python. Alerts need a
+// 5s cadence to detect gaps over 10s, so they override the configured values.
 func pollingIntervals(alertsEnabled bool, temperature, cpu int) (int, int) {
 	if alertsEnabled {
 		return 5, 5
 	}
 	return temperature, cpu
-}
-
-type staticFiles struct {
-	root       *os.Root
-	configPath string
-	configInfo os.FileInfo
-	changed    *atomic.Bool
-	watch      *configWatch
-	initial    map[string]os.FileInfo
-}
-
-func (s staticFiles) configValid() bool {
-	if s.configInfo == nil {
-		return true
-	}
-	if s.watch == nil || s.watch.changed() {
-		s.changed.Store(true)
-	}
-	current, err := os.Stat(s.configPath)
-	if err != nil {
-		s.changed.Store(true)
-		return false
-	}
-	if !os.SameFile(s.configInfo, current) || !sameStaticFile(s.configInfo, current) || !singleLink(current) {
-		s.changed.Store(true)
-	}
-	return true
-}
-
-func (s staticFiles) Open(name string) (fs.File, error) {
-	if !fs.ValidPath(name) {
-		return nil, fs.ErrNotExist
-	}
-	base, err := filepath.EvalSymlinks(s.root.Name())
-	if err != nil {
-		return nil, fs.ErrNotExist
-	}
-	target, err := filepath.EvalSymlinks(filepath.Join(base, name))
-	if err != nil {
-		return nil, fs.ErrNotExist
-	}
-	rel, err := filepath.Rel(base, target)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return nil, fs.ErrNotExist
-	}
-	f, err := s.root.Open(rel)
-	if err != nil {
-		return nil, fs.ErrNotExist
-	}
-	info, err := f.Stat()
-	if err != nil {
-		f.Close()
-		return nil, fs.ErrNotExist
-	}
-	if s.configInfo != nil && info.Mode().IsRegular() {
-		original, exists := s.initial[rel]
-		current, statErr := os.Stat(s.configPath)
-		// shortcut: new or replaced assets need a restart after config changes, refresh the trusted set on restart.
-		if !s.configValid() || statErr != nil || !singleLink(info) || os.SameFile(info, s.configInfo) || os.SameFile(info, current) || (s.changed.Load() && (!exists || !os.SameFile(original, info))) {
-			f.Close()
-			return nil, fs.ErrNotExist
-		}
-	}
-	return f, nil
-}
-
-func staticHandler(publicDir, configPath string, configInfo os.FileInfo) http.Handler {
-	changed := &atomic.Bool{}
-	initial := make(map[string]os.FileInfo)
-	var watch *configWatch
-	if configInfo != nil {
-		var err error
-		watch, err = newConfigWatch(configPath)
-		if err != nil {
-			changed.Store(true)
-		}
-		staticFiles{configPath: configPath, configInfo: configInfo, changed: changed, watch: watch}.configValid()
-		base, err := filepath.EvalSymlinks(publicDir)
-		if err == nil {
-			walkErr := filepath.WalkDir(base, func(path string, entry fs.DirEntry, walkErr error) error {
-				if walkErr != nil {
-					logging.Logger.Debug("Skipping inaccessible static entry")
-					return nil
-				}
-				if entry.Type()&os.ModeSymlink != 0 {
-					return nil
-				}
-				info, err := entry.Info()
-				if err != nil {
-					return nil
-				}
-				if info.Mode().IsRegular() && singleLink(info) && !os.SameFile(info, configInfo) {
-					rel, err := filepath.Rel(base, path)
-					if err != nil {
-						return nil
-					}
-					initial[rel] = info
-				}
-				return nil
-			})
-			if walkErr != nil {
-				logging.Logger.Warn("Cannot inspect all static entries")
-			}
-		}
-	}
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		files := staticFiles{configPath: configPath, configInfo: configInfo, changed: changed, watch: watch, initial: initial}
-		if !files.configValid() {
-			http.NotFound(w, r)
-			return
-		}
-		root, err := os.OpenRoot(publicDir)
-		if err != nil {
-			http.NotFound(w, r)
-			return
-		}
-		defer root.Close()
-		files.root = root
-		http.FileServerFS(files).ServeHTTP(w, r)
-	})
 }
 
 // newStore returns a Store implementation based on the requested driver.
@@ -195,12 +74,15 @@ func main() {
 
 	logging.Logger.Info("Starting System Monitor")
 	logging.Logger.Debug("Config: port=%d, interval=%ds, retain=%dh", *port, *interval, *retain)
+	// Alerts are validated BEFORE the database opens, so a bad config fails fast.
+	// Credentials come only from the environment (os.Getenv ~ os.environ.get).
 	alertToken := os.Getenv("TELEGRAM_BOT_TOKEN")
 	brevoKey := os.Getenv("BREVO_API_KEY")
 	alertCfg, err := alerts.LoadConfig(*alertConfig, "static", alertToken, brevoKey)
 	if err != nil {
 		logging.Logger.Fatal("Invalid alerts configuration: %v", err)
 	}
+	// A nil pointer means "alerts off", like evaluator = None in Python.
 	var evaluator *alerts.Evaluator
 	if alertCfg.Enabled {
 		host, err := os.Hostname()
@@ -254,7 +136,7 @@ func main() {
 		if evaluator == nil {
 			tempPoller.Run(tempInterval, *retain)
 		} else {
-			tempPoller.RunObserved(tempInterval, *retain, func(points []metrics.MetricPoint) { evaluator.Observe("temperature", time.Now(), points) })
+			tempPoller.RunObserved(tempInterval, *retain, func(points []metrics.MetricPoint) { evaluator.Observe(alerts.MetricTemperature, time.Now(), points) })
 		}
 	}()
 
@@ -263,7 +145,7 @@ func main() {
 		if evaluator == nil {
 			poller.RunMetric(st, db, "cpu", cpuInterval, *retain, sysMetrics.ReadCPU)
 		} else {
-			poller.RunMetricObserved(st, db, "cpu", cpuInterval, *retain, sysMetrics.ReadCPU, func(points []metrics.MetricPoint) { evaluator.Observe("cpu", time.Now(), points) })
+			poller.RunMetricObserved(st, db, alerts.MetricCPU, cpuInterval, *retain, sysMetrics.ReadCPU, func(points []metrics.MetricPoint) { evaluator.Observe(alerts.MetricCPU, time.Now(), points) })
 		}
 	}()
 	memInterval := getEnvInt("MEMORY_POLL_INTERVAL", metricDefaultInterval)
@@ -293,7 +175,7 @@ func main() {
 	// All /api/* routes (temps, cpu, memory, swap, disk, load, current/*).
 	httpapi.Register(mux, st, db)
 
-	mux.Handle("/", staticHandler("static", *alertConfig, alertCfg.Source))
+	mux.Handle("/", http.FileServer(http.Dir("static")))
 
 	addr := fmt.Sprintf(":%d", *port)
 	logging.Logger.Info("HTTP server listening on %s", addr)

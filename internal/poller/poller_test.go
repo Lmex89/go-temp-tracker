@@ -17,6 +17,7 @@ import (
 	"sensors-temp/internal/metrics"
 	"sensors-temp/internal/sensor"
 	"sensors-temp/internal/store"
+	"sensors-temp/internal/timeutil"
 )
 
 func TestObservedTemperatureMissingWarnsOncePerOutage(t *testing.T) {
@@ -78,6 +79,21 @@ type fakeSensor struct{ temps map[string]float64 }
 
 func (f fakeSensor) Read() map[string]float64 { return f.temps }
 
+// ReadTimed returns the values without acquisition times, so the evaluator
+// falls back to the "now" each test passes in (a minimal Mock return value).
+func (f fakeSensor) ReadTimed() map[string]sensor.Reading {
+	out := make(map[string]sensor.Reading, len(f.temps))
+	for name, v := range f.temps {
+		out[name] = sensor.Reading{Value: v}
+	}
+	return out
+}
+
+// plainSensor only implements Read(), like a reader that cannot time its values.
+type plainSensor struct{ temps map[string]float64 }
+
+func (f plainSensor) Read() map[string]float64 { return f.temps }
+
 type timedSensor struct{ readings map[string]sensor.Reading }
 
 func (s timedSensor) Read() map[string]float64             { panic("expected timed readings") }
@@ -96,8 +112,8 @@ func TestTemperatureUsesEachReadingTime(t *testing.T) {
 			delay = 0
 		}
 		reader.readings = map[string]sensor.Reading{
-			"selected": {Value: 65, At: start.Add(time.Duration(seconds) * time.Second)},
-			"slow":     {Value: 40, At: start.Add(time.Duration(seconds+delay) * time.Second)},
+			"selected": {Value: 65, Observation: timeutil.Observation{At: start.Add(time.Duration(seconds) * time.Second)}},
+			"slow":     {Value: 40, Observation: timeutil.Observation{At: start.Add(time.Duration(seconds+delay) * time.Second)}},
 		}
 		p.Poll(24, func(points []metrics.MetricPoint) {
 			e.Observe("temperature", start.Add(time.Duration(seconds+delay)*time.Second), points)
@@ -106,7 +122,7 @@ func TestTemperatureUsesEachReadingTime(t *testing.T) {
 			t.Fatalf("early activation: %+v", events)
 		}
 	}
-	reader.readings = map[string]sensor.Reading{"selected": {Value: 65, At: start.Add(10 * time.Second)}}
+	reader.readings = map[string]sensor.Reading{"selected": {Value: 65, Observation: timeutil.Observation{At: start.Add(10 * time.Second)}}}
 	p.Poll(24, func(points []metrics.MetricPoint) { e.Observe("temperature", start.Add(19*time.Second), points) })
 	if len(events) != 1 || !events[0].At.Equal(start.Add(10*time.Second)) {
 		t.Fatalf("events = %+v", events)
@@ -119,10 +135,10 @@ func TestTemperatureSuspendBreaksPendingThroughPoller(t *testing.T) {
 	reader := &timedSensor{}
 	p := New(reader, st, db)
 	var events []string
-	e := alerts.NewEvaluator([]alerts.Rule{{ID: "hot", MetricType: "temperature", Sensor: "selected", Threshold: 65, Duration: 10 * time.Second}}, func(event alerts.Event) { events = append(events, event.Kind) })
+	e := alerts.NewEvaluator([]alerts.Rule{{ID: "hot", MetricType: "temperature", Sensor: "selected", Threshold: 65, Duration: 10 * time.Second}}, func(event alerts.Event) { events = append(events, string(event.Kind)) })
 	for _, step := range []struct{ sec, boot int }{{0, 100}, {5, 105}, {10, 3710}, {15, 3715}, {20, 3720}} {
 		at := start.Add(time.Duration(step.sec) * time.Second)
-		reader.readings = map[string]sensor.Reading{"selected": {Value: 65, At: at, BootAt: time.Duration(step.boot) * time.Second}}
+		reader.readings = map[string]sensor.Reading{"selected": {Value: 65, Observation: timeutil.Observation{At: at, BootAt: time.Duration(step.boot) * time.Second}}}
 		p.Poll(24, func(points []metrics.MetricPoint) {
 			e.ObserveAt("temperature", at, time.Duration(step.boot)*time.Second, points)
 		})
@@ -141,7 +157,7 @@ func TestStaleTemperatureThroughPollerDoesNotRecover(t *testing.T) {
 	reader := &timedSensor{}
 	p := New(reader, st, db)
 	var events []string
-	e := alerts.NewEvaluator([]alerts.Rule{{ID: "hot", MetricType: "temperature", Sensor: "selected", Threshold: 65, Duration: 10 * time.Second}}, func(event alerts.Event) { events = append(events, event.Kind) })
+	e := alerts.NewEvaluator([]alerts.Rule{{ID: "hot", MetricType: "temperature", Sensor: "selected", Threshold: 65, Duration: 10 * time.Second}}, func(event alerts.Event) { events = append(events, string(event.Kind)) })
 	for _, step := range []struct {
 		read, processed, bootRead, bootNow int
 		value                              float64
@@ -149,7 +165,7 @@ func TestStaleTemperatureThroughPollerDoesNotRecover(t *testing.T) {
 		{0, 0, 100, 100, 65}, {5, 5, 105, 105, 65}, {10, 10, 110, 110, 65}, {15, 15, 115, 3715, 64}, {20, 20, 3720, 3720, 64},
 	} {
 		at := start.Add(time.Duration(step.read) * time.Second)
-		reader.readings = map[string]sensor.Reading{"selected": {Value: step.value, At: at, BootAt: time.Duration(step.bootRead) * time.Second}}
+		reader.readings = map[string]sensor.Reading{"selected": {Value: step.value, Observation: timeutil.Observation{At: at, BootAt: time.Duration(step.bootRead) * time.Second}}}
 		p.Poll(24, func(points []metrics.MetricPoint) {
 			e.ObserveAt("temperature", start.Add(time.Duration(step.processed)*time.Second), time.Duration(step.bootNow)*time.Second, points)
 		})
@@ -166,14 +182,20 @@ func TestStaleTemperatureThroughPollerDoesNotRecover(t *testing.T) {
 	}
 }
 
-func TestTemperatureLegacyReaderIncludesSuspendClock(t *testing.T) {
+// An untimed reader is still stored but never observed: the evaluator gets no
+// points (logged as lost observation) instead of guessed acquisition times.
+func TestUntimedReaderIsStoredButNotObserved(t *testing.T) {
 	st, db := newDB(t)
-	p := New(fakeSensor{map[string]float64{"selected": 65}}, st, db)
+	p := New(plainSensor{map[string]float64{"selected": 65}}, st, db)
 	p.Poll(24, func(points []metrics.MetricPoint) {
-		if len(points) != 1 || points[0].BootAt <= 0 {
-			t.Fatalf("missing suspend-aware timestamp: %+v", points)
+		if len(points) != 0 {
+			t.Fatalf("untimed reader produced observations: %+v", points)
 		}
 	})
+	rows, err := st.Query(db, store.TimeWindow{Hours: 1}, "temperature")
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("stored %d rows: %v", len(rows), err)
+	}
 }
 
 // newDB builds a throwaway SQLite store in t.TempDir(); temps.db is never touched.
@@ -224,7 +246,7 @@ func TestCPUAlertUsesAcquisitionTimeInsteadOfDelayedProcessing(t *testing.T) {
 	var events []alerts.Event
 	e := alerts.NewEvaluator([]alerts.Rule{{ID: "cpu", MetricType: "cpu", Sensor: "cpu/total", Threshold: 50, Duration: 10 * time.Second}}, func(event alerts.Event) { events = append(events, event) })
 	for _, step := range []struct{ acquired, processed int }{{0, 0}, {5, 10}, {9, 14}, {10, 15}} {
-		point := metrics.MetricPoint{Sensor: "cpu/total", Value: 50, Unit: "%", At: start.Add(time.Duration(step.acquired) * time.Second), BootAt: time.Duration(100+step.acquired) * time.Second}
+		point := metrics.MetricPoint{Sensor: "cpu/total", Value: 50, Unit: "%", Observation: timeutil.Observation{At: start.Add(time.Duration(step.acquired) * time.Second), BootAt: time.Duration(100+step.acquired) * time.Second}}
 		PollMetric(st, db, "cpu", 24, func() []metrics.MetricPoint { return []metrics.MetricPoint{point} }, func(points []metrics.MetricPoint) {
 			e.ObserveAt("cpu", start.Add(time.Duration(step.processed)*time.Second), time.Duration(100+step.processed)*time.Second, points)
 		})
@@ -248,7 +270,7 @@ func TestTemperatureAndCPURulesStayIndependent(t *testing.T) {
 		{ID: "cpu", MetricType: "cpu", Sensor: "cpu/total", Threshold: 50, Duration: 10 * time.Second},
 	}
 	var events []string
-	e := alerts.NewEvaluator(rules, func(event alerts.Event) { events = append(events, event.Rule.ID+":"+event.Kind) })
+	e := alerts.NewEvaluator(rules, func(event alerts.Event) { events = append(events, event.Rule.ID+":"+string(event.Kind)) })
 	start := time.Now()
 	for sec := 0; sec <= 250; sec += 5 {
 		reader.temps = map[string]float64{"coretemp/Package id 0": 65, "coretemp/Core 0": 90, "cpu/total": 0}
@@ -294,7 +316,7 @@ func TestConcurrentTemperatureAndCPUObservation(t *testing.T) {
 		{ID: "cpu", MetricType: "cpu", Sensor: "cpu/total", Threshold: 50, Duration: 10 * time.Second},
 	}
 	counts := map[string]int{}
-	e := alerts.NewEvaluator(rules, func(event alerts.Event) { counts[event.Rule.ID+":"+event.Kind]++ })
+	e := alerts.NewEvaluator(rules, func(event alerts.Event) { counts[event.Rule.ID+":"+string(event.Kind)]++ })
 	start := time.Now()
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -326,7 +348,7 @@ func TestTemperatureContinuityWithMissingInvalidAndGaps(t *testing.T) {
 	p := New(reader, st, db)
 	var events []string
 	e := alerts.NewEvaluator([]alerts.Rule{{ID: "hot", MetricType: "temperature", Sensor: "selected", Threshold: 65, Duration: 10 * time.Second}}, func(event alerts.Event) {
-		events = append(events, event.Kind)
+		events = append(events, string(event.Kind))
 	})
 	start := time.Now()
 	steps := []struct {
@@ -366,7 +388,7 @@ func TestTemperatureAlertsDoNotDependOnPersistence(t *testing.T) {
 	}
 	p := New(fakeSensor{map[string]float64{"selected": 65}}, st, db)
 	var events []string
-	e := alerts.NewEvaluator([]alerts.Rule{{ID: "hot", MetricType: "temperature", Sensor: "selected", Threshold: 65, Duration: 5 * time.Second}}, func(event alerts.Event) { events = append(events, event.Kind) })
+	e := alerts.NewEvaluator([]alerts.Rule{{ID: "hot", MetricType: "temperature", Sensor: "selected", Threshold: 65, Duration: 5 * time.Second}}, func(event alerts.Event) { events = append(events, string(event.Kind)) })
 	start := time.Now()
 	for i := 0; i < 2; i++ {
 		now := start.Add(time.Duration(i) * 5 * time.Second)
@@ -391,7 +413,7 @@ func TestObservedCadenceIncludesReadTime(t *testing.T) {
 		}
 		return []metrics.MetricPoint{{Sensor: "cpu/total", Value: 50, Unit: "%"}}
 	}
-	runMetricObserved(st, db, "cpu", 5, 24, read, func([]metrics.MetricPoint) {}, func() time.Time { return now }, func(d time.Duration) bool {
+	runObserved("cpu", 5, 24, func() { PollMetric(st, db, "cpu", 24, read, func([]metrics.MetricPoint) {}) }, func() time.Time { return now }, func(d time.Duration) bool {
 		waits = append(waits, d)
 		now = now.Add(d)
 		return len(waits) < 2
@@ -406,10 +428,11 @@ func TestTemperatureObservedCadenceStoresEachCycle(t *testing.T) {
 	p := New(fakeSensor{map[string]float64{"coretemp/Package id 0": 65}}, st, db)
 	now := time.Now()
 	var starts []time.Time
-	p.runObserved(5, 24, func([]metrics.MetricPoint) {
+	observe := func([]metrics.MetricPoint) {
 		starts = append(starts, now)
 		now = now.Add(time.Second)
-	}, func() time.Time { return now }, func(d time.Duration) bool {
+	}
+	runObserved("temperature", 5, 24, func() { p.Poll(24, observe) }, func() time.Time { return now }, func(d time.Duration) bool {
 		if d != 4*time.Second {
 			t.Errorf("wait = %v", d)
 		}
@@ -449,7 +472,7 @@ func TestPollerPoll(t *testing.T) {
 	st, db := newDB(t)
 	p := New(fakeSensor{map[string]float64{"Core 0": 41.5, "acpitz": 30}}, st, db)
 
-	p.poll(24)
+	p.Poll(24, nil)
 
 	got, err := st.Query(db, store.TimeWindow{Hours: 1}, "temperature")
 	if err != nil {
@@ -472,7 +495,7 @@ func TestPollMetric(t *testing.T) {
 		return []metrics.MetricPoint{{Sensor: "cpu/total", Value: 12.5, Unit: "%"}}
 	}
 
-	pollMetric(st, db, "cpu", 24, read)
+	PollMetric(st, db, "cpu", 24, read, nil)
 
 	got, err := st.QueryLatest(db, "cpu")
 	if err != nil {
