@@ -4,6 +4,7 @@ package alerts
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"math"
 	"net/mail"
 	"os"
@@ -30,6 +31,7 @@ type Config struct {
 	BrevoSenderName     string
 	BrevoRecipientEmail string
 	Rules               []Rule
+	Source              os.FileInfo
 }
 
 var safeID = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
@@ -44,9 +46,18 @@ func LoadConfig(path, publicDir, token, apiKey string) (Config, error) {
 	if path == "" {
 		return cfg, nil
 	}
-	data, err := os.ReadFile(path)
+	f, err := os.Open(path)
 	if err != nil {
 		return cfg, errors.New("cannot read alert configuration")
+	}
+	defer f.Close()
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return cfg, errors.New("cannot read alert configuration")
+	}
+	cfg.Source, err = f.Stat()
+	if err != nil {
+		return Config{}, errors.New("cannot read alert configuration")
 	}
 	var raw struct {
 		Enabled             bool   `json:"enabled"`
@@ -65,9 +76,6 @@ func LoadConfig(path, publicDir, token, apiKey string) (Config, error) {
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return cfg, errors.New("invalid alert configuration JSON")
 	}
-	if !raw.Enabled {
-		return cfg, nil
-	}
 	input, err := filepath.Abs(path)
 	if err != nil {
 		return cfg, errors.New("cannot resolve alert configuration")
@@ -78,7 +86,7 @@ func LoadConfig(path, publicDir, token, apiKey string) (Config, error) {
 	}
 	inputRel, err := filepath.Rel(publicInput, input)
 	if err != nil || inputRel == "." || (inputRel != ".." && !strings.HasPrefix(inputRel, ".."+string(filepath.Separator))) {
-		return cfg, errors.New("active alert configuration must be outside public directory")
+		return cfg, errors.New("alert configuration must be outside public directory")
 	}
 	file, err := filepath.EvalSymlinks(path)
 	if err != nil {
@@ -90,7 +98,10 @@ func LoadConfig(path, publicDir, token, apiKey string) (Config, error) {
 	}
 	public, err := filepath.EvalSymlinks(publicDir)
 	if err != nil {
-		return cfg, errors.New("cannot resolve public directory")
+		if !errors.Is(err, os.ErrNotExist) {
+			return cfg, errors.New("cannot resolve public directory")
+		}
+		public = publicInput
 	}
 	public, err = filepath.Abs(public)
 	if err != nil {
@@ -106,11 +117,14 @@ func LoadConfig(path, publicDir, token, apiKey string) (Config, error) {
 	}
 	linkRel, err := filepath.Rel(public, filepath.Join(parent, filepath.Base(path)))
 	if err != nil || linkRel == "." || (linkRel != ".." && !strings.HasPrefix(linkRel, ".."+string(filepath.Separator))) {
-		return cfg, errors.New("active alert configuration must be outside public directory")
+		return cfg, errors.New("alert configuration must be outside public directory")
 	}
 	rel, err := filepath.Rel(public, file)
 	if err != nil || rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))) {
-		return cfg, errors.New("active alert configuration must be outside public directory")
+		return cfg, errors.New("alert configuration must be outside public directory")
+	}
+	if !raw.Enabled {
+		return cfg, nil
 	}
 	if !validChatID(raw.ChatID) {
 		return cfg, errors.New("valid alert chat_id is required")

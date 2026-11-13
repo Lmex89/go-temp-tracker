@@ -133,6 +133,51 @@ func TestLoadConfig(t *testing.T) {
 	}
 }
 
+func TestDisabledConfigMustAlsoBePrivate(t *testing.T) {
+	dir := t.TempDir()
+	public := filepath.Join(dir, "static")
+	if err := os.Mkdir(public, 0700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(public, "disabled.json")
+	if err := os.WriteFile(path, []byte(`{"enabled":false,"chat_id":"private-destination"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := alerts.LoadConfig(path, public, "", ""); err == nil || strings.Contains(err.Error(), "private-destination") {
+		t.Fatalf("public configuration accepted or disclosed: %v", err)
+	}
+	link := filepath.Join(dir, "link.json")
+	if err := os.Symlink(path, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := alerts.LoadConfig(link, public, "", ""); err == nil {
+		t.Fatal("disabled configuration linked into public directory accepted")
+	}
+	private := filepath.Join(dir, "private.json")
+	if err := os.WriteFile(private, []byte(`{"enabled":false}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	publicLink := filepath.Join(public, "linked.json")
+	if err := os.Symlink(private, publicLink); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := alerts.LoadConfig(publicLink, public, "", ""); err == nil {
+		t.Fatal("disabled public link to private configuration accepted")
+	}
+}
+
+func TestDisabledPrivateConfigWithMissingStatic(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "alerts.json")
+	if err := os.WriteFile(path, []byte(`{"enabled":false,"chat_id":"private-destination"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := alerts.LoadConfig(path, filepath.Join(dir, "static"), "", "")
+	if err != nil || cfg.Enabled || cfg.Source == nil {
+		t.Fatalf("disabled private config: enabled=%v source=%v error=%v", cfg.Enabled, cfg.Source != nil, err)
+	}
+}
+
 func TestExampleRules(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "alerts.example.json"))
 	if err != nil {

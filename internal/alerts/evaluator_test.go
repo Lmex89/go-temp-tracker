@@ -94,3 +94,77 @@ func TestRestartDoesNotRecoverOrCreditTime(t *testing.T) {
 		t.Fatalf("events: %+v", events)
 	}
 }
+
+func TestSuspendBreaksPendingButDoesNotRecoverActiveRule(t *testing.T) {
+	start := time.Now()
+	var events []string
+	e := alerts.NewEvaluator([]alerts.Rule{{ID: "high", MetricType: "cpu", Sensor: "cpu/total", Threshold: 50, Duration: 10 * time.Second}}, func(event alerts.Event) { events = append(events, event.Kind) })
+	observe := func(monotonicSeconds, bootSeconds int, value float64) {
+		at := start.Add(time.Duration(monotonicSeconds) * time.Second)
+		e.Observe("cpu", at, []metrics.MetricPoint{{Sensor: "cpu/total", Value: value, At: at, BootAt: time.Duration(bootSeconds) * time.Second}})
+	}
+	observe(0, 100, 50)
+	observe(5, 105, 50)
+	observe(10, 3710, 50)
+	if len(events) != 0 {
+		t.Fatalf("suspension credited as continuity: %v", events)
+	}
+	observe(15, 3715, 50)
+	observe(20, 3720, 50)
+	if !reflect.DeepEqual(events, []string{"activation"}) {
+		t.Fatalf("events = %v", events)
+	}
+	observe(25, 7325, 50)
+	if len(events) != 1 {
+		t.Fatalf("suspension recovered active rule: %v", events)
+	}
+	observe(30, 7330, 49)
+	if !reflect.DeepEqual(events, []string{"activation", "recovery"}) {
+		t.Fatalf("events = %v", events)
+	}
+}
+
+func TestUnavailableSuspendClockDoesNotCreditTimeButAllowsRecovery(t *testing.T) {
+	start := time.Now()
+	var events []string
+	e := alerts.NewEvaluator([]alerts.Rule{{ID: "hot", MetricType: "temperature", Sensor: "selected", Threshold: 65, Duration: 10 * time.Second}}, func(event alerts.Event) { events = append(events, event.Kind) })
+	observe := func(sec int, boot time.Duration, value float64) {
+		at := start.Add(time.Duration(sec) * time.Second)
+		e.Observe("temperature", at, []metrics.MetricPoint{{Sensor: "selected", Value: value, At: at, BootAt: boot}})
+	}
+	observe(0, 100*time.Second, 65)
+	observe(5, -1, 64)
+	observe(10, 110*time.Second, 65)
+	observe(15, 115*time.Second, 65)
+	if len(events) != 0 {
+		t.Fatalf("credited unknown time: %v", events)
+	}
+	observe(20, 120*time.Second, 65)
+	observe(25, -1, 65)
+	if !reflect.DeepEqual(events, []string{"activation"}) {
+		t.Fatalf("invalid clock recovered active rule: %v", events)
+	}
+	observe(30, -1, 64)
+	if !reflect.DeepEqual(events, []string{"activation", "recovery"}) {
+		t.Fatalf("events = %v", events)
+	}
+}
+
+func TestChangingClockAvailabilityBreaksContinuity(t *testing.T) {
+	start := time.Now()
+	var events []string
+	e := alerts.NewEvaluator([]alerts.Rule{{ID: "cpu", MetricType: "cpu", Sensor: "cpu/total", Threshold: 50, Duration: 10 * time.Second}}, func(event alerts.Event) { events = append(events, event.Kind) })
+	for _, step := range []struct {
+		sec  int
+		boot time.Duration
+	}{{0, 100 * time.Second}, {5, 105 * time.Second}, {10, 0}, {15, 115 * time.Second}, {20, 120 * time.Second}, {25, 125 * time.Second}} {
+		at := start.Add(time.Duration(step.sec) * time.Second)
+		e.Observe("cpu", at, []metrics.MetricPoint{{Sensor: "cpu/total", Value: 50, At: at, BootAt: step.boot}})
+		if step.sec < 25 && len(events) != 0 {
+			t.Fatalf("credited time across clock change: %v", events)
+		}
+	}
+	if !reflect.DeepEqual(events, []string{"activation"}) {
+		t.Fatalf("events = %v", events)
+	}
+}

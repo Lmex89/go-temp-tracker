@@ -113,6 +113,36 @@ func TestTemperatureUsesEachReadingTime(t *testing.T) {
 	}
 }
 
+func TestTemperatureSuspendBreaksPendingThroughPoller(t *testing.T) {
+	st, db := newDB(t)
+	start := time.Now()
+	reader := &timedSensor{}
+	p := New(reader, st, db)
+	var events []string
+	e := alerts.NewEvaluator([]alerts.Rule{{ID: "hot", MetricType: "temperature", Sensor: "selected", Threshold: 65, Duration: 10 * time.Second}}, func(event alerts.Event) { events = append(events, event.Kind) })
+	for _, step := range []struct{ sec, boot int }{{0, 100}, {5, 105}, {10, 3710}, {15, 3715}, {20, 3720}} {
+		at := start.Add(time.Duration(step.sec) * time.Second)
+		reader.readings = map[string]sensor.Reading{"selected": {Value: 65, At: at, BootAt: time.Duration(step.boot) * time.Second}}
+		p.Poll(24, func(points []metrics.MetricPoint) { e.Observe("temperature", at, points) })
+		if step.sec < 20 && len(events) != 0 {
+			t.Fatalf("early activation after suspension: %v", events)
+		}
+	}
+	if !reflect.DeepEqual(events, []string{"activation"}) {
+		t.Fatalf("events = %v", events)
+	}
+}
+
+func TestTemperatureLegacyReaderIncludesSuspendClock(t *testing.T) {
+	st, db := newDB(t)
+	p := New(fakeSensor{map[string]float64{"selected": 65}}, st, db)
+	p.Poll(24, func(points []metrics.MetricPoint) {
+		if len(points) != 1 || points[0].BootAt <= 0 {
+			t.Fatalf("missing suspend-aware timestamp: %+v", points)
+		}
+	})
+}
+
 // newDB builds a throwaway SQLite store in t.TempDir(); temps.db is never touched.
 func newDB(t *testing.T) (store.Store, *sql.DB) {
 	t.Helper()
@@ -152,6 +182,25 @@ func TestCPUAlertFlow(t *testing.T) {
 	rows, err := st.Query(db, store.TimeWindow{Hours: 1}, "cpu")
 	if err != nil || len(rows) != 14 {
 		t.Fatalf("readings = %d, error = %v", len(rows), err)
+	}
+}
+
+func TestCPUAlertUsesAcquisitionTimeInsteadOfDelayedProcessing(t *testing.T) {
+	st, db := newDB(t)
+	start := time.Now()
+	var events []alerts.Event
+	e := alerts.NewEvaluator([]alerts.Rule{{ID: "cpu", MetricType: "cpu", Sensor: "cpu/total", Threshold: 50, Duration: 10 * time.Second}}, func(event alerts.Event) { events = append(events, event) })
+	for _, step := range []struct{ acquired, processed int }{{0, 0}, {5, 10}, {9, 14}, {10, 15}} {
+		point := metrics.MetricPoint{Sensor: "cpu/total", Value: 50, Unit: "%", At: start.Add(time.Duration(step.acquired) * time.Second), BootAt: time.Duration(100+step.acquired) * time.Second}
+		PollMetric(st, db, "cpu", 24, func() []metrics.MetricPoint { return []metrics.MetricPoint{point} }, func(points []metrics.MetricPoint) {
+			e.Observe("cpu", start.Add(time.Duration(step.processed)*time.Second), points)
+		})
+		if step.acquired < 10 && len(events) != 0 {
+			t.Fatalf("early activation: %+v", events)
+		}
+	}
+	if len(events) != 1 || !events[0].At.Equal(start.Add(10*time.Second)) {
+		t.Fatalf("events = %+v", events)
 	}
 }
 

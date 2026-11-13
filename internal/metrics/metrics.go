@@ -3,6 +3,7 @@ package metrics
 import (
 	"fmt"
 	"sensors-temp/internal/logging"
+	"sensors-temp/internal/timeutil"
 	"strings"
 	"sync"
 	"time"
@@ -23,12 +24,15 @@ type MetricPoint struct {
 	Value  float64
 	Unit   string
 	At     time.Time
+	// BootAt is zero for legacy readers and negative when the clock failed.
+	BootAt time.Duration
 }
 
 // SystemMetrics wraps gopsutil calls for CPU, memory, swap, disk, and load.
 // Each method returns a slice of MetricPoint (like a list of dataclass instances).
 type SystemMetrics struct {
 	cpuPercent func(time.Duration, bool) ([]float64, error)
+	now        func() time.Time
 	cpuMu      sync.Mutex
 	cpuError   string
 	quietCPU   bool
@@ -43,7 +47,7 @@ func (sm *SystemMetrics) SuppressRepeatedCPUWarnings() {
 
 // NewSystemMetrics constructor -- returns a pointer to a new SystemMetrics.
 func NewSystemMetrics() *SystemMetrics {
-	return &SystemMetrics{cpuPercent: cpu.Percent}
+	return &SystemMetrics{cpuPercent: cpu.Percent, now: time.Now}
 }
 
 // ReadCPU measures CPU usage per core and total.
@@ -59,7 +63,14 @@ func (sm *SystemMetrics) ReadCPU() []MetricPoint {
 	if read == nil {
 		read = cpu.Percent
 	}
+	bootStart := timeutil.BootTime()
 	percents, err := read(time.Second, true)
+	now := sm.now
+	if now == nil {
+		now = time.Now
+	}
+	at := now()
+	bootAt := timeutil.ObservationBootTime(bootStart)
 	sm.cpuMu.Lock()
 	defer sm.cpuMu.Unlock()
 	if err != nil {
@@ -82,6 +93,8 @@ func (sm *SystemMetrics) ReadCPU() []MetricPoint {
 			Sensor: fmt.Sprintf("cpu/Core %d", i),
 			Value:  p,
 			Unit:   "%",
+			At:     at,
+			BootAt: bootAt,
 		})
 		total += p
 	}
@@ -92,6 +105,8 @@ func (sm *SystemMetrics) ReadCPU() []MetricPoint {
 			Sensor: "cpu/total",
 			Value:  avg,
 			Unit:   "%",
+			At:     at,
+			BootAt: bootAt,
 		})
 	}
 	return points

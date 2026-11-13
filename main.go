@@ -3,8 +3,10 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sensors-temp/internal/alerts"
 	"sensors-temp/internal/httpapi"
 	"sensors-temp/internal/logging"
@@ -13,6 +15,7 @@ import (
 	"sensors-temp/internal/sensor"
 	"sensors-temp/internal/store"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -39,8 +42,63 @@ func pollingIntervals(alertsEnabled bool, temperature, cpu int) (int, int) {
 	return temperature, cpu
 }
 
-func staticHandler(root *os.Root) http.Handler {
-	return http.FileServerFS(root.FS())
+type staticFiles struct {
+	root       *os.Root
+	configPath string
+	configInfo os.FileInfo
+}
+
+func (s staticFiles) Open(name string) (fs.File, error) {
+	if !fs.ValidPath(name) {
+		return nil, fs.ErrNotExist
+	}
+	base, err := filepath.EvalSymlinks(s.root.Name())
+	if err != nil {
+		return nil, fs.ErrNotExist
+	}
+	target, err := filepath.EvalSymlinks(filepath.Join(base, name))
+	if err != nil {
+		return nil, fs.ErrNotExist
+	}
+	rel, err := filepath.Rel(base, target)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return nil, fs.ErrNotExist
+	}
+	f, err := s.root.Open(rel)
+	if err != nil {
+		return nil, fs.ErrNotExist
+	}
+	info, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, fs.ErrNotExist
+	}
+	if s.configInfo != nil && info.Mode().IsRegular() {
+		current, statErr := os.Stat(s.configPath)
+		if statErr != nil || !singleLink(info) || os.SameFile(info, s.configInfo) || os.SameFile(info, current) {
+			f.Close()
+			return nil, fs.ErrNotExist
+		}
+	}
+	return f, nil
+}
+
+func staticHandler(publicDir, configPath string, configInfo os.FileInfo) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if configInfo != nil {
+			if _, err := os.Stat(configPath); err != nil {
+				http.NotFound(w, r)
+				return
+			}
+		}
+		root, err := os.OpenRoot(publicDir)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		defer root.Close()
+		http.FileServerFS(staticFiles{root, configPath, configInfo}).ServeHTTP(w, r)
+	})
 }
 
 // newStore returns a Store implementation based on the requested driver.
@@ -81,11 +139,6 @@ func main() {
 	if err != nil {
 		logging.Logger.Fatal("Invalid alerts configuration: %v", err)
 	}
-	staticRoot, err := os.OpenRoot("static")
-	if err != nil {
-		logging.Logger.Fatal("Cannot open public directory")
-	}
-	defer staticRoot.Close()
 	var evaluator *alerts.Evaluator
 	if alertCfg.Enabled {
 		host, err := os.Hostname()
@@ -178,7 +231,7 @@ func main() {
 	// All /api/* routes (temps, cpu, memory, swap, disk, load, current/*).
 	httpapi.Register(mux, st, db)
 
-	mux.Handle("/", staticHandler(staticRoot))
+	mux.Handle("/", staticHandler("static", *alertConfig, alertCfg.Source))
 
 	addr := fmt.Sprintf(":%d", *port)
 	logging.Logger.Info("HTTP server listening on %s", addr)

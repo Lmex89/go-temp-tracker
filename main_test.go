@@ -8,6 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"sensors-temp/internal/httpapi"
+	"sensors-temp/internal/store"
 )
 
 func TestStaticHandlerDoesNotFollowSymlinksOutsideRoot(t *testing.T) {
@@ -29,22 +32,173 @@ func TestStaticHandlerDoesNotFollowSymlinksOutsideRoot(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(public, "public.txt"), []byte("public"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	root, err := os.OpenRoot(public)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer root.Close()
+	handler := staticHandler(public, "", nil)
 	for _, path := range []string{"/linked.json", "/linked-dir/private.json"} {
 		w := httptest.NewRecorder()
-		staticHandler(root).ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
 		if w.Code == http.StatusOK || strings.Contains(w.Body.String(), "secret-destination") || strings.Contains(w.Body.String(), private) {
 			t.Fatalf("private file exposed: %d %q", w.Code, w.Body.String())
 		}
 	}
 	w := httptest.NewRecorder()
-	staticHandler(root).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/public.txt", nil))
+	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/public.txt", nil))
 	if w.Code != http.StatusOK || w.Body.String() != "public" {
 		t.Fatalf("public file not served: %d %q", w.Code, w.Body.String())
+	}
+	changing := filepath.Join(public, "changing.json")
+	if err := os.Symlink(filepath.Join(public, "public.txt"), changing); err != nil {
+		t.Fatal(err)
+	}
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/changing.json", nil))
+	if w.Code != http.StatusOK || w.Body.String() != "public" {
+		t.Fatalf("internal link not served: %d %q", w.Code, w.Body.String())
+	}
+	if err := os.Remove(changing); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(private, changing); err != nil {
+		t.Fatal(err)
+	}
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/changing.json", nil))
+	if w.Code == http.StatusOK || strings.Contains(w.Body.String(), "secret-destination") {
+		t.Fatalf("retargeted link exposed private file: %d %q", w.Code, w.Body.String())
+	}
+}
+
+func TestStaticHandlerProtectsSelectedFileAgainstLaterHardLinks(t *testing.T) {
+	dir := t.TempDir()
+	public := filepath.Join(dir, "static")
+	if err := os.Mkdir(public, 0700); err != nil {
+		t.Fatal(err)
+	}
+	private := filepath.Join(dir, "private.json")
+	if err := os.WriteFile(private, []byte("secret-destination"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(private)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(private, filepath.Join(public, "initial.json")); err != nil {
+		t.Fatal(err)
+	}
+	handler := staticHandler(public, private, info)
+	link := filepath.Join(public, "copy.json")
+	if err := os.Link(private, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(link, filepath.Join(public, "alias.json")); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/initial.json", "/copy.json", "/alias.json"} {
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		if w.Code == http.StatusOK || strings.Contains(w.Body.String(), "secret-destination") {
+			t.Fatalf("file exposed: %d %q", w.Code, w.Body.String())
+		}
+	}
+	replacement := filepath.Join(dir, "replacement.json")
+	if err := os.WriteFile(replacement, []byte("new-secret"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(replacement, private); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(private, filepath.Join(public, "new.json")); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/initial.json", "/new.json", "/alias.json"} {
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		if w.Code == http.StatusOK || strings.Contains(w.Body.String(), "secret") {
+			t.Fatalf("file exposed after replacement: %d %q", w.Code, w.Body.String())
+		}
+	}
+	if err := os.WriteFile(filepath.Join(public, "safe.txt"), []byte("safe"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(private); err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/safe.txt", nil))
+	if w.Code == http.StatusOK {
+		t.Fatal("served file while selected configuration cannot be checked")
+	}
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
+	if w.Code == http.StatusOK {
+		t.Fatal("served directory while selected configuration cannot be checked")
+	}
+}
+
+func TestAbsoluteSymlinksInsideStaticRemainAvailable(t *testing.T) {
+	dir := t.TempDir()
+	public := filepath.Join(dir, "static")
+	if err := os.Mkdir(public, 0700); err != nil {
+		t.Fatal(err)
+	}
+	index := filepath.Join(public, "dashboard.html")
+	if err := os.WriteFile(index, []byte("dashboard-content"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(index, filepath.Join(public, "index.html")); err != nil {
+		t.Fatal(err)
+	}
+	private := filepath.Join(dir, "alerts.json")
+	if err := os.WriteFile(private, []byte(`{"enabled":false}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(private)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := staticHandler(public, private, info)
+	for _, path := range []string{"/", "/index.html"} {
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		if path == "/index.html" && w.Code == http.StatusMovedPermanently {
+			continue
+		}
+		if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "dashboard-content") {
+			t.Fatalf("%s: %d %q", path, w.Code, w.Body.String())
+		}
+	}
+}
+
+func TestMissingStaticDoesNotPreventAPIRoutes(t *testing.T) {
+	public := filepath.Join(t.TempDir(), "static")
+	st := store.NewSQLiteStore(filepath.Join(t.TempDir(), "test.db"))
+	db := st.InitDB()
+	if db == nil {
+		t.Fatal("database initialization failed")
+	}
+	t.Cleanup(func() { db.Close() })
+	mux := http.NewServeMux()
+	httpapi.Register(mux, st, db)
+	mux.Handle("/", staticHandler(public, "", nil))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/current", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("API status = %d", w.Code)
+	}
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("missing static status = %d", w.Code)
+	}
+	if err := os.Mkdir(public, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(public, "index.html"), []byte("dashboard-content"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "dashboard-content") {
+		t.Fatalf("static after creation: %d %q", w.Code, w.Body.String())
 	}
 }
 
