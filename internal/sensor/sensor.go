@@ -20,9 +20,11 @@ type Reader interface {
 }
 
 type Reading struct {
-	Value  float64
-	At     time.Time
-	BootAt time.Duration
+	Value     float64
+	At        time.Time
+	StartedAt time.Time
+	BootAt    time.Duration
+	BootStart time.Duration
 }
 
 // LinuxThermalSensor is a *struct* (like a Python class with only attributes, no methods defined inline).
@@ -162,6 +164,7 @@ func (s *LinuxThermalSensor) readHwmonSensors() map[string]Reading {
 			// Read the temperature value from tempN_input file.
 			// Value is in millidegrees Celsius (e.g., 45000 = 45C).
 			bootStart := timeutil.BootTime()
+			startedAt := time.Now()
 			raw, err := os.ReadFile(tempInput)
 			at := time.Now()
 			bootAt := timeutil.ObservationBootTime(bootStart)
@@ -197,7 +200,7 @@ func (s *LinuxThermalSensor) readHwmonSensors() map[string]Reading {
 			}
 
 			logging.Logger.Debug("Sensor %s: %.2fC", sensorName, tempC)
-			temps[sensorName] = Reading{Value: tempC, At: at, BootAt: bootAt}
+			temps[sensorName] = Reading{Value: tempC, At: at, StartedAt: startedAt, BootAt: bootAt, BootStart: bootStart}
 		}
 	}
 
@@ -237,6 +240,7 @@ func (s *LinuxThermalSensor) readThermalZones(throttle bool, seen map[string]boo
 		// os.ReadFile reads a whole file into memory -- like Python's open().read().
 		// Returns []byte (byte slice, similar to Python's bytes) and error.
 		bootStart := timeutil.BootTime()
+		startedAt := time.Now()
 		raw, err := os.ReadFile(filepath.Join(zone, "temp"))
 		at := time.Now()
 		bootAt := timeutil.ObservationBootTime(bootStart)
@@ -265,7 +269,7 @@ func (s *LinuxThermalSensor) readThermalZones(throttle bool, seen map[string]boo
 		// Linux reports temperature in millidegrees (e.g. 45000 = 45C).
 		tempC := val / 1000.0
 		logging.Logger.Debug("Sensor %s (%s): %.2fC", zoneName, name, tempC)
-		temps[name] = Reading{Value: tempC, At: at, BootAt: bootAt}
+		temps[name] = Reading{Value: tempC, At: at, StartedAt: startedAt, BootAt: bootAt, BootStart: bootStart}
 	}
 
 	return temps // Returns the map (Go passes maps by reference, like Python dicts)

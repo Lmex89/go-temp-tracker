@@ -64,7 +64,7 @@ func (p *Poller) Poll(retainHours int, observe func([]metrics.MetricPoint)) {
 		temps = make(map[string]float64, len(readings))
 		for name, reading := range readings {
 			temps[name] = reading.Value
-			points = append(points, metrics.MetricPoint{Sensor: name, Value: reading.Value, Unit: "C", At: reading.At, BootAt: reading.BootAt})
+			points = append(points, metrics.MetricPoint{Sensor: name, Value: reading.Value, Unit: "C", At: reading.At, StartedAt: reading.StartedAt, BootAt: reading.BootAt, BootStart: reading.BootStart})
 		}
 	} else {
 		var bootStart, bootAt time.Duration
@@ -76,7 +76,7 @@ func (p *Poller) Poll(retainHours int, observe func([]metrics.MetricPoint)) {
 			bootAt = timeutil.ObservationBootTime(bootStart)
 		}
 		for name, temp := range temps {
-			points = append(points, metrics.MetricPoint{Sensor: name, Value: temp, Unit: "C", BootAt: bootAt})
+			points = append(points, metrics.MetricPoint{Sensor: name, Value: temp, Unit: "C", BootAt: bootAt, BootStart: bootStart})
 		}
 	}
 

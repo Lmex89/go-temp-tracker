@@ -54,7 +54,15 @@ func TestCPUObservationTimePrecedesProcessingDelay(t *testing.T) {
 	clockRead := make(chan struct{})
 	sm := NewSystemMetrics()
 	sm.cpuPercent = func(time.Duration, bool) ([]float64, error) { return []float64{40, 60}, nil }
-	sm.now = func() time.Time { at := clock; close(clockRead); return at }
+	calls := 0
+	sm.now = func() time.Time {
+		at := clock
+		calls++
+		if calls == 2 {
+			close(clockRead)
+		}
+		return at
+	}
 	sm.cpuMu.Lock()
 	result := make(chan []MetricPoint, 1)
 	go func() { result <- sm.ReadCPU() }()
@@ -69,6 +77,23 @@ func TestCPUObservationTimePrecedesProcessingDelay(t *testing.T) {
 		}
 		if point.BootAt <= 0 {
 			t.Fatal("CPU reading lacks suspend-aware clock")
+		}
+	}
+}
+
+func TestCPUReadingBoundsDelayedReturn(t *testing.T) {
+	start := time.Now()
+	clock := start
+	sm := NewSystemMetrics()
+	sm.now = func() time.Time { return clock }
+	sm.cpuPercent = func(time.Duration, bool) ([]float64, error) {
+		clock = start.Add(5 * time.Second)
+		return []float64{50}, nil
+	}
+	points := sm.ReadCPU()
+	for _, point := range points {
+		if !point.StartedAt.Equal(start) || !point.At.Equal(start.Add(5*time.Second)) {
+			t.Fatalf("acquisition bounds = %v to %v", point.StartedAt, point.At)
 		}
 	}
 }

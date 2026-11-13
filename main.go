@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
 	"os"
@@ -16,6 +18,7 @@ import (
 	"sensors-temp/internal/store"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -46,6 +49,36 @@ type staticFiles struct {
 	root       *os.Root
 	configPath string
 	configInfo os.FileInfo
+	invalid    *atomic.Bool
+	initial    map[string]staticSnapshot
+}
+
+type staticSnapshot struct {
+	info os.FileInfo
+	data []byte
+}
+
+type staticFile struct {
+	*bytes.Reader
+	info os.FileInfo
+}
+
+func (f staticFile) Stat() (os.FileInfo, error) { return f.info, nil }
+func (f staticFile) Close() error               { return nil }
+
+func (s staticFiles) configValid() bool {
+	if s.configInfo == nil {
+		return true
+	}
+	if s.invalid.Load() {
+		return false
+	}
+	current, err := os.Stat(s.configPath)
+	if err != nil || !os.SameFile(s.configInfo, current) {
+		s.invalid.Store(true)
+		return false
+	}
+	return !s.invalid.Load()
 }
 
 func (s staticFiles) Open(name string) (fs.File, error) {
@@ -74,22 +107,71 @@ func (s staticFiles) Open(name string) (fs.File, error) {
 		return nil, fs.ErrNotExist
 	}
 	if s.configInfo != nil && info.Mode().IsRegular() {
-		current, statErr := os.Stat(s.configPath)
-		if statErr != nil || !singleLink(info) || os.SameFile(info, s.configInfo) || os.SameFile(info, current) {
+		original, exists := s.initial[rel]
+		if !s.configValid() || !exists || !sameStaticFile(original.info, info) || !singleLink(info) || os.SameFile(info, s.configInfo) {
 			f.Close()
 			return nil, fs.ErrNotExist
 		}
+		f.Close()
+		return staticFile{Reader: bytes.NewReader(original.data), info: original.info}, nil
 	}
 	return f, nil
 }
 
 func staticHandler(publicDir, configPath string, configInfo os.FileInfo) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if configInfo != nil {
-			if _, err := os.Stat(configPath); err != nil {
-				http.NotFound(w, r)
-				return
+	invalid := &atomic.Bool{}
+	initial := make(map[string]staticSnapshot)
+	if configInfo != nil {
+		base, err := filepath.EvalSymlinks(publicDir)
+		if err == nil {
+			root, err := os.OpenRoot(base)
+			if err == nil {
+				defer root.Close()
+				walkErr := filepath.WalkDir(base, func(path string, entry fs.DirEntry, walkErr error) error {
+					if walkErr != nil {
+						return walkErr
+					}
+					if entry.Type()&os.ModeSymlink != 0 {
+						return nil
+					}
+					info, err := entry.Info()
+					if err != nil {
+						return err
+					}
+					if info.Mode().IsRegular() && singleLink(info) && !os.SameFile(info, configInfo) {
+						rel, err := filepath.Rel(base, path)
+						if err != nil {
+							return err
+						}
+						f, err := root.Open(rel)
+						if err != nil {
+							return nil
+						}
+						opened, err := f.Stat()
+						if err != nil || !sameStaticFile(info, opened) || !singleLink(opened) {
+							f.Close()
+							return nil
+						}
+						data, readErr := io.ReadAll(io.LimitReader(f, opened.Size()))
+						after, statErr := f.Stat()
+						f.Close()
+						if readErr == nil && statErr == nil && int64(len(data)) == opened.Size() && sameStaticFile(info, after) && singleLink(after) {
+							initial[rel] = staticSnapshot{info: after, data: data}
+						}
+					}
+					return nil
+				})
+				if walkErr != nil {
+					initial = make(map[string]staticSnapshot)
+				}
 			}
+		}
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		files := staticFiles{configPath: configPath, configInfo: configInfo, invalid: invalid, initial: initial}
+		if !files.configValid() {
+			http.NotFound(w, r)
+			return
 		}
 		root, err := os.OpenRoot(publicDir)
 		if err != nil {
@@ -97,7 +179,8 @@ func staticHandler(publicDir, configPath string, configInfo os.FileInfo) http.Ha
 			return
 		}
 		defer root.Close()
-		http.FileServerFS(staticFiles{root, configPath, configInfo}).ServeHTTP(w, r)
+		files.root = root
+		http.FileServerFS(files).ServeHTTP(w, r)
 	})
 }
 

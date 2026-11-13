@@ -1,6 +1,7 @@
 package alerts_test
 
 import (
+	"fmt"
 	"math"
 	"reflect"
 	"testing"
@@ -101,7 +102,7 @@ func TestSuspendBreaksPendingButDoesNotRecoverActiveRule(t *testing.T) {
 	e := alerts.NewEvaluator([]alerts.Rule{{ID: "high", MetricType: "cpu", Sensor: "cpu/total", Threshold: 50, Duration: 10 * time.Second}}, func(event alerts.Event) { events = append(events, event.Kind) })
 	observe := func(monotonicSeconds, bootSeconds int, value float64) {
 		at := start.Add(time.Duration(monotonicSeconds) * time.Second)
-		e.Observe("cpu", at, []metrics.MetricPoint{{Sensor: "cpu/total", Value: value, At: at, BootAt: time.Duration(bootSeconds) * time.Second}})
+		e.ObserveAt("cpu", at, time.Duration(bootSeconds)*time.Second, []metrics.MetricPoint{{Sensor: "cpu/total", Value: value, At: at, BootAt: time.Duration(bootSeconds) * time.Second}})
 	}
 	observe(0, 100, 50)
 	observe(5, 105, 50)
@@ -124,13 +125,13 @@ func TestSuspendBreaksPendingButDoesNotRecoverActiveRule(t *testing.T) {
 	}
 }
 
-func TestUnavailableSuspendClockDoesNotCreditTimeButAllowsRecovery(t *testing.T) {
+func TestUncertainAcquisitionDoesNotCreditTimeOrRecover(t *testing.T) {
 	start := time.Now()
 	var events []string
 	e := alerts.NewEvaluator([]alerts.Rule{{ID: "hot", MetricType: "temperature", Sensor: "selected", Threshold: 65, Duration: 10 * time.Second}}, func(event alerts.Event) { events = append(events, event.Kind) })
 	observe := func(sec int, boot time.Duration, value float64) {
 		at := start.Add(time.Duration(sec) * time.Second)
-		e.Observe("temperature", at, []metrics.MetricPoint{{Sensor: "selected", Value: value, At: at, BootAt: boot}})
+		e.ObserveAt("temperature", at, time.Duration(100+sec)*time.Second, []metrics.MetricPoint{{Sensor: "selected", Value: value, At: at, BootAt: boot}})
 	}
 	observe(0, 100*time.Second, 65)
 	observe(5, -1, 64)
@@ -145,6 +146,14 @@ func TestUnavailableSuspendClockDoesNotCreditTimeButAllowsRecovery(t *testing.T)
 		t.Fatalf("invalid clock recovered active rule: %v", events)
 	}
 	observe(30, -1, 64)
+	if !reflect.DeepEqual(events, []string{"activation"}) {
+		t.Fatalf("uncertain reading recovered active rule: %v", events)
+	}
+	observe(32, -2, 64)
+	if !reflect.DeepEqual(events, []string{"activation"}) {
+		t.Fatalf("unavailable clock recovered active rule: %v", events)
+	}
+	observe(35, 135*time.Second, 64)
 	if !reflect.DeepEqual(events, []string{"activation", "recovery"}) {
 		t.Fatalf("events = %v", events)
 	}
@@ -159,12 +168,92 @@ func TestChangingClockAvailabilityBreaksContinuity(t *testing.T) {
 		boot time.Duration
 	}{{0, 100 * time.Second}, {5, 105 * time.Second}, {10, 0}, {15, 115 * time.Second}, {20, 120 * time.Second}, {25, 125 * time.Second}} {
 		at := start.Add(time.Duration(step.sec) * time.Second)
-		e.Observe("cpu", at, []metrics.MetricPoint{{Sensor: "cpu/total", Value: 50, At: at, BootAt: step.boot}})
+		e.ObserveAt("cpu", at, time.Duration(100+step.sec)*time.Second, []metrics.MetricPoint{{Sensor: "cpu/total", Value: 50, At: at, BootAt: step.boot}})
 		if step.sec < 25 && len(events) != 0 {
 			t.Fatalf("credited time across clock change: %v", events)
 		}
 	}
 	if !reflect.DeepEqual(events, []string{"activation"}) {
 		t.Fatalf("events = %v", events)
+	}
+}
+
+func TestCPUDelayedReturnDoesNotCreditUnobservedTime(t *testing.T) {
+	start := time.Now()
+	var events []string
+	e := alerts.NewEvaluator([]alerts.Rule{{ID: "cpu", MetricType: "cpu", Sensor: "cpu/total", Threshold: 50, Duration: 10 * time.Second}}, func(event alerts.Event) { events = append(events, event.Kind) })
+	for _, step := range []struct{ begin, end int }{{0, 1}, {5, 6}, {10, 15}, {15, 16}} {
+		begin := start.Add(time.Duration(step.begin) * time.Second)
+		end := start.Add(time.Duration(step.end) * time.Second)
+		e.Observe("cpu", end, []metrics.MetricPoint{{Sensor: "cpu/total", Value: 50, StartedAt: begin, At: end}})
+		if step.begin < 15 && len(events) != 0 {
+			t.Fatalf("early activation after delayed return: %v", events)
+		}
+	}
+	if !reflect.DeepEqual(events, []string{"activation"}) {
+		t.Fatalf("events = %v", events)
+	}
+}
+
+func TestStaleTemperatureCannotRecoverActiveRule(t *testing.T) {
+	for _, suspended := range []bool{false, true} {
+		t.Run(fmt.Sprintf("suspended=%v", suspended), func(t *testing.T) {
+			start := time.Now()
+			var events []string
+			e := alerts.NewEvaluator([]alerts.Rule{{ID: "hot", MetricType: "temperature", Sensor: "selected", Threshold: 65, Duration: 10 * time.Second}}, func(event alerts.Event) { events = append(events, event.Kind) })
+			for _, sec := range []int{0, 5, 10} {
+				at := start.Add(time.Duration(sec) * time.Second)
+				boot := time.Duration(100+sec) * time.Second
+				e.ObserveAt("temperature", at, boot, []metrics.MetricPoint{{Sensor: "selected", Value: 65, At: at, BootAt: boot}})
+			}
+			acquired := start.Add(15 * time.Second)
+			processed := acquired.Add(time.Hour)
+			if suspended {
+				processed = acquired
+			}
+			bootNow := time.Duration(3715) * time.Second
+			e.ObserveAt("temperature", processed, bootNow, []metrics.MetricPoint{{Sensor: "selected", Value: 64, At: acquired, BootAt: 115 * time.Second}})
+			if !reflect.DeepEqual(events, []string{"activation"}) {
+				t.Fatalf("stale reading recovered active rule: %v", events)
+			}
+			e.ObserveAt("temperature", processed, bootNow, []metrics.MetricPoint{{Sensor: "selected", Value: 64, At: processed, BootAt: bootNow}})
+			if !reflect.DeepEqual(events, []string{"activation", "recovery"}) {
+				t.Fatalf("events = %v", events)
+			}
+		})
+	}
+}
+
+func TestStaleReadingResetsPendingPeriod(t *testing.T) {
+	start := time.Now()
+	var events []string
+	e := alerts.NewEvaluator([]alerts.Rule{{ID: "hot", MetricType: "temperature", Sensor: "selected", Threshold: 65, Duration: 10 * time.Second}}, func(event alerts.Event) { events = append(events, event.Kind) })
+	for _, step := range []struct{ acquired, processed int }{{0, 0}, {5, 5}, {10, 21}, {22, 22}, {27, 27}, {32, 32}} {
+		at := start.Add(time.Duration(step.acquired) * time.Second)
+		now := start.Add(time.Duration(step.processed) * time.Second)
+		boot := time.Duration(100+step.acquired) * time.Second
+		e.ObserveAt("temperature", now, time.Duration(100+step.processed)*time.Second, []metrics.MetricPoint{{Sensor: "selected", Value: 65, At: at, BootAt: boot}})
+		if step.processed < 32 && len(events) != 0 {
+			t.Fatalf("stale reading credited: %v", events)
+		}
+	}
+	if !reflect.DeepEqual(events, []string{"activation"}) {
+		t.Fatalf("events = %v", events)
+	}
+}
+
+func TestFreshnessUsesEarliestPossibleAcquisition(t *testing.T) {
+	start := time.Now()
+	var events []string
+	e := alerts.NewEvaluator([]alerts.Rule{{ID: "cpu", MetricType: "cpu", Sensor: "cpu/total", Threshold: 50, Duration: 10 * time.Second}}, func(event alerts.Event) { events = append(events, event.Kind) })
+	for _, sec := range []int{0, 5, 10} {
+		at := start.Add(time.Duration(sec) * time.Second)
+		boot := time.Duration(100+sec) * time.Second
+		e.ObserveAt("cpu", at, boot, []metrics.MetricPoint{{Sensor: "cpu/total", Value: 50, At: at, BootAt: boot}})
+	}
+	point := metrics.MetricPoint{Sensor: "cpu/total", Value: 49, StartedAt: start.Add(15 * time.Second), At: start.Add(23 * time.Second), BootStart: 115 * time.Second, BootAt: 123 * time.Second}
+	e.ObserveAt("cpu", start.Add(26*time.Second), 126*time.Second, []metrics.MetricPoint{point})
+	if !reflect.DeepEqual(events, []string{"activation"}) {
+		t.Fatalf("uncertain old acquisition recovered rule: %v", events)
 	}
 }
