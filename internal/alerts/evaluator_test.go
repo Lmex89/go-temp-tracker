@@ -12,8 +12,8 @@ import (
 
 func TestRuleContinuity(t *testing.T) {
 	rules := []alerts.Rule{
-		{ID: "high", Sensor: "cpu/total", Threshold: 50, Duration: 10 * time.Second},
-		{ID: "saturated", Sensor: "cpu/total", Threshold: 95, Duration: 5 * time.Second},
+		{ID: "high", MetricType: "cpu", Sensor: "cpu/total", Threshold: 50, Duration: 10 * time.Second},
+		{ID: "saturated", MetricType: "cpu", Sensor: "cpu/total", Threshold: 95, Duration: 5 * time.Second},
 	}
 	type step struct {
 		sec     int
@@ -50,7 +50,7 @@ func TestRuleContinuity(t *testing.T) {
 				if !s.missing {
 					points = []metrics.MetricPoint{{Sensor: "cpu/total", Value: s.value, Unit: "%"}}
 				}
-				e.Observe(start.Add(time.Duration(s.sec)*time.Second), points)
+				e.Observe("cpu", start.Add(time.Duration(s.sec)*time.Second), points)
 				if !reflect.DeepEqual(got, s.want) {
 					t.Fatalf("at %ds: got %v, want %v", s.sec, got, s.want)
 				}
@@ -61,18 +61,18 @@ func TestRuleContinuity(t *testing.T) {
 
 func TestHundredPercentThresholdIsInclusive(t *testing.T) {
 	var events []alerts.Event
-	e := alerts.NewEvaluator([]alerts.Rule{{ID: "max", Sensor: "cpu/total", Threshold: 100, Duration: 5 * time.Second}}, func(event alerts.Event) { events = append(events, event) })
+	e := alerts.NewEvaluator([]alerts.Rule{{ID: "max", MetricType: "cpu", Sensor: "cpu/total", Threshold: 100, Duration: 5 * time.Second}}, func(event alerts.Event) { events = append(events, event) })
 	start := time.Now()
 	point := []metrics.MetricPoint{{Sensor: "cpu/total", Value: 100, Unit: "%"}}
-	e.Observe(start, point)
-	e.Observe(start.Add(5*time.Second), point)
+	e.Observe("cpu", start, point)
+	e.Observe("cpu", start.Add(5*time.Second), point)
 	if len(events) != 1 || events[0].Kind != "activation" {
 		t.Fatalf("events = %+v", events)
 	}
 }
 
 func TestRestartDoesNotRecoverOrCreditTime(t *testing.T) {
-	rules := []alerts.Rule{{ID: "high", Sensor: "cpu/total", Threshold: 50, Duration: 10 * time.Second}}
+	rules := []alerts.Rule{{ID: "high", MetricType: "cpu", Sensor: "cpu/total", Threshold: 50, Duration: 10 * time.Second}}
 	var events []alerts.Event
 	newEval := func() *alerts.Evaluator {
 		return alerts.NewEvaluator(rules, func(e alerts.Event) { events = append(events, e) })
@@ -80,16 +80,16 @@ func TestRestartDoesNotRecoverOrCreditTime(t *testing.T) {
 	start := time.Now()
 	e := newEval()
 	point := []metrics.MetricPoint{{Sensor: "cpu/total", Value: 50, Unit: "%"}}
-	e.Observe(start, point)
-	e.Observe(start.Add(10*time.Second), point)
+	e.Observe("cpu", start, point)
+	e.Observe("cpu", start.Add(10*time.Second), point)
 	e = newEval()
-	e.Observe(start.Add(15*time.Second), []metrics.MetricPoint{{Sensor: "cpu/total", Value: 49}})
-	e.Observe(start.Add(20*time.Second), point)
-	e.Observe(start.Add(25*time.Second), point)
+	e.Observe("cpu", start.Add(15*time.Second), []metrics.MetricPoint{{Sensor: "cpu/total", Value: 49}})
+	e.Observe("cpu", start.Add(20*time.Second), point)
+	e.Observe("cpu", start.Add(25*time.Second), point)
 	if len(events) != 1 {
 		t.Fatalf("restart generated events: %+v", events)
 	}
-	e.Observe(start.Add(30*time.Second), point)
+	e.Observe("cpu", start.Add(30*time.Second), point)
 	if len(events) != 2 || events[1].Kind != "activation" {
 		t.Fatalf("events: %+v", events)
 	}

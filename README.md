@@ -32,7 +32,7 @@ docker compose up -d
 
 ## Usage
 
-Para configurar alertas opcionales de CPU por Telegram, consulte [la guia de alertas](docs/alertas-cpu.md).
+Para configurar alertas opcionales de CPU y temperatura por Telegram, consulte [la guia de alertas](docs/alertas-cpu.md).
 
 ```bash
 # Run with PostgreSQL (default for helper scripts; the binary defaults to sqlite)

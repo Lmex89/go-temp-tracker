@@ -63,7 +63,7 @@ func (t *Telegram) run() {
 }
 
 func (t *Telegram) send(e Event) (bool, time.Duration) {
-	text := fmt.Sprintf("%s\nHost: %s\nRule: %s\nSensor: %s\nValue: %g%s\nThreshold: %g%%\nDuration: %g minutes\nTime: %s", e.Kind, t.host, e.Rule.ID, e.Point.Sensor, e.Point.Value, e.Point.Unit, e.Rule.Threshold, e.Rule.Duration.Minutes(), e.At.Format(time.RFC3339))
+	text := fmt.Sprintf("%s\nHost: %s\nRule: %s\nSensor: %s\nValue: %g%s\nThreshold: %g%s\nDuration: %g minutes\nTime: %s", e.Kind, t.host, e.Rule.ID, e.Point.Sensor, e.Point.Value, e.Point.Unit, e.Rule.Threshold, e.Point.Unit, e.Rule.Duration.Minutes(), e.At.Format(time.RFC3339))
 	body, err := json.Marshal(struct {
 		Chat string `json:"chat_id"`
 		Text string `json:"text"`

@@ -2,7 +2,10 @@ package poller
 
 import (
 	"database/sql"
+	"math"
 	"path/filepath"
+	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -39,7 +42,7 @@ func TestCPUAlertFlow(t *testing.T) {
 		now := start.Add(time.Duration(i) * 5 * time.Second)
 		PollMetric(st, db, "cpu", 24, func() []metrics.MetricPoint {
 			return []metrics.MetricPoint{{Sensor: "cpu/total", Value: 50, Unit: "%"}}
-		}, func(points []metrics.MetricPoint) { eval.Observe(now, points) })
+		}, func(points []metrics.MetricPoint) { eval.Observe("cpu", now, points) })
 		if i < 12 && len(events) != 0 {
 			t.Fatal("activated before full duration")
 		}
@@ -49,13 +52,153 @@ func TestCPUAlertFlow(t *testing.T) {
 	}
 	PollMetric(st, db, "cpu", 24, func() []metrics.MetricPoint {
 		return []metrics.MetricPoint{{Sensor: "cpu/total", Value: 49, Unit: "%"}}
-	}, func(points []metrics.MetricPoint) { eval.Observe(start.Add(65*time.Second), points) })
+	}, func(points []metrics.MetricPoint) { eval.Observe("cpu", start.Add(65*time.Second), points) })
 	if len(events) != 2 || events[1].Kind != "recovery" {
 		t.Fatalf("events: %+v", events)
 	}
 	rows, err := st.Query(db, store.TimeWindow{Hours: 1}, "cpu")
 	if err != nil || len(rows) != 14 {
 		t.Fatalf("readings = %d, error = %v", len(rows), err)
+	}
+}
+
+func TestTemperatureAndCPURulesStayIndependent(t *testing.T) {
+	st, db := newDB(t)
+	reader := &fakeSensor{}
+	p := New(reader, st, db)
+	rules := []alerts.Rule{
+		{ID: "package", MetricType: "temperature", Sensor: "coretemp/Package id 0", Threshold: 65, Duration: 2 * time.Minute},
+		{ID: "other", MetricType: "temperature", Sensor: "acpitz", Threshold: 70, Duration: 10 * time.Second},
+		{ID: "same-name", MetricType: "temperature", Sensor: "cpu/total", Threshold: 90, Duration: 10 * time.Second},
+		{ID: "cpu", MetricType: "cpu", Sensor: "cpu/total", Threshold: 50, Duration: 10 * time.Second},
+	}
+	var events []string
+	e := alerts.NewEvaluator(rules, func(event alerts.Event) { events = append(events, event.Rule.ID+":"+event.Kind) })
+	start := time.Now()
+	for sec := 0; sec <= 250; sec += 5 {
+		reader.temps = map[string]float64{"coretemp/Package id 0": 65, "coretemp/Core 0": 90, "cpu/total": 0}
+		if sec == 125 {
+			reader.temps["coretemp/Package id 0"] = 64
+		}
+		switch sec {
+		case 0, 10, 20, 30, 35, 40:
+			reader.temps["acpitz"] = 80
+		case 15:
+			reader.temps["acpitz"] = math.NaN()
+		case 25, 55:
+			reader.temps["acpitz"] = 60
+		case 50:
+			reader.temps["acpitz"] = math.Inf(1)
+		}
+		now := start.Add(time.Duration(sec) * time.Second)
+		p.Poll(24, func(points []metrics.MetricPoint) { e.Observe("temperature", now, points) })
+		cpu := 50.0
+		if sec >= 125 {
+			cpu = 49
+		}
+		PollMetric(st, db, "cpu", 24, func() []metrics.MetricPoint {
+			return []metrics.MetricPoint{{Sensor: "cpu/total", Value: cpu, Unit: "%"}}
+		}, func(points []metrics.MetricPoint) { e.Observe("cpu", now, points) })
+		if sec == 115 && len(events) != 3 {
+			t.Fatalf("early package activation: %v", events)
+		}
+	}
+	want := []string{"cpu:activation", "other:activation", "other:recovery", "package:activation", "package:recovery", "cpu:recovery", "package:activation"}
+	if !reflect.DeepEqual(events, want) {
+		t.Fatalf("events = %v, want %v", events, want)
+	}
+}
+
+func TestConcurrentTemperatureAndCPUObservation(t *testing.T) {
+	st, db := newDB(t)
+	db.SetMaxOpenConns(1)
+	reader := fakeSensor{map[string]float64{"cpu/total": 65}}
+	p := New(reader, st, db)
+	rules := []alerts.Rule{
+		{ID: "temperature", MetricType: "temperature", Sensor: "cpu/total", Threshold: 65, Duration: 10 * time.Second},
+		{ID: "cpu", MetricType: "cpu", Sensor: "cpu/total", Threshold: 50, Duration: 10 * time.Second},
+	}
+	counts := map[string]int{}
+	e := alerts.NewEvaluator(rules, func(event alerts.Event) { counts[event.Rule.ID+":"+event.Kind]++ })
+	start := time.Now()
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 10; i++ {
+			now := start.Add(time.Duration(i) * 5 * time.Second)
+			p.Poll(24, func(points []metrics.MetricPoint) { e.Observe("temperature", now, points) })
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 10; i++ {
+			now := start.Add(time.Duration(i) * 5 * time.Second)
+			PollMetric(st, db, "cpu", 24, func() []metrics.MetricPoint {
+				return []metrics.MetricPoint{{Sensor: "cpu/total", Value: 50, Unit: "%"}}
+			}, func(points []metrics.MetricPoint) { e.Observe("cpu", now, points) })
+		}
+	}()
+	wg.Wait()
+	if !reflect.DeepEqual(counts, map[string]int{"temperature:activation": 1, "cpu:activation": 1}) {
+		t.Fatalf("events: %v", counts)
+	}
+}
+
+func TestTemperatureContinuityWithMissingInvalidAndGaps(t *testing.T) {
+	st, db := newDB(t)
+	reader := &fakeSensor{}
+	p := New(reader, st, db)
+	var events []string
+	e := alerts.NewEvaluator([]alerts.Rule{{ID: "hot", MetricType: "temperature", Sensor: "selected", Threshold: 65, Duration: 10 * time.Second}}, func(event alerts.Event) {
+		events = append(events, event.Kind)
+	})
+	start := time.Now()
+	steps := []struct {
+		sec    int
+		values map[string]float64
+		want   []string
+	}{
+		{0, map[string]float64{"selected": 65}, nil},
+		{11, map[string]float64{"selected": 65}, nil},
+		{16, map[string]float64{"selected": 65}, nil},
+		{21, map[string]float64{"selected": 65}, []string{"activation"}},
+		{26, nil, nil},
+		{31, map[string]float64{"selected": math.NaN()}, nil},
+		{36, map[string]float64{"selected": math.Inf(-1)}, nil},
+		{41, map[string]float64{"selected": 64}, []string{"recovery"}},
+		{46, map[string]float64{"selected": 65}, nil},
+		{51, map[string]float64{"selected": 64}, nil},
+		{56, map[string]float64{"selected": 65}, nil},
+		{61, map[string]float64{"selected": 65}, nil},
+		{66, map[string]float64{"selected": 65}, []string{"activation"}},
+	}
+	for _, step := range steps {
+		events = nil
+		reader.temps = step.values
+		now := start.Add(time.Duration(step.sec) * time.Second)
+		p.Poll(24, func(points []metrics.MetricPoint) { e.Observe("temperature", now, points) })
+		if !reflect.DeepEqual(events, step.want) {
+			t.Fatalf("at %ds: events %v, want %v", step.sec, events, step.want)
+		}
+	}
+}
+
+func TestTemperatureAlertsDoNotDependOnPersistence(t *testing.T) {
+	st, db := newDB(t)
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	p := New(fakeSensor{map[string]float64{"selected": 65}}, st, db)
+	var events []string
+	e := alerts.NewEvaluator([]alerts.Rule{{ID: "hot", MetricType: "temperature", Sensor: "selected", Threshold: 65, Duration: 5 * time.Second}}, func(event alerts.Event) { events = append(events, event.Kind) })
+	start := time.Now()
+	for i := 0; i < 2; i++ {
+		now := start.Add(time.Duration(i) * 5 * time.Second)
+		p.Poll(24, func(points []metrics.MetricPoint) { e.Observe("temperature", now, points) })
+	}
+	if !reflect.DeepEqual(events, []string{"activation"}) {
+		t.Fatalf("events = %v", events)
 	}
 }
 
@@ -83,19 +226,43 @@ func TestObservedCadenceIncludesReadTime(t *testing.T) {
 	}
 }
 
+func TestTemperatureObservedCadenceStoresEachCycle(t *testing.T) {
+	st, db := newDB(t)
+	p := New(fakeSensor{map[string]float64{"coretemp/Package id 0": 65}}, st, db)
+	now := time.Now()
+	var starts []time.Time
+	p.runObserved(5, 24, func([]metrics.MetricPoint) {
+		starts = append(starts, now)
+		now = now.Add(time.Second)
+	}, func() time.Time { return now }, func(d time.Duration) bool {
+		if d != 4*time.Second {
+			t.Errorf("wait = %v", d)
+		}
+		now = now.Add(d)
+		return len(starts) < 3
+	})
+	if len(starts) != 3 || starts[1].Sub(starts[0]) != 5*time.Second || starts[2].Sub(starts[1]) != 5*time.Second {
+		t.Fatalf("starts = %v", starts)
+	}
+	rows, err := st.Query(db, store.TimeWindow{Hours: 1}, "temperature")
+	if err != nil || len(rows) != 3 {
+		t.Fatalf("stored %d rows: %v", len(rows), err)
+	}
+}
+
 func TestAlertsDoNotDependOnPersistence(t *testing.T) {
 	st, db := newDB(t)
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
 	var events []alerts.Event
-	e := alerts.NewEvaluator([]alerts.Rule{{ID: "high", Sensor: "cpu/total", Threshold: 50, Duration: 5 * time.Second}}, func(event alerts.Event) { events = append(events, event) })
+	e := alerts.NewEvaluator([]alerts.Rule{{ID: "high", MetricType: "cpu", Sensor: "cpu/total", Threshold: 50, Duration: 5 * time.Second}}, func(event alerts.Event) { events = append(events, event) })
 	start := time.Now()
 	for i := 0; i < 2; i++ {
 		now := start.Add(time.Duration(i) * 5 * time.Second)
 		PollMetric(st, db, "cpu", 24, func() []metrics.MetricPoint {
 			return []metrics.MetricPoint{{Sensor: "cpu/total", Value: 50, Unit: "%"}}
-		}, func(points []metrics.MetricPoint) { e.Observe(now, points) })
+		}, func(points []metrics.MetricPoint) { e.Observe("cpu", now, points) })
 	}
 	if len(events) != 1 || events[0].Kind != "activation" {
 		t.Fatalf("events: %+v", events)

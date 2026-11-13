@@ -31,6 +31,21 @@ func TestGetEnvInt(t *testing.T) {
 	}
 }
 
+func TestAlertPollingIntervals(t *testing.T) {
+	for _, tt := range []struct {
+		enabled   bool
+		temp, cpu int
+	}{
+		{false, 37, 83},
+		{true, 5, 5},
+	} {
+		temp, cpu := pollingIntervals(tt.enabled, 37, 83)
+		if temp != tt.temp || cpu != tt.cpu {
+			t.Fatalf("enabled %v: got %d, %d; want %d, %d", tt.enabled, temp, cpu, tt.temp, tt.cpu)
+		}
+	}
+}
+
 func TestInvalidAlertsFailBeforeDatabase(t *testing.T) {
 	if os.Getenv("ALERT_STARTUP_TEST") == "1" {
 		os.Args = []string{"temp-tracker", "-alerts-config", "alerts.json"}
