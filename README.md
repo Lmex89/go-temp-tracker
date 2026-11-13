@@ -32,6 +32,8 @@ docker compose up -d
 
 ## Usage
 
+Para configurar alertas opcionales de CPU por Telegram, consulte [la guia de alertas](docs/alertas-cpu.md).
+
 ```bash
 # Run with PostgreSQL (default for helper scripts; the binary defaults to sqlite)
 DB_DRIVER=postgres ./bin/temp-tracker -port 9091

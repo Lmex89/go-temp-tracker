@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"sensors-temp/internal/alerts"
 	"sensors-temp/internal/httpapi"
 	"sensors-temp/internal/logging"
 	"sensors-temp/internal/metrics"
@@ -58,10 +59,26 @@ func main() {
 	interval := flag.Int("interval", 60, "Temperature polling interval in seconds")
 	retain := flag.Int("retain", 8760, "Delete readings older than N hours for ALL metric types (default: 12 months)")
 	dbDriver := flag.String("db-driver", os.Getenv("DB_DRIVER"), "Database driver: sqlite or postgres (also env DB_DRIVER)")
+	alertConfig := flag.String("alerts-config", "", "Private alerts configuration file")
 	flag.Parse()
 
 	logging.Logger.Info("Starting System Monitor")
 	logging.Logger.Debug("Config: port=%d, interval=%ds, retain=%dh", *port, *interval, *retain)
+	alertToken := os.Getenv("TELEGRAM_BOT_TOKEN")
+	alertCfg, err := alerts.LoadConfig(*alertConfig, "static", alertToken)
+	if err != nil {
+		logging.Logger.Fatal("Invalid alerts configuration: %v", err)
+	}
+	var evaluator *alerts.Evaluator
+	if alertCfg.Enabled {
+		host, err := os.Hostname()
+		if err != nil {
+			host = "unknown"
+		}
+		delivery := alerts.NewTelegram(alertToken, alertCfg.ChatID, host)
+		evaluator = alerts.NewEvaluator(alertCfg.Rules, delivery.Enqueue)
+		logging.Logger.Info("CPU alerts enabled: target interval 5s overrides CPU_POLL_INTERVAL")
+	}
 
 	// Choose the database backend. Defaults to SQLite for backward compatibility.
 	// DB_DRIVER env var or -db-driver flag selects postgres; DATABASE_URL configures
@@ -104,7 +121,11 @@ func main() {
 	cpuInterval := getEnvInt("CPU_POLL_INTERVAL", metricDefaultInterval)
 	go func() {
 		time.Sleep(3 * time.Second)
-		poller.RunMetric(st, db, "cpu", cpuInterval, *retain, sysMetrics.ReadCPU)
+		if evaluator == nil {
+			poller.RunMetric(st, db, "cpu", cpuInterval, *retain, sysMetrics.ReadCPU)
+		} else {
+			poller.RunMetricObserved(st, db, "cpu", 5, *retain, sysMetrics.ReadCPU, func(points []metrics.MetricPoint) { evaluator.Observe(time.Now(), points) })
+		}
 	}()
 	memInterval := getEnvInt("MEMORY_POLL_INTERVAL", metricDefaultInterval)
 	go func() {

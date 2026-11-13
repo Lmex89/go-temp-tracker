@@ -77,12 +77,47 @@ func RunMetric(st store.Store, db *sql.DB, metricType string, intervalSec, retai
 	}
 }
 
+// RunMetricObserved schedules cycles between their starts, including read time.
+func RunMetricObserved(st store.Store, db *sql.DB, metricType string, intervalSec, retainHours int, readFunc func() []metrics.MetricPoint, observe func([]metrics.MetricPoint)) {
+	runMetricObserved(st, db, metricType, intervalSec, retainHours, readFunc, observe, time.Now, func(d time.Duration) bool { time.Sleep(d); return true })
+}
+
+func runMetricObserved(st store.Store, db *sql.DB, metricType string, intervalSec, retainHours int, readFunc func() []metrics.MetricPoint, observe func([]metrics.MetricPoint), now func() time.Time, sleep func(time.Duration) bool) {
+	logging.Logger.Info("[%s] observed polling loop started (target interval=%ds, retain=%dh)", metricType, intervalSec, retainHours)
+	delayed := false
+	for {
+		start := now()
+		PollMetric(st, db, metricType, retainHours, readFunc, observe)
+		wait := time.Duration(intervalSec)*time.Second - now().Sub(start)
+		if wait <= 0 {
+			if !delayed {
+				logging.Logger.Warn("[%s] polling cycle exceeded target interval", metricType)
+			}
+			delayed = true
+			wait = 0
+		} else {
+			delayed = false
+		}
+		if !sleep(wait) {
+			return
+		}
+	}
+}
+
 // pollMetric runs ONE cycle (read -> insert -> prune) for a system metric.
 func pollMetric(st store.Store, db *sql.DB, metricType string, retainHours int, readFunc func() []metrics.MetricPoint) {
+	PollMetric(st, db, metricType, retainHours, readFunc, nil)
+}
+
+// PollMetric runs one cycle and observes the fresh readings before persistence.
+func PollMetric(st store.Store, db *sql.DB, metricType string, retainHours int, readFunc func() []metrics.MetricPoint, observe func([]metrics.MetricPoint)) {
 	logging.Logger.Debug("Reading [%s] metrics...", metricType)
 	points := readFunc()
+	if observe != nil {
+		observe(points)
+	}
 
-	if len(points) == 0 {
+	if len(points) == 0 && observe == nil {
 		logging.Logger.Warn("[%s] No metrics returned", metricType)
 	}
 
