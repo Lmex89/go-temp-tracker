@@ -3,7 +3,9 @@ package metrics
 import (
 	"fmt"
 	"sensors-temp/internal/logging"
+	"sensors-temp/internal/timeutil"
 	"strings"
+	"sync"
 	"time"
 
 	// gopsutil v3 -- pure Go system metrics library (like Python's psutil, but for Go).
@@ -18,19 +20,36 @@ import (
 // This is like a lightweight dataclass -- sensor name, numeric value, and unit string.
 // In Python: @dataclass class MetricPoint: sensor: str; value: float; unit: str
 type MetricPoint struct {
-	Sensor string
-	Value  float64
-	Unit   string
+	Sensor    string
+	Value     float64
+	Unit      string
+	At        time.Time
+	StartedAt time.Time
+	// BootAt is zero for legacy readers and negative when the clock failed.
+	BootAt    time.Duration
+	BootStart time.Duration
 }
 
 // SystemMetrics wraps gopsutil calls for CPU, memory, swap, disk, and load.
-// This is a struct with no fields (like a module/namespace in Python).
 // Each method returns a slice of MetricPoint (like a list of dataclass instances).
-type SystemMetrics struct{}
+type SystemMetrics struct {
+	cpuPercent func(time.Duration, bool) ([]float64, error)
+	now        func() time.Time
+	cpuMu      sync.Mutex
+	cpuError   string
+	quietCPU   bool
+}
+
+// SuppressRepeatedCPUWarnings limits repeated failures at the alert polling cadence.
+func (sm *SystemMetrics) SuppressRepeatedCPUWarnings() {
+	sm.cpuMu.Lock()
+	defer sm.cpuMu.Unlock()
+	sm.quietCPU = true
+}
 
 // NewSystemMetrics constructor -- returns a pointer to a new SystemMetrics.
 func NewSystemMetrics() *SystemMetrics {
-	return &SystemMetrics{}
+	return &SystemMetrics{cpuPercent: cpu.Percent, now: time.Now}
 }
 
 // ReadCPU measures CPU usage per core and total.
@@ -42,20 +61,45 @@ func (sm *SystemMetrics) ReadCPU() []MetricPoint {
 	// percpu=true returns one float per logical core + total as the last element.
 	// Wait -- actually without percpu=false, the total is NOT included.
 	// Let's call with percpu=true and compute total manually.
-	percents, err := cpu.Percent(time.Second, true)
+	read := sm.cpuPercent
+	if read == nil {
+		read = cpu.Percent
+	}
+	now := sm.now
+	if now == nil {
+		now = time.Now
+	}
+	bootStart := timeutil.BootTime()
+	startedAt := now()
+	percents, err := read(time.Second, true)
+	at := now()
+	bootAt := timeutil.ObservationBootTime(bootStart)
+	sm.cpuMu.Lock()
+	defer sm.cpuMu.Unlock()
 	if err != nil {
-		logging.Logger.Warn("Failed to read CPU: %v", err)
+		if !sm.quietCPU || sm.cpuError != err.Error() {
+			logging.Logger.Warn("Failed to read CPU: %v", err)
+			sm.cpuError = err.Error()
+		}
 		return nil
 	}
+	if sm.quietCPU && sm.cpuError != "" {
+		logging.Logger.Info("CPU reading recovered")
+	}
+	sm.cpuError = ""
 	// Build MetricPoint slice -- like a list comprehension in Python.
 	// In Python: [MetricPoint(f"cpu/Core {i}", p, "%") for i, p in enumerate(percents)]
 	points := make([]MetricPoint, 0, len(percents)+1)
 	var total float64
 	for i, p := range percents {
 		points = append(points, MetricPoint{
-			Sensor: fmt.Sprintf("cpu/Core %d", i),
-			Value:  p,
-			Unit:   "%",
+			Sensor:    fmt.Sprintf("cpu/Core %d", i),
+			Value:     p,
+			Unit:      "%",
+			At:        at,
+			StartedAt: startedAt,
+			BootAt:    bootAt,
+			BootStart: bootStart,
 		})
 		total += p
 	}
@@ -63,9 +107,13 @@ func (sm *SystemMetrics) ReadCPU() []MetricPoint {
 	if len(percents) > 0 {
 		avg := total / float64(len(percents))
 		points = append(points, MetricPoint{
-			Sensor: "cpu/total",
-			Value:  avg,
-			Unit:   "%",
+			Sensor:    "cpu/total",
+			Value:     avg,
+			Unit:      "%",
+			At:        at,
+			StartedAt: startedAt,
+			BootAt:    bootAt,
+			BootStart: bootStart,
 		})
 	}
 	return points

@@ -1,0 +1,428 @@
+package alerts
+
+import (
+	"errors"
+	"io"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"sensors-temp/internal/logging"
+	"sensors-temp/internal/metrics"
+	"sensors-temp/internal/poller"
+	"sensors-temp/internal/store"
+)
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestTelegramRetriesAndOrder(t *testing.T) {
+	var mu sync.Mutex
+	var bodies []string
+	var waits []time.Duration
+	done := make(chan struct{})
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Error(err)
+		}
+		if r.URL.Host != "api.telegram.org" || !strings.Contains(r.URL.Path, "/bot123:secret/sendMessage") {
+			t.Errorf("unexpected endpoint")
+		}
+		mu.Lock()
+		bodies = append(bodies, string(body))
+		n := len(bodies)
+		mu.Unlock()
+		if n == 4 {
+			close(done)
+		}
+		if n < 3 {
+			return &http.Response{StatusCode: 429, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"ok":false,"parameters":{"retry_after":7}}`))}, nil
+		}
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"ok":true}`))}, nil
+	})}
+	s := newTelegram("123:secret", "private-chat", "host", client, 4, func(d time.Duration) { mu.Lock(); waits = append(waits, d); mu.Unlock() })
+	s.Enqueue(Event{Kind: "activation", Rule: Rule{ID: "high", MetricType: "cpu", Sensor: "cpu/total", Threshold: 50, Duration: time.Minute}, At: time.Now()})
+	s.Enqueue(Event{Kind: "recovery", Rule: Rule{ID: "high", MetricType: "cpu", Sensor: "cpu/total", Threshold: 50, Duration: time.Minute}, At: time.Now()})
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("delivery stalled")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(bodies) != 4 || !strings.Contains(bodies[0], "activation") || !strings.Contains(bodies[3], "recovery") {
+		t.Fatalf("wrong order or attempts: %v", bodies)
+	}
+	if len(waits) != 2 || waits[0] != 7*time.Second || waits[1] != 7*time.Second {
+		t.Fatalf("waits = %v", waits)
+	}
+}
+
+type exhaustedWriter struct{ done chan struct{} }
+
+func (w exhaustedWriter) Write(p []byte) (int, error) {
+	n, err := os.Stdout.Write(p)
+	if strings.Contains(string(p), "delivery exhausted") {
+		close(w.done)
+	}
+	return n, err
+}
+
+func TestTelegramExhaustionDoesNotLeakSecrets(t *testing.T) {
+	if os.Getenv("ALERT_LOG_TEST") == "1" {
+		done := make(chan struct{})
+		logging.Logger = logging.New(exhaustedWriter{done}, "DEBUG")
+		attempts := 0
+		client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			attempts++
+			return nil, errors.New("transport exposed " + r.URL.String() + " private-chat")
+		})}
+		s := newTelegram("123:secret-token", "private-chat", "host", client, 1, func(time.Duration) {})
+		s.Enqueue(Event{Kind: "activation", Rule: Rule{ID: "high"}, At: time.Now()})
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("delivery stalled")
+		}
+		if attempts != 3 {
+			t.Fatalf("attempts: %d", attempts)
+		}
+		return
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=^TestTelegramExhaustionDoesNotLeakSecrets$")
+	cmd.Env = append(os.Environ(), "ALERT_LOG_TEST=1")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("child: %v: %s", err, out)
+	}
+	if !strings.Contains(string(out), "delivery exhausted") {
+		t.Fatalf("missing exhaustion log: %s", out)
+	}
+	for _, secret := range []string{"secret-token", "private-chat", "api.telegram.org"} {
+		if strings.Contains(string(out), secret) {
+			t.Fatalf("secret leaked: %s", out)
+		}
+	}
+}
+
+func TestPollerToTelegramAndSQLite(t *testing.T) {
+	st := store.NewSQLiteStore(filepath.Join(t.TempDir(), "readings.db"))
+	db := st.InitDB()
+	if db == nil {
+		t.Fatal("database initialization failed")
+	}
+	t.Cleanup(func() { db.Close() })
+	requests := make(chan string, 2)
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Error(err)
+		}
+		requests <- string(body)
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"ok":true}`))}, nil
+	})}
+	s := newTelegram("123:secret", "chat", "machine", client, 4, func(time.Duration) { t.Error("unexpected retry") })
+	e := NewEvaluator([]Rule{{ID: "high", MetricType: "cpu", Sensor: "cpu/total", Threshold: 50, Duration: time.Minute}}, s.Enqueue)
+	start := time.Now()
+	for i := 0; i <= 13; i++ {
+		value := 50.0
+		if i == 13 {
+			value = 49
+		}
+		now := start.Add(time.Duration(i) * 5 * time.Second)
+		poller.PollMetric(st, db, "cpu", 24, func() []metrics.MetricPoint {
+			return []metrics.MetricPoint{{Sensor: "cpu/total", Value: value, Unit: "%"}}
+		}, func(p []metrics.MetricPoint) { e.Observe("cpu", now, p) })
+	}
+	for _, kind := range []string{"activation", "recovery"} {
+		select {
+		case body := <-requests:
+			for _, part := range []string{kind, "machine", "high", "cpu/total", "Threshold: 50%", "Duration: 1 minutes", "Time:", `"chat_id":"chat"`} {
+				if !strings.Contains(body, part) {
+					t.Errorf("missing %q in %s", part, body)
+				}
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("delivery stalled")
+		}
+	}
+	rows, err := st.Query(db, store.TimeWindow{Hours: 1}, "cpu")
+	if err != nil || len(rows) != 14 {
+		t.Fatalf("stored %d rows: %v", len(rows), err)
+	}
+}
+
+type thermalReader struct{ values map[string]float64 }
+
+func (r *thermalReader) Read() map[string]float64 { return r.values }
+
+func TestInitialRulesPollerDeliveryAndCoexistence(t *testing.T) {
+	st := store.NewSQLiteStore(filepath.Join(t.TempDir(), "readings.db"))
+	db := st.InitDB()
+	if db == nil {
+		t.Fatal("database initialization failed")
+	}
+	t.Cleanup(func() { db.Close() })
+	telegram, email := make(chan string, 8), make(chan string, 8)
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			return nil, err
+		}
+		switch r.URL.Host {
+		case "api.telegram.org":
+			telegram <- string(body)
+			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"ok":true}`))}, nil
+		case "api.brevo.com":
+			email <- string(body)
+			return &http.Response{StatusCode: 201, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"messageId":"accepted"}`))}, nil
+		default:
+			return nil, errors.New("unexpected provider")
+		}
+	})}
+	s := newTelegram("123:secret", "123", "machine", client, 8, func(time.Duration) { t.Error("unexpected retry") })
+	b := newBrevo("test-key", "from@example.test", "Monitor", "to@example.test", "machine", client, 8, func(time.Duration) { t.Error("unexpected retry") })
+	rules := []Rule{
+		{ID: "cpu-high", MetricType: "cpu", Sensor: "cpu/total", Threshold: 50, Duration: 3 * time.Minute},
+		{ID: "cpu-saturated", MetricType: "cpu", Sensor: "cpu/total", Threshold: 95, Duration: time.Minute},
+		{ID: "temperature-high", MetricType: "temperature", Sensor: "coretemp/Package id 0", Threshold: 65, Duration: 2 * time.Minute},
+	}
+	var events []string
+	e := NewEvaluator(rules, func(event Event) {
+		events = append(events, event.Rule.ID+":"+event.Kind)
+		s.Enqueue(event)
+		b.Enqueue(event)
+	})
+	r := &thermalReader{values: map[string]float64{"coretemp/Package id 0": 65}}
+	p := poller.New(r, st, db)
+	start := time.Now()
+	cpu := 95.0
+	observe := func(sec int) {
+		now := start.Add(time.Duration(sec) * time.Second)
+		poller.PollMetric(st, db, "cpu", 24, func() []metrics.MetricPoint {
+			return []metrics.MetricPoint{{Sensor: "cpu/total", Value: cpu, Unit: "%"}}
+		}, func(points []metrics.MetricPoint) { e.Observe("cpu", now, points) })
+		p.Poll(24, func(points []metrics.MetricPoint) { e.Observe("temperature", now, points) })
+	}
+	for sec := 0; sec <= 180; sec += 5 {
+		if sec == 60 || sec == 120 || sec == 180 {
+			observe(sec - 1)
+			want := map[int]int{60: 0, 120: 1, 180: 2}[sec]
+			if len(events) != want {
+				t.Fatalf("early activation at %d: %v", sec-1, events)
+			}
+		}
+		observe(sec)
+	}
+	cpu = 50
+	observe(185)
+	cpu = 49
+	r.values["coretemp/Package id 0"] = 64
+	observe(190)
+	want := []string{"cpu-saturated:activation", "temperature-high:activation", "cpu-high:activation", "cpu-saturated:recovery", "cpu-high:recovery", "temperature-high:recovery"}
+	if !reflect.DeepEqual(events, want) {
+		t.Fatalf("events = %v", events)
+	}
+	for _, event := range want {
+		parts := strings.Split(event, ":")
+		for _, requests := range []chan string{telegram, email} {
+			select {
+			case body := <-requests:
+				if !strings.Contains(body, parts[0]) || !strings.Contains(body, parts[1]) {
+					t.Fatalf("unexpected delivery: %s", body)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("delivery stalled")
+			}
+		}
+	}
+	for _, metric := range []string{"cpu", "temperature"} {
+		rows, err := st.Query(db, store.TimeWindow{Hours: 1}, metric)
+		if err != nil || len(rows) != 42 {
+			t.Fatalf("%s: %d rows: %v", metric, len(rows), err)
+		}
+	}
+}
+
+func TestInitialCPUHighActivatesAt50PercentAfterThreeMinutes(t *testing.T) {
+	st := store.NewSQLiteStore(filepath.Join(t.TempDir(), "readings.db"))
+	db := st.InitDB()
+	if db == nil {
+		t.Fatal("database initialization failed")
+	}
+	t.Cleanup(func() { db.Close() })
+	var events []Event
+	e := NewEvaluator([]Rule{{ID: "cpu-high", MetricType: "cpu", Sensor: "cpu/total", Threshold: 50, Duration: 3 * time.Minute}}, func(event Event) { events = append(events, event) })
+	start := time.Now()
+	observe := func(sec int) {
+		now := start.Add(time.Duration(sec) * time.Second)
+		poller.PollMetric(st, db, "cpu", 24, func() []metrics.MetricPoint {
+			return []metrics.MetricPoint{{Sensor: "cpu/total", Value: 50, Unit: "%"}}
+		}, func(points []metrics.MetricPoint) { e.Observe("cpu", now, points) })
+	}
+	for sec := 0; sec <= 175; sec += 5 {
+		observe(sec)
+	}
+	observe(179)
+	if len(events) != 0 {
+		t.Fatal("activated before three minutes")
+	}
+	observe(180)
+	if len(events) != 1 || events[0].Kind != "activation" {
+		t.Fatalf("events = %+v", events)
+	}
+}
+
+func TestTemperaturePollerToTelegramBrevoAndSQLite(t *testing.T) {
+	st := store.NewSQLiteStore(filepath.Join(t.TempDir(), "readings.db"))
+	db := st.InitDB()
+	if db == nil {
+		t.Fatal("database initialization failed")
+	}
+	t.Cleanup(func() { db.Close() })
+	telegram, email := make(chan string, 2), make(chan string, 2)
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Error(err)
+		}
+		switch r.URL.Host {
+		case "api.telegram.org":
+			telegram <- string(body)
+			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"ok":true}`))}, nil
+		case "api.brevo.com":
+			email <- string(body)
+			return &http.Response{StatusCode: 201, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"messageId":"accepted"}`))}, nil
+		default:
+			t.Error("unexpected provider")
+			return nil, io.ErrUnexpectedEOF
+		}
+	})}
+	s := newTelegram("123:secret", "chat", "machine", client, 4, func(time.Duration) { t.Error("unexpected retry") })
+	b := newBrevo("test-key", "from@example.test", "Monitor", "to@example.test", "machine", client, 4, func(time.Duration) { t.Error("unexpected retry") })
+	var events []Event
+	e := NewEvaluator([]Rule{{ID: "hot", MetricType: "temperature", Sensor: "coretemp/Package id 0", Threshold: 65, Duration: 2 * time.Minute}}, func(event Event) {
+		events = append(events, event)
+		s.Enqueue(event)
+		b.Enqueue(event)
+	})
+	r := &thermalReader{values: map[string]float64{"coretemp/Package id 0": 65, "coretemp/Core 0": 80}}
+	p := poller.New(r, st, db)
+	start := time.Now()
+	for i := 0; i <= 25; i++ {
+		if i == 25 {
+			r.values["coretemp/Package id 0"] = 64
+		}
+		now := start.Add(time.Duration(i) * 5 * time.Second)
+		p.Poll(24, func(points []metrics.MetricPoint) { e.Observe("temperature", now, points) })
+		if i < 24 && len(events) != 0 {
+			t.Fatal("activated before two minutes")
+		}
+		if i == 23 {
+			p.Poll(24, func(points []metrics.MetricPoint) { e.Observe("temperature", start.Add(119*time.Second), points) })
+			if len(events) != 0 {
+				t.Fatal("activated one second before the full duration")
+			}
+		}
+	}
+	for _, kind := range []string{"activation", "recovery"} {
+		for _, requests := range []chan string{telegram, email} {
+			select {
+			case body := <-requests:
+				for _, part := range []string{kind, "coretemp/Package id 0", "Threshold: 65C", "Duration: 2 minutes"} {
+					if !strings.Contains(body, part) {
+						t.Errorf("missing %q in %s", part, body)
+					}
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("delivery stalled")
+			}
+		}
+	}
+	rows, err := st.Query(db, store.TimeWindow{Hours: 1}, "temperature")
+	if err != nil || len(rows) != 54 {
+		t.Fatalf("stored %d rows: %v", len(rows), err)
+	}
+}
+
+func TestTelegramResponseAndSecretSafety(t *testing.T) {
+	tests := []struct {
+		name         string
+		status       int
+		body         string
+		transportErr bool
+		want         bool
+	}{
+		{"accepted", 200, `{"ok":true}`, false, true},
+		{"rejected", 200, `{"ok":false}`, false, false},
+		{"invalid body", 200, `oops`, false, false},
+		{"trailing invalid data", 200, `{"ok":true}junk`, false, false},
+		{"server error", 500, `{"ok":true}`, false, false},
+		{"transport", 0, "", true, false},
+		{"redirect", 302, `{"ok":true}`, false, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			calls := 0
+			client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				calls++
+				if tt.transportErr {
+					return nil, errors.New("secret token and private chat")
+				}
+				return &http.Response{StatusCode: tt.status, Header: http.Header{"Location": []string{"https://evil.invalid/"}}, Body: io.NopCloser(strings.NewReader(tt.body)), Request: r}, nil
+			})}
+			s := newTelegram("123:secret", "private-chat", "host", client, 1, func(time.Duration) {})
+			if s.client.Timeout != 10*time.Second {
+				t.Fatalf("timeout %s", s.client.Timeout)
+			}
+			ok, _ := s.send(Event{Kind: "activation", Rule: Rule{ID: "x"}, At: time.Now()})
+			if ok != tt.want || calls != 1 {
+				t.Fatalf("accepted %v, calls %d", ok, calls)
+			}
+		})
+	}
+}
+
+func TestTelegramQueueIsBounded(t *testing.T) {
+	if os.Getenv("ALERT_QUEUE_TEST") != "1" {
+		cmd := exec.Command(os.Args[0], "-test.run=^TestTelegramQueueIsBounded$")
+		cmd.Env = append(os.Environ(), "ALERT_QUEUE_TEST=1")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("child: %v: %s", err, out)
+		}
+		if !strings.Contains(string(out), "delivery queue full; lost") {
+			t.Fatalf("missing saturation log: %s", out)
+		}
+		return
+	}
+	started, release, sent := make(chan struct{}), make(chan struct{}), make(chan struct{}, 2)
+	var once sync.Once
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		once.Do(func() { close(started); <-release })
+		sent <- struct{}{}
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"ok":true}`))}, nil
+	})}
+	s := newTelegram("123:secret", "chat", "host", client, 1, func(time.Duration) {})
+	e := Event{Kind: "activation", Rule: Rule{ID: "x"}, At: time.Now()}
+	s.Enqueue(e)
+	<-started
+	s.Enqueue(e)
+	s.Enqueue(e)
+	close(release)
+	for i := 0; i < 2; i++ {
+		select {
+		case <-sent:
+		case <-time.After(5 * time.Second):
+			t.Fatal("delivery stalled")
+		}
+	}
+}
