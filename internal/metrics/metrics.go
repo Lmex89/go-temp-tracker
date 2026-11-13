@@ -20,12 +20,14 @@ import (
 // This is like a lightweight dataclass -- sensor name, numeric value, and unit string.
 // In Python: @dataclass class MetricPoint: sensor: str; value: float; unit: str
 type MetricPoint struct {
-	Sensor string
-	Value  float64
-	Unit   string
-	At     time.Time
+	Sensor    string
+	Value     float64
+	Unit      string
+	At        time.Time
+	StartedAt time.Time
 	// BootAt is zero for legacy readers and negative when the clock failed.
-	BootAt time.Duration
+	BootAt    time.Duration
+	BootStart time.Duration
 }
 
 // SystemMetrics wraps gopsutil calls for CPU, memory, swap, disk, and load.
@@ -63,12 +65,13 @@ func (sm *SystemMetrics) ReadCPU() []MetricPoint {
 	if read == nil {
 		read = cpu.Percent
 	}
-	bootStart := timeutil.BootTime()
-	percents, err := read(time.Second, true)
 	now := sm.now
 	if now == nil {
 		now = time.Now
 	}
+	bootStart := timeutil.BootTime()
+	startedAt := now()
+	percents, err := read(time.Second, true)
 	at := now()
 	bootAt := timeutil.ObservationBootTime(bootStart)
 	sm.cpuMu.Lock()
@@ -90,11 +93,13 @@ func (sm *SystemMetrics) ReadCPU() []MetricPoint {
 	var total float64
 	for i, p := range percents {
 		points = append(points, MetricPoint{
-			Sensor: fmt.Sprintf("cpu/Core %d", i),
-			Value:  p,
-			Unit:   "%",
-			At:     at,
-			BootAt: bootAt,
+			Sensor:    fmt.Sprintf("cpu/Core %d", i),
+			Value:     p,
+			Unit:      "%",
+			At:        at,
+			StartedAt: startedAt,
+			BootAt:    bootAt,
+			BootStart: bootStart,
 		})
 		total += p
 	}
@@ -102,11 +107,13 @@ func (sm *SystemMetrics) ReadCPU() []MetricPoint {
 	if len(percents) > 0 {
 		avg := total / float64(len(percents))
 		points = append(points, MetricPoint{
-			Sensor: "cpu/total",
-			Value:  avg,
-			Unit:   "%",
-			At:     at,
-			BootAt: bootAt,
+			Sensor:    "cpu/total",
+			Value:     avg,
+			Unit:      "%",
+			At:        at,
+			StartedAt: startedAt,
+			BootAt:    bootAt,
+			BootStart: bootStart,
 		})
 	}
 	return points
