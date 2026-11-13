@@ -4,8 +4,11 @@ import (
 	"os"
 	"path/filepath"
 	"sensors-temp/internal/logging"
+	"sensors-temp/internal/timeutil"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 )
 
 // Reader is an *interface* (like a Python ABC or Protocol, but implicit).
@@ -16,12 +19,21 @@ type Reader interface {
 	Read() map[string]float64
 }
 
+type Reading struct {
+	Value     float64
+	At        time.Time
+	StartedAt time.Time
+	BootAt    time.Duration
+	BootStart time.Duration
+}
+
 // LinuxThermalSensor is a *struct* (like a Python class with only attributes, no methods defined inline).
-// Struct{} means it has no fields -- just an empty "bag". Methods are attached separately below.
 // root is the sysfs base ("/sys" in production). Tests point it at a temp dir,
 // like passing a base path into a Python class so pytest's tmp_path can fake /sys.
 type LinuxThermalSensor struct {
-	root string
+	root   string
+	mu     sync.Mutex
+	warned map[string]bool
 }
 
 // NewLinuxThermalSensor is a *constructor* -- returns a pointer (*LinuxThermalSensor).
@@ -41,6 +53,30 @@ func NewLinuxThermalSensorAt(root string) *LinuxThermalSensor {
 // This is like Python's "try hwmon except: use thermal" pattern.
 // The (s *LinuxThermalSensor) before the name is the *receiver* -- like "self" in Python methods.
 func (s *LinuxThermalSensor) Read() map[string]float64 {
+	readings := s.readTimed(false)
+	temps := make(map[string]float64, len(readings))
+	for name, reading := range readings {
+		temps[name] = reading.Value
+	}
+	return temps
+}
+
+// ReadTimed preserves the acquisition time of each individual sensor.
+func (s *LinuxThermalSensor) ReadTimed() map[string]Reading {
+	return s.readTimed(true)
+}
+
+func (s *LinuxThermalSensor) readTimed(throttle bool) map[string]Reading {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	seen := make(map[string]bool)
+	defer func() {
+		for key := range s.warned {
+			if !seen[key] {
+				delete(s.warned, key)
+			}
+		}
+	}()
 	// Try hwmon first -- provides better sensor names like "Core 0", "Package id 0"
 	// This is like Python's EAFP: Easier to Ask for Forgiveness than Permission
 	temps := s.readHwmonSensors()
@@ -55,7 +91,18 @@ func (s *LinuxThermalSensor) Read() map[string]float64 {
 	// Fallback to thermal zones -- works on ALL Linux systems
 	// Like a Python fallback: return read_thermal_zones() if not temps
 	logging.Logger.Debug("No hwmon sensors found, falling back to thermal zones")
-	return s.readThermalZones()
+	return s.readThermalZones(throttle, seen)
+}
+
+func (s *LinuxThermalSensor) warn(throttle bool, seen map[string]bool, key, format string, args ...any) {
+	seen[key] = true
+	if !throttle || !s.warned[key] {
+		logging.Logger.Warn(format, args...)
+	}
+	if s.warned == nil {
+		s.warned = make(map[string]bool)
+	}
+	s.warned[key] = true
 }
 
 // readHwmonSensors reads from /sys/class/hwmon/ -- the hardware monitoring interface.
@@ -63,9 +110,9 @@ func (s *LinuxThermalSensor) Read() map[string]float64 {
 // Works when kernel modules like coretemp (Intel) or k10temp (AMD) are loaded.
 // Returns empty map if no hwmon sensors are available.
 // In Python terms: scans /sys/class/hwmon/hwmon*/temp*_input files.
-func (s *LinuxThermalSensor) readHwmonSensors() map[string]float64 {
-	// make(map[string]float64) creates an empty map -- like {} in Python.
-	temps := make(map[string]float64)
+func (s *LinuxThermalSensor) readHwmonSensors() map[string]Reading {
+	// make creates an empty map -- like {} in Python.
+	temps := make(map[string]Reading)
 
 	// filepath.Glob finds all hwmon directories -- like Python's glob.glob('/sys/class/hwmon/hwmon*')
 	// Go returns TWO values: result AND error. This is Go's error handling instead of try/except.
@@ -116,7 +163,11 @@ func (s *LinuxThermalSensor) readHwmonSensors() map[string]float64 {
 
 			// Read the temperature value from tempN_input file.
 			// Value is in millidegrees Celsius (e.g., 45000 = 45C).
+			bootStart := timeutil.BootTime()
+			startedAt := time.Now()
 			raw, err := os.ReadFile(tempInput)
+			at := time.Now()
+			bootAt := timeutil.ObservationBootTime(bootStart)
 			if err != nil {
 				logging.Logger.Debug("Cannot read %s: %v", baseName, err)
 				continue
@@ -149,7 +200,7 @@ func (s *LinuxThermalSensor) readHwmonSensors() map[string]float64 {
 			}
 
 			logging.Logger.Debug("Sensor %s: %.2fC", sensorName, tempC)
-			temps[sensorName] = tempC // Like Python: temps[sensor_name] = temp_c
+			temps[sensorName] = Reading{Value: tempC, At: at, StartedAt: startedAt, BootAt: bootAt, BootStart: bootStart}
 		}
 	}
 
@@ -160,21 +211,21 @@ func (s *LinuxThermalSensor) readHwmonSensors() map[string]float64 {
 // This is the fallback method that works on ALL Linux systems with kernel 2.6+.
 // Thermal zones are more generic ("thermal_zone0", "x86_pkg_temp") but always available.
 // In Python terms: scans /sys/class/thermal/thermal_zone*/temp files.
-func (s *LinuxThermalSensor) readThermalZones() map[string]float64 {
-	// make(map[string]float64) creates an empty map -- like {} in Python.
-	temps := make(map[string]float64)
+func (s *LinuxThermalSensor) readThermalZones(throttle bool, seen map[string]bool) map[string]Reading {
+	// make creates an empty map -- like {} in Python.
+	temps := make(map[string]Reading)
 
 	// filepath.Glob finds files matching a pattern -- like Python's glob.glob().
 	// Go returns TWO values: the result AND an error. This is Go's way of handling errors
 	// instead of try/except. You ALWAYS check if err != nil before using the result.
 	zones, err := filepath.Glob(filepath.Join(s.root, "class/thermal/thermal_zone*"))
 	if err != nil {
-		logging.Logger.Warn("Failed to glob thermal zones: %v", err)
+		s.warn(throttle, seen, "glob", "Failed to glob thermal zones: %v", err)
 		return temps
 	}
 
 	if len(zones) == 0 {
-		logging.Logger.Warn("No thermal zones found at /sys/class/thermal/thermal_zone*")
+		s.warn(throttle, seen, "no-zones", "No thermal zones found at /sys/class/thermal/thermal_zone*")
 		return temps
 	}
 
@@ -188,9 +239,13 @@ func (s *LinuxThermalSensor) readThermalZones() map[string]float64 {
 
 		// os.ReadFile reads a whole file into memory -- like Python's open().read().
 		// Returns []byte (byte slice, similar to Python's bytes) and error.
+		bootStart := timeutil.BootTime()
+		startedAt := time.Now()
 		raw, err := os.ReadFile(filepath.Join(zone, "temp"))
+		at := time.Now()
+		bootAt := timeutil.ObservationBootTime(bootStart)
 		if err != nil {
-			logging.Logger.Warn("Cannot read %s/temp: %v", zoneName, err)
+			s.warn(throttle, seen, zoneName+"/temp", "Cannot read %s/temp: %v", zoneName, err)
 			continue
 		}
 
@@ -198,7 +253,7 @@ func (s *LinuxThermalSensor) readThermalZones() map[string]float64 {
 		// TrimSpace removes whitespace -- like Python's .strip().
 		val, err := strconv.ParseFloat(strings.TrimSpace(string(raw)), 64)
 		if err != nil {
-			logging.Logger.Warn("Cannot parse temperature from %s: %v", zoneName, err)
+			s.warn(throttle, seen, zoneName+"/parse", "Cannot parse temperature from %s: %v", zoneName, err)
 			continue
 		}
 
@@ -208,13 +263,13 @@ func (s *LinuxThermalSensor) readThermalZones() map[string]float64 {
 		if err == nil {
 			name = strings.TrimSpace(string(nameRaw))
 		} else {
-			logging.Logger.Warn("Cannot read %s/type, using zone name: %v", zoneName, err)
+			s.warn(throttle, seen, zoneName+"/type", "Cannot read %s/type, using zone name: %v", zoneName, err)
 		}
 
 		// Linux reports temperature in millidegrees (e.g. 45000 = 45C).
 		tempC := val / 1000.0
 		logging.Logger.Debug("Sensor %s (%s): %.2fC", zoneName, name, tempC)
-		temps[name] = tempC // Assigning to a map -- like Python dict: temps[name] = tempC
+		temps[name] = Reading{Value: tempC, At: at, StartedAt: startedAt, BootAt: bootAt, BootStart: bootStart}
 	}
 
 	return temps // Returns the map (Go passes maps by reference, like Python dicts)
