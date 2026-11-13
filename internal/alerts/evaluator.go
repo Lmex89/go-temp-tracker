@@ -2,6 +2,7 @@ package alerts
 
 import (
 	"math"
+	"sync"
 	"time"
 
 	"sensors-temp/internal/logging"
@@ -23,8 +24,9 @@ type ruleState struct {
 	lost    bool
 }
 
-// Evaluator is owned by the CPU poller, like an object in a single Python thread.
+// Evaluator protects independent rule states shared by the polling goroutines.
 type Evaluator struct {
+	mu     sync.Mutex
 	states []ruleState
 	emit   func(Event)
 }
@@ -38,9 +40,14 @@ func NewEvaluator(rules []Rule, emit func(Event)) *Evaluator {
 }
 
 // Observe requires a fresh reading; a missing point never means recovery.
-func (e *Evaluator) Observe(now time.Time, points []metrics.MetricPoint) {
+func (e *Evaluator) Observe(metricType string, now time.Time, points []metrics.MetricPoint) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	for i := range e.states {
 		s := &e.states[i]
+		if s.rule.MetricType != metricType {
+			continue
+		}
 		var point metrics.MetricPoint
 		found := false
 		for _, p := range points {

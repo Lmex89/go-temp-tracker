@@ -1,4 +1,4 @@
-// Package alerts evaluates sustained CPU rules and delivers their events.
+// Package alerts evaluates sustained rules and delivers their events.
 package alerts
 
 import (
@@ -109,11 +109,20 @@ func LoadConfig(path, publicDir, token, apiKey string) (Config, error) {
 			return Config{}, errors.New("alert rule IDs must be unique and contain only letters, digits, underscore or hyphen")
 		}
 		seen[r.ID] = true
-		if r.MetricType != "cpu" || r.Sensor != "cpu/total" {
-			return Config{}, errors.New("only cpu/total rules are supported")
+		if r.Threshold == nil || math.IsNaN(*r.Threshold) || math.IsInf(*r.Threshold, 0) {
+			return Config{}, errors.New("alert threshold must be finite")
 		}
-		if r.Threshold == nil || math.IsNaN(*r.Threshold) || math.IsInf(*r.Threshold, 0) || *r.Threshold < 0 || *r.Threshold > 100 {
-			return Config{}, errors.New("CPU threshold must be between 0 and 100")
+		switch r.MetricType {
+		case "cpu":
+			if r.Sensor != "cpu/total" || *r.Threshold < 0 || *r.Threshold > 100 {
+				return Config{}, errors.New("CPU rules require cpu/total and threshold between 0 and 100")
+			}
+		case "temperature":
+			if strings.TrimSpace(r.Sensor) == "" || *r.Threshold < -273.15 {
+				return Config{}, errors.New("temperature rules require a sensor and threshold at or above absolute zero")
+			}
+		default:
+			return Config{}, errors.New("unsupported alert metric type")
 		}
 		if r.Minutes == nil || math.IsNaN(*r.Minutes) || math.IsInf(*r.Minutes, 0) || *r.Minutes*float64(time.Minute) < 1 || *r.Minutes*float64(time.Minute) >= float64(math.MaxInt64) {
 			return Config{}, errors.New("alert duration must be positive minutes without overflow")

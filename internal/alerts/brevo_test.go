@@ -141,11 +141,11 @@ func TestProviderIsolationAndSaturation(t *testing.T) {
 	})}
 	tg := newTelegram("123:secret", "private-chat", "host", client, 8, func(time.Duration) {})
 	b := newBrevo("test-key", "from@example.test", "Monitor", "to@example.test", "host", client, 1, func(time.Duration) {})
-	e := NewEvaluator([]Rule{{ID: "high", Sensor: "cpu/total", Threshold: 50, Duration: 5 * time.Second}}, func(e Event) { tg.Enqueue(e); b.Enqueue(e) })
+	e := NewEvaluator([]Rule{{ID: "high", MetricType: "cpu", Sensor: "cpu/total", Threshold: 50, Duration: 5 * time.Second}}, func(e Event) { tg.Enqueue(e); b.Enqueue(e) })
 	start := time.Now()
 	for i, v := range []float64{50, 50, 49, 50, 50, 49} {
 		now := start.Add(time.Duration(i) * 5 * time.Second)
-		poller.PollMetric(st, db, "cpu", 24, func() []metrics.MetricPoint { return []metrics.MetricPoint{{Sensor: "cpu/total", Value: v, Unit: "%"}} }, func(p []metrics.MetricPoint) { e.Observe(now, p) })
+		poller.PollMetric(st, db, "cpu", 24, func() []metrics.MetricPoint { return []metrics.MetricPoint{{Sensor: "cpu/total", Value: v, Unit: "%"}} }, func(p []metrics.MetricPoint) { e.Observe("cpu", now, p) })
 		if i == 1 {
 			select {
 			case <-started:
@@ -232,11 +232,11 @@ func TestTelegramBlockedBrevoExhaustsIndependently(t *testing.T) {
 	})}
 	tg := newTelegram("123:secret", "private-chat", "host", client, 4, func(time.Duration) {})
 	b := newBrevo("test-key", "from@example.test", "Monitor", "to@example.test", "host", client, 4, func(d time.Duration) { waits <- d })
-	e := NewEvaluator([]Rule{{ID: "high", Sensor: "cpu/total", Threshold: 50, Duration: 5 * time.Second}}, func(e Event) { tg.Enqueue(e); b.Enqueue(e) })
+	e := NewEvaluator([]Rule{{ID: "high", MetricType: "cpu", Sensor: "cpu/total", Threshold: 50, Duration: 5 * time.Second}}, func(e Event) { tg.Enqueue(e); b.Enqueue(e) })
 	start := time.Now()
 	for i, v := range []float64{50, 50, 49} {
 		now := start.Add(time.Duration(i) * 5 * time.Second)
-		poller.PollMetric(st, db, "cpu", 24, func() []metrics.MetricPoint { return []metrics.MetricPoint{{Sensor: "cpu/total", Value: v, Unit: "%"}} }, func(p []metrics.MetricPoint) { e.Observe(now, p) })
+		poller.PollMetric(st, db, "cpu", 24, func() []metrics.MetricPoint { return []metrics.MetricPoint{{Sensor: "cpu/total", Value: v, Unit: "%"}} }, func(p []metrics.MetricPoint) { e.Observe("cpu", now, p) })
 		if i == 1 {
 			select {
 			case <-started:
@@ -333,7 +333,7 @@ func TestPollerToTelegramAndBrevo(t *testing.T) {
 	})}
 	tg := newTelegram("123:secret", "chat", "machine", client, 4, func(time.Duration) { t.Error("unexpected retry") })
 	b := newBrevo("test-key", "from@example.test", "Monitor", "to@example.test", "machine", client, 4, func(time.Duration) { t.Error("unexpected retry") })
-	e := NewEvaluator([]Rule{{ID: "high", Sensor: "cpu/total", Threshold: 50, Duration: time.Minute}}, func(e Event) { tg.Enqueue(e); b.Enqueue(e) })
+	e := NewEvaluator([]Rule{{ID: "high", MetricType: "cpu", Sensor: "cpu/total", Threshold: 50, Duration: time.Minute}}, func(e Event) { tg.Enqueue(e); b.Enqueue(e) })
 	start := time.Now()
 	for i := 0; i <= 13; i++ {
 		value := 50.0
@@ -343,7 +343,7 @@ func TestPollerToTelegramAndBrevo(t *testing.T) {
 		now := start.Add(time.Duration(i) * 5 * time.Second)
 		poller.PollMetric(st, db, "cpu", 24, func() []metrics.MetricPoint {
 			return []metrics.MetricPoint{{Sensor: "cpu/total", Value: value, Unit: "%"}}
-		}, func(p []metrics.MetricPoint) { e.Observe(now, p) })
+		}, func(p []metrics.MetricPoint) { e.Observe("cpu", now, p) })
 	}
 	for _, kind := range []string{"activation", "recovery"} {
 		for _, ch := range []chan string{telegram, email} {

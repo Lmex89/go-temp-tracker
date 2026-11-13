@@ -48,8 +48,8 @@ func TestTelegramRetriesAndOrder(t *testing.T) {
 		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"ok":true}`))}, nil
 	})}
 	s := newTelegram("123:secret", "private-chat", "host", client, 4, func(d time.Duration) { mu.Lock(); waits = append(waits, d); mu.Unlock() })
-	s.Enqueue(Event{Kind: "activation", Rule: Rule{ID: "high", Sensor: "cpu/total", Threshold: 50, Duration: time.Minute}, At: time.Now()})
-	s.Enqueue(Event{Kind: "recovery", Rule: Rule{ID: "high", Sensor: "cpu/total", Threshold: 50, Duration: time.Minute}, At: time.Now()})
+	s.Enqueue(Event{Kind: "activation", Rule: Rule{ID: "high", MetricType: "cpu", Sensor: "cpu/total", Threshold: 50, Duration: time.Minute}, At: time.Now()})
+	s.Enqueue(Event{Kind: "recovery", Rule: Rule{ID: "high", MetricType: "cpu", Sensor: "cpu/total", Threshold: 50, Duration: time.Minute}, At: time.Now()})
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
@@ -129,7 +129,7 @@ func TestPollerToTelegramAndSQLite(t *testing.T) {
 		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"ok":true}`))}, nil
 	})}
 	s := newTelegram("123:secret", "chat", "machine", client, 4, func(time.Duration) { t.Error("unexpected retry") })
-	e := NewEvaluator([]Rule{{ID: "high", Sensor: "cpu/total", Threshold: 50, Duration: time.Minute}}, s.Enqueue)
+	e := NewEvaluator([]Rule{{ID: "high", MetricType: "cpu", Sensor: "cpu/total", Threshold: 50, Duration: time.Minute}}, s.Enqueue)
 	start := time.Now()
 	for i := 0; i <= 13; i++ {
 		value := 50.0
@@ -139,7 +139,7 @@ func TestPollerToTelegramAndSQLite(t *testing.T) {
 		now := start.Add(time.Duration(i) * 5 * time.Second)
 		poller.PollMetric(st, db, "cpu", 24, func() []metrics.MetricPoint {
 			return []metrics.MetricPoint{{Sensor: "cpu/total", Value: value, Unit: "%"}}
-		}, func(p []metrics.MetricPoint) { e.Observe(now, p) })
+		}, func(p []metrics.MetricPoint) { e.Observe("cpu", now, p) })
 	}
 	for _, kind := range []string{"activation", "recovery"} {
 		select {
@@ -155,6 +155,82 @@ func TestPollerToTelegramAndSQLite(t *testing.T) {
 	}
 	rows, err := st.Query(db, store.TimeWindow{Hours: 1}, "cpu")
 	if err != nil || len(rows) != 14 {
+		t.Fatalf("stored %d rows: %v", len(rows), err)
+	}
+}
+
+type thermalReader struct{ values map[string]float64 }
+
+func (r *thermalReader) Read() map[string]float64 { return r.values }
+
+func TestTemperaturePollerToTelegramBrevoAndSQLite(t *testing.T) {
+	st := store.NewSQLiteStore(filepath.Join(t.TempDir(), "readings.db"))
+	db := st.InitDB()
+	if db == nil {
+		t.Fatal("database initialization failed")
+	}
+	t.Cleanup(func() { db.Close() })
+	telegram, email := make(chan string, 2), make(chan string, 2)
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Error(err)
+		}
+		switch r.URL.Host {
+		case "api.telegram.org":
+			telegram <- string(body)
+			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"ok":true}`))}, nil
+		case "api.brevo.com":
+			email <- string(body)
+			return &http.Response{StatusCode: 201, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"messageId":"accepted"}`))}, nil
+		default:
+			t.Error("unexpected provider")
+			return nil, io.ErrUnexpectedEOF
+		}
+	})}
+	s := newTelegram("123:secret", "chat", "machine", client, 4, func(time.Duration) { t.Error("unexpected retry") })
+	b := newBrevo("test-key", "from@example.test", "Monitor", "to@example.test", "machine", client, 4, func(time.Duration) { t.Error("unexpected retry") })
+	var events []Event
+	e := NewEvaluator([]Rule{{ID: "hot", MetricType: "temperature", Sensor: "coretemp/Package id 0", Threshold: 65, Duration: 2 * time.Minute}}, func(event Event) {
+		events = append(events, event)
+		s.Enqueue(event)
+		b.Enqueue(event)
+	})
+	r := &thermalReader{values: map[string]float64{"coretemp/Package id 0": 65, "coretemp/Core 0": 80}}
+	p := poller.New(r, st, db)
+	start := time.Now()
+	for i := 0; i <= 25; i++ {
+		if i == 25 {
+			r.values["coretemp/Package id 0"] = 64
+		}
+		now := start.Add(time.Duration(i) * 5 * time.Second)
+		p.Poll(24, func(points []metrics.MetricPoint) { e.Observe("temperature", now, points) })
+		if i < 24 && len(events) != 0 {
+			t.Fatal("activated before two minutes")
+		}
+		if i == 23 {
+			p.Poll(24, func(points []metrics.MetricPoint) { e.Observe("temperature", start.Add(119*time.Second), points) })
+			if len(events) != 0 {
+				t.Fatal("activated one second before the full duration")
+			}
+		}
+	}
+	for _, kind := range []string{"activation", "recovery"} {
+		for _, requests := range []chan string{telegram, email} {
+			select {
+			case body := <-requests:
+				for _, part := range []string{kind, "coretemp/Package id 0", "Threshold: 65C", "Duration: 2 minutes"} {
+					if !strings.Contains(body, part) {
+						t.Errorf("missing %q in %s", part, body)
+					}
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("delivery stalled")
+			}
+		}
+	}
+	rows, err := st.Query(db, store.TimeWindow{Hours: 1}, "temperature")
+	if err != nil || len(rows) != 54 {
 		t.Fatalf("stored %d rows: %v", len(rows), err)
 	}
 }

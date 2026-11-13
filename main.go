@@ -32,6 +32,13 @@ func getEnvInt(key string, defaultVal int) int {
 	return parsed
 }
 
+func pollingIntervals(alertsEnabled bool, temperature, cpu int) (int, int) {
+	if alertsEnabled {
+		return 5, 5
+	}
+	return temperature, cpu
+}
+
 // newStore returns a Store implementation based on the requested driver.
 // NOTE: unlike store.Open (used by spike-report, where "" means postgres), an
 // empty driver means SQLite here, as in the original service.
@@ -79,7 +86,7 @@ func main() {
 		delivery := alerts.NewTelegram(alertToken, alertCfg.ChatID, host)
 		email := alerts.NewBrevo(brevoKey, alertCfg.BrevoSenderEmail, alertCfg.BrevoSenderName, alertCfg.BrevoRecipientEmail, host)
 		evaluator = alerts.NewEvaluator(alertCfg.Rules, func(event alerts.Event) { delivery.Enqueue(event); email.Enqueue(event) })
-		logging.Logger.Info("CPU alerts enabled: target interval 5s overrides CPU_POLL_INTERVAL")
+		logging.Logger.Info("Alerts enabled: target interval 5s overrides -interval and CPU_POLL_INTERVAL")
 	}
 
 	// Choose the database backend. Defaults to SQLite for backward compatibility.
@@ -112,21 +119,24 @@ func main() {
 	// Without staggering, 6 goroutines sharing 3 conns create a thundering herd
 	// against SQLite's internal lock, causing 5s busy_timeout waits on every cycle.
 	// In Python: time.sleep(offset) before entering the while loop.
+	metricDefaultInterval := 60
+	tempInterval, cpuInterval := pollingIntervals(alertCfg.Enabled, *interval, getEnvInt("CPU_POLL_INTERVAL", metricDefaultInterval))
 	tempPoller := poller.New(reader, st, db)
 	go func() {
 		time.Sleep(0 * time.Second)
-		tempPoller.Run(*interval, *retain)
+		if evaluator == nil {
+			tempPoller.Run(tempInterval, *retain)
+		} else {
+			tempPoller.RunObserved(tempInterval, *retain, func(points []metrics.MetricPoint) { evaluator.Observe("temperature", time.Now(), points) })
+		}
 	}()
 
-	metricDefaultInterval := 60
-
-	cpuInterval := getEnvInt("CPU_POLL_INTERVAL", metricDefaultInterval)
 	go func() {
 		time.Sleep(3 * time.Second)
 		if evaluator == nil {
 			poller.RunMetric(st, db, "cpu", cpuInterval, *retain, sysMetrics.ReadCPU)
 		} else {
-			poller.RunMetricObserved(st, db, "cpu", 5, *retain, sysMetrics.ReadCPU, func(points []metrics.MetricPoint) { evaluator.Observe(time.Now(), points) })
+			poller.RunMetricObserved(st, db, "cpu", cpuInterval, *retain, sysMetrics.ReadCPU, func(points []metrics.MetricPoint) { evaluator.Observe("cpu", time.Now(), points) })
 		}
 	}()
 	memInterval := getEnvInt("MEMORY_POLL_INTERVAL", metricDefaultInterval)

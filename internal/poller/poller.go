@@ -45,10 +45,22 @@ func (p *Poller) Run(intervalSec, retainHours int) {
 // poll runs ONE cycle (read -> insert -> prune) without sleeping.
 // Split out of Run so tests can exercise a cycle without an infinite loop.
 func (p *Poller) poll(retainHours int) {
+	p.Poll(retainHours, nil)
+}
+
+// Poll observes fresh temperature readings before storing every sensor.
+func (p *Poller) Poll(retainHours int, observe func([]metrics.MetricPoint)) {
 	logging.Logger.Debug("Reading CPU temperatures...")
 	temps := p.reader.Read()
 
-	if len(temps) == 0 {
+	if observe != nil {
+		points := make([]metrics.MetricPoint, 0, len(temps))
+		for name, temp := range temps {
+			points = append(points, metrics.MetricPoint{Sensor: name, Value: temp, Unit: "C"})
+		}
+		observe(points)
+	}
+	if len(temps) == 0 && observe == nil {
 		logging.Logger.Warn("No temperature sensors found")
 	}
 
@@ -60,6 +72,15 @@ func (p *Poller) poll(retainHours int) {
 
 	logging.Logger.Info("Recorded %d temperature reading(s)", len(temps))
 	p.store.Prune(p.db, store.AllMetrics, retainHours)
+}
+
+// RunObserved schedules temperature cycles between their starts.
+func (p *Poller) RunObserved(intervalSec, retainHours int, observe func([]metrics.MetricPoint)) {
+	p.runObserved(intervalSec, retainHours, observe, time.Now, func(d time.Duration) bool { time.Sleep(d); return true })
+}
+
+func (p *Poller) runObserved(intervalSec, retainHours int, observe func([]metrics.MetricPoint), now func() time.Time, sleep func(time.Duration) bool) {
+	runObserved("temperature", intervalSec, retainHours, func() { p.Poll(retainHours, observe) }, now, sleep)
 }
 
 // RunMetric is a generic polling loop for any system metric type.
@@ -83,11 +104,15 @@ func RunMetricObserved(st store.Store, db *sql.DB, metricType string, intervalSe
 }
 
 func runMetricObserved(st store.Store, db *sql.DB, metricType string, intervalSec, retainHours int, readFunc func() []metrics.MetricPoint, observe func([]metrics.MetricPoint), now func() time.Time, sleep func(time.Duration) bool) {
+	runObserved(metricType, intervalSec, retainHours, func() { PollMetric(st, db, metricType, retainHours, readFunc, observe) }, now, sleep)
+}
+
+func runObserved(metricType string, intervalSec, retainHours int, poll func(), now func() time.Time, sleep func(time.Duration) bool) {
 	logging.Logger.Info("[%s] observed polling loop started (target interval=%ds, retain=%dh)", metricType, intervalSec, retainHours)
 	delayed := false
 	for {
 		start := now()
-		PollMetric(st, db, metricType, retainHours, readFunc, observe)
+		poll()
 		wait := time.Duration(intervalSec)*time.Second - now().Sub(start)
 		if wait <= 0 {
 			if !delayed {
