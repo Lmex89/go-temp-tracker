@@ -1,10 +1,8 @@
 package main
 
 import (
-	"bytes"
 	"flag"
 	"fmt"
-	"io"
 	"io/fs"
 	"net/http"
 	"os"
@@ -49,36 +47,27 @@ type staticFiles struct {
 	root       *os.Root
 	configPath string
 	configInfo os.FileInfo
-	invalid    *atomic.Bool
-	initial    map[string]staticSnapshot
+	changed    *atomic.Bool
+	watch      *configWatch
+	initial    map[string]os.FileInfo
 }
-
-type staticSnapshot struct {
-	info os.FileInfo
-	data []byte
-}
-
-type staticFile struct {
-	*bytes.Reader
-	info os.FileInfo
-}
-
-func (f staticFile) Stat() (os.FileInfo, error) { return f.info, nil }
-func (f staticFile) Close() error               { return nil }
 
 func (s staticFiles) configValid() bool {
 	if s.configInfo == nil {
 		return true
 	}
-	if s.invalid.Load() {
-		return false
+	if s.watch == nil || s.watch.changed() {
+		s.changed.Store(true)
 	}
 	current, err := os.Stat(s.configPath)
-	if err != nil || !os.SameFile(s.configInfo, current) {
-		s.invalid.Store(true)
+	if err != nil {
+		s.changed.Store(true)
 		return false
 	}
-	return !s.invalid.Load()
+	if !os.SameFile(s.configInfo, current) || !sameStaticFile(s.configInfo, current) || !singleLink(current) {
+		s.changed.Store(true)
+	}
+	return true
 }
 
 func (s staticFiles) Open(name string) (fs.File, error) {
@@ -108,67 +97,57 @@ func (s staticFiles) Open(name string) (fs.File, error) {
 	}
 	if s.configInfo != nil && info.Mode().IsRegular() {
 		original, exists := s.initial[rel]
-		if !s.configValid() || !exists || !sameStaticFile(original.info, info) || !singleLink(info) || os.SameFile(info, s.configInfo) {
+		current, statErr := os.Stat(s.configPath)
+		// shortcut: new or replaced assets need a restart after config changes, refresh the trusted set on restart.
+		if !s.configValid() || statErr != nil || !singleLink(info) || os.SameFile(info, s.configInfo) || os.SameFile(info, current) || (s.changed.Load() && (!exists || !os.SameFile(original, info))) {
 			f.Close()
 			return nil, fs.ErrNotExist
 		}
-		f.Close()
-		return staticFile{Reader: bytes.NewReader(original.data), info: original.info}, nil
 	}
 	return f, nil
 }
 
 func staticHandler(publicDir, configPath string, configInfo os.FileInfo) http.Handler {
-	invalid := &atomic.Bool{}
-	initial := make(map[string]staticSnapshot)
+	changed := &atomic.Bool{}
+	initial := make(map[string]os.FileInfo)
+	var watch *configWatch
 	if configInfo != nil {
+		var err error
+		watch, err = newConfigWatch(configPath)
+		if err != nil {
+			changed.Store(true)
+		}
+		staticFiles{configPath: configPath, configInfo: configInfo, changed: changed, watch: watch}.configValid()
 		base, err := filepath.EvalSymlinks(publicDir)
 		if err == nil {
-			root, err := os.OpenRoot(base)
-			if err == nil {
-				defer root.Close()
-				walkErr := filepath.WalkDir(base, func(path string, entry fs.DirEntry, walkErr error) error {
-					if walkErr != nil {
-						return walkErr
-					}
-					if entry.Type()&os.ModeSymlink != 0 {
+			walkErr := filepath.WalkDir(base, func(path string, entry fs.DirEntry, walkErr error) error {
+				if walkErr != nil {
+					logging.Logger.Debug("Skipping inaccessible static entry")
+					return nil
+				}
+				if entry.Type()&os.ModeSymlink != 0 {
+					return nil
+				}
+				info, err := entry.Info()
+				if err != nil {
+					return nil
+				}
+				if info.Mode().IsRegular() && singleLink(info) && !os.SameFile(info, configInfo) {
+					rel, err := filepath.Rel(base, path)
+					if err != nil {
 						return nil
 					}
-					info, err := entry.Info()
-					if err != nil {
-						return err
-					}
-					if info.Mode().IsRegular() && singleLink(info) && !os.SameFile(info, configInfo) {
-						rel, err := filepath.Rel(base, path)
-						if err != nil {
-							return err
-						}
-						f, err := root.Open(rel)
-						if err != nil {
-							return nil
-						}
-						opened, err := f.Stat()
-						if err != nil || !sameStaticFile(info, opened) || !singleLink(opened) {
-							f.Close()
-							return nil
-						}
-						data, readErr := io.ReadAll(io.LimitReader(f, opened.Size()))
-						after, statErr := f.Stat()
-						f.Close()
-						if readErr == nil && statErr == nil && int64(len(data)) == opened.Size() && sameStaticFile(info, after) && singleLink(after) {
-							initial[rel] = staticSnapshot{info: after, data: data}
-						}
-					}
-					return nil
-				})
-				if walkErr != nil {
-					initial = make(map[string]staticSnapshot)
+					initial[rel] = info
 				}
+				return nil
+			})
+			if walkErr != nil {
+				logging.Logger.Warn("Cannot inspect all static entries")
 			}
 		}
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		files := staticFiles{configPath: configPath, configInfo: configInfo, invalid: invalid, initial: initial}
+		files := staticFiles{configPath: configPath, configInfo: configInfo, changed: changed, watch: watch, initial: initial}
 		if !files.configValid() {
 			http.NotFound(w, r)
 			return
