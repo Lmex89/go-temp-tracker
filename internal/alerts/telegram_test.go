@@ -163,27 +163,38 @@ type thermalReader struct{ values map[string]float64 }
 
 func (r *thermalReader) Read() map[string]float64 { return r.values }
 
-func TestTemperaturePollerToTelegramAndSQLite(t *testing.T) {
+func TestTemperaturePollerToTelegramBrevoAndSQLite(t *testing.T) {
 	st := store.NewSQLiteStore(filepath.Join(t.TempDir(), "readings.db"))
 	db := st.InitDB()
 	if db == nil {
 		t.Fatal("database initialization failed")
 	}
 	t.Cleanup(func() { db.Close() })
-	requests := make(chan string, 2)
+	telegram, email := make(chan string, 2), make(chan string, 2)
 	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			t.Error(err)
 		}
-		requests <- string(body)
-		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"ok":true}`))}, nil
+		switch r.URL.Host {
+		case "api.telegram.org":
+			telegram <- string(body)
+			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"ok":true}`))}, nil
+		case "api.brevo.com":
+			email <- string(body)
+			return &http.Response{StatusCode: 201, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"messageId":"accepted"}`))}, nil
+		default:
+			t.Error("unexpected provider")
+			return nil, io.ErrUnexpectedEOF
+		}
 	})}
 	s := newTelegram("123:secret", "chat", "machine", client, 4, func(time.Duration) { t.Error("unexpected retry") })
+	b := newBrevo("test-key", "from@example.test", "Monitor", "to@example.test", "machine", client, 4, func(time.Duration) { t.Error("unexpected retry") })
 	var events []Event
 	e := NewEvaluator([]Rule{{ID: "hot", MetricType: "temperature", Sensor: "coretemp/Package id 0", Threshold: 65, Duration: 2 * time.Minute}}, func(event Event) {
 		events = append(events, event)
 		s.Enqueue(event)
+		b.Enqueue(event)
 	})
 	r := &thermalReader{values: map[string]float64{"coretemp/Package id 0": 65, "coretemp/Core 0": 80}}
 	p := poller.New(r, st, db)
@@ -205,15 +216,17 @@ func TestTemperaturePollerToTelegramAndSQLite(t *testing.T) {
 		}
 	}
 	for _, kind := range []string{"activation", "recovery"} {
-		select {
-		case body := <-requests:
-			for _, part := range []string{kind, "coretemp/Package id 0", "Threshold: 65C", "Duration: 2 minutes"} {
-				if !strings.Contains(body, part) {
-					t.Errorf("missing %q in %s", part, body)
+		for _, requests := range []chan string{telegram, email} {
+			select {
+			case body := <-requests:
+				for _, part := range []string{kind, "coretemp/Package id 0", "Threshold: 65C", "Duration: 2 minutes"} {
+					if !strings.Contains(body, part) {
+						t.Errorf("missing %q in %s", part, body)
+					}
 				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("delivery stalled")
 			}
-		case <-time.After(5 * time.Second):
-			t.Fatal("delivery stalled")
 		}
 	}
 	rows, err := st.Query(db, store.TimeWindow{Hours: 1}, "temperature")

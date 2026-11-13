@@ -72,7 +72,8 @@ func main() {
 	logging.Logger.Info("Starting System Monitor")
 	logging.Logger.Debug("Config: port=%d, interval=%ds, retain=%dh", *port, *interval, *retain)
 	alertToken := os.Getenv("TELEGRAM_BOT_TOKEN")
-	alertCfg, err := alerts.LoadConfig(*alertConfig, "static", alertToken)
+	brevoKey := os.Getenv("BREVO_API_KEY")
+	alertCfg, err := alerts.LoadConfig(*alertConfig, "static", alertToken, brevoKey)
 	if err != nil {
 		logging.Logger.Fatal("Invalid alerts configuration: %v", err)
 	}
@@ -83,7 +84,8 @@ func main() {
 			host = "unknown"
 		}
 		delivery := alerts.NewTelegram(alertToken, alertCfg.ChatID, host)
-		evaluator = alerts.NewEvaluator(alertCfg.Rules, delivery.Enqueue)
+		email := alerts.NewBrevo(brevoKey, alertCfg.BrevoSenderEmail, alertCfg.BrevoSenderName, alertCfg.BrevoRecipientEmail, host)
+		evaluator = alerts.NewEvaluator(alertCfg.Rules, func(event alerts.Event) { delivery.Enqueue(event); email.Enqueue(event) })
 		logging.Logger.Info("Alerts enabled: target interval 5s overrides -interval and CPU_POLL_INTERVAL")
 	}
 

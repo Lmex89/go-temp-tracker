@@ -56,13 +56,13 @@ func TestInvalidAlertsFailBeforeDatabase(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(dir, "static"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "alerts.json"), []byte(`{"enabled":true,"chat_id":"private","rules":[]}`), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "alerts.json"), []byte(`{"enabled":true,"chat_id":"private","brevo_sender_email":"from@example.test","brevo_sender_name":"Monitor","brevo_recipient_email":"to@example.test","rules":[{"id":"high","metric_type":"cpu","sensor":"cpu/total","threshold":50,"duration_minutes":1}]}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	cmd := exec.Command(os.Args[0], "-test.run=^TestInvalidAlertsFailBeforeDatabase$")
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "ALERT_STARTUP_TEST=1", "TELEGRAM_BOT_TOKEN=", "DB_DRIVER=sqlite")
-	if out, err := cmd.CombinedOutput(); err == nil || !strings.Contains(string(out), "Invalid alerts configuration") {
+	cmd.Env = append(os.Environ(), "ALERT_STARTUP_TEST=1", "TELEGRAM_BOT_TOKEN=123:test", "BREVO_API_KEY=", "DB_DRIVER=sqlite")
+	if out, err := cmd.CombinedOutput(); err == nil || !strings.Contains(string(out), "valid BREVO_API_KEY is required") {
 		t.Fatalf("startup did not reject configuration: %v: %s", err, out)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "temps.db")); !os.IsNotExist(err) {
