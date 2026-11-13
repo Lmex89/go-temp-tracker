@@ -39,6 +39,10 @@ func pollingIntervals(alertsEnabled bool, temperature, cpu int) (int, int) {
 	return temperature, cpu
 }
 
+func staticHandler(root *os.Root) http.Handler {
+	return http.FileServerFS(root.FS())
+}
+
 // newStore returns a Store implementation based on the requested driver.
 // NOTE: unlike store.Open (used by spike-report, where "" means postgres), an
 // empty driver means SQLite here, as in the original service.
@@ -77,6 +81,11 @@ func main() {
 	if err != nil {
 		logging.Logger.Fatal("Invalid alerts configuration: %v", err)
 	}
+	staticRoot, err := os.OpenRoot("static")
+	if err != nil {
+		logging.Logger.Fatal("Cannot open public directory")
+	}
+	defer staticRoot.Close()
 	var evaluator *alerts.Evaluator
 	if alertCfg.Enabled {
 		host, err := os.Hostname()
@@ -105,6 +114,9 @@ func main() {
 
 	// SystemMetrics for CPU, memory, swap, disk, load (gopsutil-based).
 	sysMetrics := metrics.NewSystemMetrics()
+	if alertCfg.Enabled {
+		sysMetrics.SuppressRepeatedCPUWarnings()
+	}
 
 	// SQLite only allows one writer at a time (even in WAL mode). A single connection
 	// makes Go's database/sql queue all operations, eliminating lock contention.
@@ -166,7 +178,7 @@ func main() {
 	// All /api/* routes (temps, cpu, memory, swap, disk, load, current/*).
 	httpapi.Register(mux, st, db)
 
-	mux.Handle("/", http.FileServer(http.Dir("static")))
+	mux.Handle("/", staticHandler(staticRoot))
 
 	addr := fmt.Sprintf(":%d", *port)
 	logging.Logger.Info("HTTP server listening on %s", addr)

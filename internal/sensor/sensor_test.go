@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // write is a tiny helper: create parent dirs and write a file.
@@ -15,6 +16,32 @@ func write(t *testing.T, path, content string) {
 	}
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestReadTimedIncludesAcquisitionTimes(t *testing.T) {
+	for _, kind := range []string{"hwmon", "thermal"} {
+		t.Run(kind, func(t *testing.T) {
+			root := t.TempDir()
+			name := "selected"
+			if kind == "hwmon" {
+				hw := filepath.Join(root, "class/hwmon/hwmon0")
+				write(t, filepath.Join(hw, "name"), "coretemp")
+				write(t, filepath.Join(hw, "temp1_input"), "65000")
+				write(t, filepath.Join(hw, "temp1_label"), "selected")
+				name = "coretemp/selected"
+			} else {
+				zone := filepath.Join(root, "class/thermal/thermal_zone0")
+				write(t, filepath.Join(zone, "temp"), "65000")
+				write(t, filepath.Join(zone, "type"), name)
+			}
+			before := time.Now()
+			readings := NewLinuxThermalSensorAt(root).ReadTimed()
+			after := time.Now()
+			if got := readings[name]; got.Value != 65 || got.At.Before(before) || got.At.After(after) || got.At.IsZero() {
+				t.Fatalf("reading = %+v", got)
+			}
+		})
 	}
 }
 

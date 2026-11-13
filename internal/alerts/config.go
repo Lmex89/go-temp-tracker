@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -32,8 +33,10 @@ type Config struct {
 }
 
 var safeID = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
-var safeToken = regexp.MustCompile(`^[A-Za-z0-9:_-]+$`)
+var safeToken = regexp.MustCompile(`^[0-9]+:[A-Za-z0-9_-]+$`)
 var safeAPIKey = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+var telegramUsername = regexp.MustCompile(`^@[A-Za-z][A-Za-z0-9_]{4,31}$`)
+var telegramNumber = regexp.MustCompile(`^-?[1-9][0-9]*$`)
 
 // LoadConfig validates everything before the caller opens a database.
 func LoadConfig(path, publicDir, token, apiKey string) (Config, error) {
@@ -65,6 +68,18 @@ func LoadConfig(path, publicDir, token, apiKey string) (Config, error) {
 	if !raw.Enabled {
 		return cfg, nil
 	}
+	input, err := filepath.Abs(path)
+	if err != nil {
+		return cfg, errors.New("cannot resolve alert configuration")
+	}
+	publicInput, err := filepath.Abs(publicDir)
+	if err != nil {
+		return cfg, errors.New("cannot resolve public directory")
+	}
+	inputRel, err := filepath.Rel(publicInput, input)
+	if err != nil || inputRel == "." || (inputRel != ".." && !strings.HasPrefix(inputRel, ".."+string(filepath.Separator))) {
+		return cfg, errors.New("active alert configuration must be outside public directory")
+	}
 	file, err := filepath.EvalSymlinks(path)
 	if err != nil {
 		return cfg, errors.New("cannot resolve alert configuration")
@@ -81,12 +96,24 @@ func LoadConfig(path, publicDir, token, apiKey string) (Config, error) {
 	if err != nil {
 		return cfg, errors.New("cannot resolve public directory")
 	}
+	parent, err := filepath.EvalSymlinks(filepath.Dir(path))
+	if err != nil {
+		return cfg, errors.New("cannot resolve alert configuration")
+	}
+	parent, err = filepath.Abs(parent)
+	if err != nil {
+		return cfg, errors.New("cannot resolve alert configuration")
+	}
+	linkRel, err := filepath.Rel(public, filepath.Join(parent, filepath.Base(path)))
+	if err != nil || linkRel == "." || (linkRel != ".." && !strings.HasPrefix(linkRel, ".."+string(filepath.Separator))) {
+		return cfg, errors.New("active alert configuration must be outside public directory")
+	}
 	rel, err := filepath.Rel(public, file)
 	if err != nil || rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))) {
 		return cfg, errors.New("active alert configuration must be outside public directory")
 	}
-	if strings.TrimSpace(raw.ChatID) == "" {
-		return cfg, errors.New("alert chat_id is required")
+	if !validChatID(raw.ChatID) {
+		return cfg, errors.New("valid alert chat_id is required")
 	}
 	if token == "" || !safeToken.MatchString(token) {
 		return cfg, errors.New("valid TELEGRAM_BOT_TOKEN is required")
@@ -132,6 +159,17 @@ func LoadConfig(path, publicDir, token, apiKey string) (Config, error) {
 	cfg.Enabled, cfg.ChatID = true, raw.ChatID
 	cfg.BrevoSenderEmail, cfg.BrevoSenderName, cfg.BrevoRecipientEmail = raw.BrevoSenderEmail, raw.BrevoSenderName, raw.BrevoRecipientEmail
 	return cfg, nil
+}
+
+func validChatID(s string) bool {
+	if telegramUsername.MatchString(s) {
+		return true
+	}
+	if !telegramNumber.MatchString(s) {
+		return false
+	}
+	_, err := strconv.ParseInt(s, 10, 64)
+	return err == nil
 }
 
 func validEmail(s string) bool {

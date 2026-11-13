@@ -18,7 +18,7 @@ func TestBrevoConfiguration(t *testing.T) {
 	if err := os.Mkdir(public, 0700); err != nil {
 		t.Fatal(err)
 	}
-	valid := `{"enabled":true,"chat_id":"chat","brevo_sender_email":"from@example.test","brevo_sender_name":"Monitor","brevo_recipient_email":"to@example.test","rules":[{"id":"high","metric_type":"cpu","sensor":"cpu/total","threshold":50,"duration_minutes":1}]}`
+	valid := `{"enabled":true,"chat_id":"123","brevo_sender_email":"from@example.test","brevo_sender_name":"Monitor","brevo_recipient_email":"to@example.test","rules":[{"id":"high","metric_type":"cpu","sensor":"cpu/total","threshold":50,"duration_minutes":1}]}`
 	tests := []struct {
 		name, body, token, key string
 		wantErr                bool
@@ -28,6 +28,9 @@ func TestBrevoConfiguration(t *testing.T) {
 		{"missing key", valid, "123:abc", "", true},
 		{"invalid key", valid, "123:abc", "bad\nkey", true},
 		{"missing telegram", valid, "", "test-key", true},
+		{"malformed telegram token", valid, "garbage", "test-key", true},
+		{"telegram token without secret", valid, "123:", "test-key", true},
+		{"telegram token without bot id", valid, ":abc", "test-key", true},
 		{"invalid sender", strings.Replace(valid, "from@example.test", "bad address", 1), "123:abc", "test-key", true},
 		{"invalid recipient", strings.Replace(valid, "to@example.test", "bad address", 1), "123:abc", "test-key", true},
 		{"missing name", strings.Replace(valid, "Monitor", "", 1), "123:abc", "test-key", true},
@@ -106,6 +109,24 @@ func TestLoadConfig(t *testing.T) {
 	if _, err := alerts.LoadConfig(link, public, "123:abc", "test-key"); err == nil {
 		t.Fatal("symlink into public directory accepted")
 	}
+	private := filepath.Join(dir, "private.json")
+	if err := os.WriteFile(private, []byte(strings.Replace(valid, `{`, `{"brevo_sender_email":"from@example.test","brevo_sender_name":"Monitor","brevo_recipient_email":"to@example.test",`, 1)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	publicLink := filepath.Join(public, "linked.json")
+	if err := os.Symlink(private, publicLink); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := alerts.LoadConfig(publicLink, public, "123:abc", "test-key"); err == nil || strings.Contains(err.Error(), private) {
+		t.Fatalf("public symlink accepted or private path disclosed: %v", err)
+	}
+	publicDirLink := filepath.Join(public, "linked-dir")
+	if err := os.Symlink(dir, publicDirLink); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := alerts.LoadConfig(filepath.Join(publicDirLink, "private.json"), public, "123:abc", "test-key"); err == nil {
+		t.Fatal("public symlink directory accepted")
+	}
 	cfg, err = alerts.LoadConfig(filepath.Join("..", "..", "alerts.example.json"), public, "", "")
 	if err != nil || cfg.Enabled {
 		t.Fatalf("example should be disabled: %+v %v", cfg, err)
@@ -125,7 +146,7 @@ func TestExampleRules(t *testing.T) {
 		t.Fatal("example must be disabled")
 	}
 	example["enabled"] = json.RawMessage(`true`)
-	example["chat_id"] = json.RawMessage(`"test-chat"`)
+	example["chat_id"] = json.RawMessage(`"123"`)
 	example["brevo_sender_email"] = json.RawMessage(`"from@example.test"`)
 	example["brevo_sender_name"] = json.RawMessage(`"Monitor"`)
 	example["brevo_recipient_email"] = json.RawMessage(`"to@example.test"`)
@@ -153,5 +174,39 @@ func TestExampleRules(t *testing.T) {
 	}
 	if !reflect.DeepEqual(cfg.Rules, want) {
 		t.Fatalf("rules = %+v, want %+v", cfg.Rules, want)
+	}
+}
+
+func TestTelegramDestinations(t *testing.T) {
+	dir := t.TempDir()
+	public := filepath.Join(dir, "static")
+	if err := os.Mkdir(public, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		name, chat string
+		valid      bool
+	}{
+		{"user", "123456", true}, {"group", "-100123456", true}, {"channel", "@channel_name", true},
+		{"garbage", "private destination", false}, {"unprefixed", "channel_name", false}, {"zero", "0", false},
+		{"overflow", "99999999999999999999999", false}, {"whitespace", " 123", false}, {"control", "123\n", false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			body, err := json.Marshal(map[string]any{"enabled": true, "chat_id": tt.chat, "brevo_sender_email": "from@example.test", "brevo_sender_name": "Monitor", "brevo_recipient_email": "to@example.test", "rules": []map[string]any{{"id": "high", "metric_type": "cpu", "sensor": "cpu/total", "threshold": 50, "duration_minutes": 1}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(dir, "private.json")
+			if err := os.WriteFile(path, body, 0600); err != nil {
+				t.Fatal(err)
+			}
+			_, err = alerts.LoadConfig(path, public, "123:abc", "test-key")
+			if (err == nil) != tt.valid {
+				t.Fatalf("valid=%v, error=%v", tt.valid, err)
+			}
+			if err != nil && strings.Contains(err.Error(), tt.chat) {
+				t.Fatal("destination disclosed")
+			}
+		})
 	}
 }
