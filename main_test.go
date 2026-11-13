@@ -7,11 +7,231 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
+	"sensors-temp/internal/alerts"
 	"sensors-temp/internal/httpapi"
 	"sensors-temp/internal/store"
 )
+
+func TestDashboardAssetsRemainDynamicWithDisabledAlerts(t *testing.T) {
+	dir := t.TempDir()
+	public := filepath.Join(dir, "static")
+	if err := os.Mkdir(public, 0700); err != nil {
+		t.Fatal(err)
+	}
+	private := filepath.Join(dir, "alerts.json")
+	if err := os.WriteFile(private, []byte(`{"enabled":false,"chat_id":"private"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	config := filepath.Join(public, "config.json")
+	if err := os.WriteFile(config, []byte(`{"filter":"old"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := alerts.LoadConfig(private, public, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := staticHandler(public, private, cfg.Source)
+	if err := os.WriteFile(config, []byte(`{"filter":"new"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(public, "new.js"), []byte("new-asset"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for path, want := range map[string]string{"/config.json": `{"filter":"new"}`, "/new.js": "new-asset"} {
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		if w.Code != http.StatusOK || w.Body.String() != want {
+			t.Fatalf("%s: %d %q", path, w.Code, w.Body.String())
+		}
+	}
+	atomicUpdate := filepath.Join(public, "replacement.tmp")
+	if err := os.WriteFile(atomicUpdate, []byte(`{"filter":"atomic"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(atomicUpdate, config); err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/config.json", nil))
+	if w.Code != http.StatusOK || w.Body.String() != `{"filter":"atomic"}` {
+		t.Fatalf("atomic dashboard update: %d %q", w.Code, w.Body.String())
+	}
+}
+
+func TestDashboardSurvivesAtomicAlertConfigReplacement(t *testing.T) {
+	dir := t.TempDir()
+	public := filepath.Join(dir, "static")
+	if err := os.Mkdir(public, 0700); err != nil {
+		t.Fatal(err)
+	}
+	private := filepath.Join(dir, "alerts.json")
+	if err := os.WriteFile(private, []byte(`{"enabled":false}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(public, "index.html"), []byte("dashboard"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(private)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := staticHandler(public, private, info)
+	replacement := filepath.Join(dir, "replacement")
+	if err := os.WriteFile(replacement, []byte(`{"enabled":false}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(replacement, private); err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
+	if w.Code != http.StatusOK || w.Body.String() != "dashboard" {
+		t.Fatalf("dashboard: %d %q", w.Code, w.Body.String())
+	}
+	if err := os.WriteFile(filepath.Join(public, "index.html"), []byte("updated dashboard"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
+	if w.Code != http.StatusOK || w.Body.String() != "updated dashboard" {
+		t.Fatalf("updated dashboard: %d %q", w.Code, w.Body.String())
+	}
+}
+
+func TestNewAssetRequiresRestartAfterAlertConfigReplacement(t *testing.T) {
+	dir := t.TempDir()
+	public := filepath.Join(dir, "static")
+	if err := os.Mkdir(public, 0700); err != nil {
+		t.Fatal(err)
+	}
+	private := filepath.Join(dir, "alerts.json")
+	if err := os.WriteFile(private, []byte(`{"enabled":false}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	config := filepath.Join(public, "config.json")
+	if err := os.WriteFile(config, []byte(`{"filter":"old"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(private)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := staticHandler(public, private, info)
+	replacement := filepath.Join(dir, "replacement")
+	if err := os.WriteFile(replacement, []byte(`{"enabled":false}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(replacement, private); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(public, "new.js"), []byte("public asset"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/new.js", nil))
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("untrusted asset status: %d", w.Code)
+	}
+	if err := os.WriteFile(config, []byte(`{"filter":"new"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/config.json", nil))
+	if w.Code != http.StatusOK || w.Body.String() != `{"filter":"new"}` {
+		t.Fatalf("existing asset update: %d %q", w.Code, w.Body.String())
+	}
+	atomicUpdate := filepath.Join(public, "replacement.tmp")
+	if err := os.WriteFile(atomicUpdate, []byte(`{"filter":"atomic"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(atomicUpdate, config); err != nil {
+		t.Fatal(err)
+	}
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/config.json", nil))
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("replaced asset status: %d", w.Code)
+	}
+}
+
+func TestConcurrentStaticRequestsWithSelectedConfig(t *testing.T) {
+	dir := t.TempDir()
+	public := filepath.Join(dir, "static")
+	if err := os.Mkdir(public, 0700); err != nil {
+		t.Fatal(err)
+	}
+	private := filepath.Join(dir, "alerts.json")
+	if err := os.WriteFile(private, []byte(`{"enabled":false}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(public, "asset.txt"), []byte("public"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(private)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := staticHandler(public, private, info)
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/asset.txt", nil))
+			if w.Code != http.StatusOK || w.Body.String() != "public" {
+				t.Errorf("response: %d %q", w.Code, w.Body.String())
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+func TestUnreadableStaticSubdirectoryDoesNotHideIndex(t *testing.T) {
+	dir := t.TempDir()
+	public := filepath.Join(dir, "static")
+	if err := os.Mkdir(public, 0700); err != nil {
+		t.Fatal(err)
+	}
+	private := filepath.Join(dir, "alerts.json")
+	if err := os.WriteFile(private, []byte(`{"enabled":false}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(public, "index.html"), []byte("dashboard"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	blocked := filepath.Join(public, "blocked")
+	if err := os.Mkdir(blocked, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(blocked, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(blocked, 0700) })
+	if _, err := os.ReadDir(blocked); err == nil {
+		t.Skip("permissions do not deny directory access")
+	}
+	info, err := os.Stat(private)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := staticHandler(public, private, info)
+	replacement := filepath.Join(dir, "replacement")
+	if err := os.WriteFile(replacement, []byte(`{"enabled":false}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(replacement, private); err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
+	if w.Code != http.StatusOK || w.Body.String() != "dashboard" {
+		t.Fatalf("dashboard: %d %q", w.Code, w.Body.String())
+	}
+}
 
 func TestStaticHandlerDoesNotFollowSymlinksOutsideRoot(t *testing.T) {
 	dir := t.TempDir()
@@ -134,7 +354,7 @@ func TestStaticHandlerProtectsSelectedFileAgainstLaterHardLinks(t *testing.T) {
 	}
 }
 
-func TestStaticStopsAfterSuccessiveConfigReplacements(t *testing.T) {
+func TestStaticProtectsAliasesAfterSuccessiveConfigReplacements(t *testing.T) {
 	dir := t.TempDir()
 	public := filepath.Join(dir, "static")
 	if err := os.Mkdir(public, 0700); err != nil {
@@ -171,20 +391,23 @@ func TestStaticStopsAfterSuccessiveConfigReplacements(t *testing.T) {
 	if err := os.Rename(third, private); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"/copy.json", "/safe.txt"} {
-		w := httptest.NewRecorder()
-		handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
-		if w.Code == http.StatusOK || strings.Contains(w.Body.String(), "private B") {
-			t.Fatalf("file served after replacement: %d %q", w.Code, w.Body.String())
-		}
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/copy.json", nil))
+	if w.Code == http.StatusOK || strings.Contains(w.Body.String(), "private B") {
+		t.Fatalf("private alias served after replacement: %d %q", w.Code, w.Body.String())
+	}
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/safe.txt", nil))
+	if w.Code != http.StatusOK || w.Body.String() != "safe" {
+		t.Fatalf("dashboard asset unavailable after replacement: %d %q", w.Code, w.Body.String())
 	}
 	if err := os.Rename(backup, private); err != nil {
 		t.Fatal(err)
 	}
-	w := httptest.NewRecorder()
+	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/safe.txt", nil))
-	if w.Code == http.StatusOK {
-		t.Fatal("static resumed without restart after config replacement")
+	if w.Code != http.StatusOK || w.Body.String() != "safe" {
+		t.Fatal("existing static asset unavailable after restoring config")
 	}
 }
 
@@ -227,7 +450,148 @@ func TestStaticRejectsNewAliasWhenOriginalConfigRestoredBeforeRequest(t *testing
 	}
 }
 
-func TestSelectedConfigFreezesStaticFileIdentityAndContents(t *testing.T) {
+func TestStaticRejectsAliasAfterUnobservedRenameRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	public := filepath.Join(dir, "static")
+	if err := os.Mkdir(public, 0700); err != nil {
+		t.Fatal(err)
+	}
+	private := filepath.Join(dir, "alerts.json")
+	if err := os.WriteFile(private, []byte("config A"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(private)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := staticHandler(public, private, info)
+	backup := filepath.Join(dir, "original")
+	if err := os.Rename(private, backup); err != nil {
+		t.Fatal(err)
+	}
+	second := filepath.Join(dir, "config-b")
+	if err := os.WriteFile(second, []byte("private B"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(second, private); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(private, filepath.Join(public, "copy.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(backup, private); err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/copy.json", nil))
+	if w.Code == http.StatusOK || strings.Contains(w.Body.String(), "private B") {
+		t.Fatalf("unobserved rename exposed data: %d %q", w.Code, w.Body.String())
+	}
+}
+
+func TestStaticRejectsAliasAfterSymlinkDirectoryRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	public := filepath.Join(dir, "static")
+	a := filepath.Join(dir, "a")
+	b := filepath.Join(dir, "b")
+	for _, path := range []string{public, a, b} {
+		if err := os.Mkdir(path, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(a, "alerts.json"), []byte("config A"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(b, "alerts.json"), []byte("private B"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "config-link")
+	if err := os.Symlink(a, link); err != nil {
+		t.Fatal(err)
+	}
+	private := filepath.Join(link, "alerts.json")
+	info, err := os.Stat(private)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := staticHandler(public, private, info)
+	backup := filepath.Join(dir, "config-backup")
+	if err := os.Rename(link, backup); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(b, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(private, filepath.Join(public, "copy.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(b, "alerts.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(backup, link); err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/copy.json", nil))
+	if w.Code == http.StatusOK || strings.Contains(w.Body.String(), "private B") {
+		t.Fatalf("symlink transition exposed data: %d %q", w.Code, w.Body.String())
+	}
+}
+
+func TestStaticRejectsAliasAfterNestedSymlinkRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	public := filepath.Join(dir, "static")
+	a := filepath.Join(dir, "a")
+	b := filepath.Join(dir, "b")
+	for _, path := range []string{public, a, b} {
+		if err := os.Mkdir(path, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(a, "alerts.json"), []byte("config A"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(b, "alerts.json"), []byte("private B"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	inner := filepath.Join(dir, "inner")
+	outer := filepath.Join(dir, "outer")
+	if err := os.Symlink(a, inner); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(inner, outer); err != nil {
+		t.Fatal(err)
+	}
+	private := filepath.Join(outer, "alerts.json")
+	info, err := os.Stat(private)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := staticHandler(public, private, info)
+	backup := filepath.Join(dir, "inner-backup")
+	if err := os.Rename(inner, backup); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(b, inner); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(private, filepath.Join(public, "copy.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(b, "alerts.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(backup, inner); err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/copy.json", nil))
+	if w.Code == http.StatusOK || strings.Contains(w.Body.String(), "private B") {
+		t.Fatalf("nested symlink exposed data: %d %q", w.Code, w.Body.String())
+	}
+}
+
+func TestSelectedConfigAllowsStaticFileUpdates(t *testing.T) {
 	dir := t.TempDir()
 	public := filepath.Join(dir, "static")
 	if err := os.Mkdir(public, 0700); err != nil {
@@ -258,14 +622,14 @@ func TestSelectedConfigFreezesStaticFileIdentityAndContents(t *testing.T) {
 	if w := request(); w.Code != http.StatusOK || w.Body.String() != "public" {
 		t.Fatalf("original asset: %d %q", w.Code, w.Body.String())
 	}
-	if err := os.WriteFile(asset, []byte("secret"), 0600); err != nil {
+	if err := os.WriteFile(asset, []byte("updated public asset"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Chtimes(asset, assetInfo.ModTime(), assetInfo.ModTime()); err != nil {
 		t.Fatal(err)
 	}
-	if w := request(); strings.Contains(w.Body.String(), "secret") || (w.Code == http.StatusOK && w.Body.String() != "public") {
-		t.Fatalf("modified asset exposed: %d %q", w.Code, w.Body.String())
+	if w := request(); w.Code != http.StatusOK || w.Body.String() != "updated public asset" {
+		t.Fatalf("modified asset unavailable: %d %q", w.Code, w.Body.String())
 	}
 }
 

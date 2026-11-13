@@ -195,6 +195,59 @@ func TestCPUDelayedReturnDoesNotCreditUnobservedTime(t *testing.T) {
 	}
 }
 
+func TestCPUAcquisitionGapBoundary(t *testing.T) {
+	for _, tt := range []struct {
+		name                  string
+		gap                   time.Duration
+		wantSecond, wantThird bool
+	}{
+		{"exactly ten seconds", 10 * time.Second, false, true},
+		{"more than ten seconds", 10*time.Second + time.Nanosecond, false, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			start := time.Now()
+			var events []string
+			e := alerts.NewEvaluator([]alerts.Rule{{ID: "cpu", MetricType: "cpu", Sensor: "cpu/total", Threshold: 50, Duration: 10 * time.Second}}, func(event alerts.Event) { events = append(events, event.Kind) })
+			for i := 0; i < 3; i++ {
+				begin := time.Duration(i) * tt.gap
+				end := begin + time.Second
+				at := start.Add(end)
+				point := metrics.MetricPoint{Sensor: "cpu/total", Value: 50, StartedAt: start.Add(begin), At: at, BootStart: 100*time.Second + begin, BootAt: 100*time.Second + end}
+				e.ObserveAt("cpu", at, point.BootAt, []metrics.MetricPoint{point})
+				if i == 1 && (len(events) > 0) != tt.wantSecond {
+					t.Fatalf("second reading: %v", events)
+				}
+				if i == 2 && (len(events) > 0) != tt.wantThird {
+					t.Fatalf("third reading: %v", events)
+				}
+			}
+		})
+	}
+}
+
+func TestCPUAcquisitionGapChecksBothBounds(t *testing.T) {
+	for _, tt := range []struct {
+		name                   string
+		secondStart, secondEnd time.Duration
+	}{
+		{"start exceeds ten seconds", 10*time.Second + time.Nanosecond, 11 * time.Second},
+		{"end exceeds ten seconds", 10 * time.Second, 11*time.Second + time.Nanosecond},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			start := time.Now()
+			var events []string
+			e := alerts.NewEvaluator([]alerts.Rule{{ID: "cpu", MetricType: "cpu", Sensor: "cpu/total", Threshold: 50, Duration: 10 * time.Second}}, func(event alerts.Event) { events = append(events, event.Kind) })
+			for _, interval := range [][2]time.Duration{{0, time.Second}, {tt.secondStart, tt.secondEnd}, {tt.secondStart + 10*time.Second, tt.secondEnd + 10*time.Second}} {
+				point := metrics.MetricPoint{Sensor: "cpu/total", Value: 50, StartedAt: start.Add(interval[0]), At: start.Add(interval[1]), BootStart: 100*time.Second + interval[0], BootAt: 100*time.Second + interval[1]}
+				e.ObserveAt("cpu", point.At, point.BootAt, []metrics.MetricPoint{point})
+			}
+			if len(events) != 0 {
+				t.Fatalf("gap credited: %v", events)
+			}
+		})
+	}
+}
+
 func TestStaleTemperatureCannotRecoverActiveRule(t *testing.T) {
 	for _, suspended := range []bool{false, true} {
 		t.Run(fmt.Sprintf("suspended=%v", suspended), func(t *testing.T) {

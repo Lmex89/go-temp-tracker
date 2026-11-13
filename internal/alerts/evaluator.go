@@ -18,12 +18,14 @@ type Event struct {
 }
 
 type ruleState struct {
-	rule     Rule
-	pending  time.Time
-	last     time.Time
-	lastBoot time.Duration
-	active   bool
-	lost     bool
+	rule        Rule
+	pending     time.Time
+	last        time.Time
+	lastEnd     time.Time
+	lastBoot    time.Duration
+	lastBootEnd time.Duration
+	active      bool
+	lost        bool
 }
 
 // Evaluator protects independent rule states shared by the polling goroutines.
@@ -68,7 +70,7 @@ func (e *Evaluator) observe(metricType string, now time.Time, points []metrics.M
 			}
 		}
 		if !found || math.IsNaN(point.Value) || math.IsInf(point.Value, 0) {
-			s.pending, s.last, s.lastBoot = time.Time{}, time.Time{}, 0
+			s.pending, s.last, s.lastEnd, s.lastBoot, s.lastBootEnd = time.Time{}, time.Time{}, time.Time{}, 0, 0
 			if !s.lost {
 				logging.Logger.Warn("Alert observation lost for rule %s", s.rule.ID)
 				s.lost = true
@@ -84,7 +86,7 @@ func (e *Evaluator) observe(metricType string, now time.Time, points []metrics.M
 			startedAt = at
 		}
 		if point.BootAt < 0 {
-			s.pending, s.last, s.lastBoot = time.Time{}, time.Time{}, 0
+			s.pending, s.last, s.lastEnd, s.lastBoot, s.lastBootEnd = time.Time{}, time.Time{}, time.Time{}, 0, 0
 			if !s.lost {
 				if point.BootAt == timeutil.ClockUnavailable {
 					logging.Logger.Warn("Alert observation clock unavailable for rule %s", s.rule.ID)
@@ -105,16 +107,16 @@ func (e *Evaluator) observe(metricType string, now time.Time, points []metrics.M
 			stale = stale || bootNow <= 0 || point.BootAt > bootNow || bootStart > point.BootAt || bootNow-bootStart > 10*time.Second
 		}
 		if stale {
-			s.pending, s.last, s.lastBoot = time.Time{}, time.Time{}, 0
+			s.pending, s.last, s.lastEnd, s.lastBoot, s.lastBootEnd = time.Time{}, time.Time{}, time.Time{}, 0, 0
 			if !s.lost {
 				logging.Logger.Warn("Alert observation stale for rule %s", s.rule.ID)
 				s.lost = true
 			}
 			continue
 		}
-		bootGap := (point.BootAt == 0) != (s.lastBoot == 0) ||
-			(point.BootAt > 0 && s.lastBoot > 0 && (point.BootAt-s.lastBoot > 10*time.Second || point.BootAt < s.lastBoot))
-		if !s.last.IsZero() && (at.Sub(s.last) > 10*time.Second || startedAt.Before(s.last) || bootGap) {
+		bootGap := (point.BootAt == 0) != (s.lastBootEnd == 0) ||
+			(point.BootAt > 0 && s.lastBootEnd > 0 && (bootStart-s.lastBoot > 10*time.Second || point.BootAt-s.lastBootEnd > 10*time.Second || bootStart < s.lastBoot || point.BootAt < s.lastBootEnd))
+		if !s.last.IsZero() && (startedAt.Sub(s.last) > 10*time.Second || at.Sub(s.lastEnd) > 10*time.Second || startedAt.Before(s.last) || at.Before(s.lastEnd) || bootGap) {
 			s.pending = time.Time{}
 			if !s.lost {
 				logging.Logger.Warn("Alert observation gap for rule %s", s.rule.ID)
@@ -124,10 +126,9 @@ func (e *Evaluator) observe(metricType string, now time.Time, points []metrics.M
 			s.lost = false
 		}
 		s.last = startedAt
-		s.lastBoot = point.BootAt
-		if point.BootStart > 0 {
-			s.lastBoot = point.BootStart
-		}
+		s.lastEnd = at
+		s.lastBoot = bootStart
+		s.lastBootEnd = point.BootAt
 		if point.Value < s.rule.Threshold {
 			s.pending = time.Time{}
 			if s.active {
