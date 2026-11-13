@@ -48,6 +48,31 @@ func TestCPUFailuresKeepLegacyWarningsWithoutAlerts(t *testing.T) {
 	}
 }
 
+func TestCPUObservationTimePrecedesProcessingDelay(t *testing.T) {
+	observed := time.Now()
+	clock := observed
+	clockRead := make(chan struct{})
+	sm := NewSystemMetrics()
+	sm.cpuPercent = func(time.Duration, bool) ([]float64, error) { return []float64{40, 60}, nil }
+	sm.now = func() time.Time { at := clock; close(clockRead); return at }
+	sm.cpuMu.Lock()
+	result := make(chan []MetricPoint, 1)
+	go func() { result <- sm.ReadCPU() }()
+	// The clock read is synchronized before releasing processing below.
+	<-clockRead
+	clock = observed.Add(time.Hour)
+	sm.cpuMu.Unlock()
+	points := <-result
+	for _, point := range points {
+		if !point.At.Equal(observed) {
+			t.Fatalf("reading time = %v, want %v", point.At, observed)
+		}
+		if point.BootAt <= 0 {
+			t.Fatal("CPU reading lacks suspend-aware clock")
+		}
+	}
+}
+
 // These tests hit the real host (gopsutil), so they assert shape, not values.
 func TestReadLoad_ReturnsThreeWindows(t *testing.T) {
 	points := NewSystemMetrics().ReadLoad()

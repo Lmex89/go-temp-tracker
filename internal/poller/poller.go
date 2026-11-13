@@ -8,6 +8,7 @@ import (
 	"sensors-temp/internal/metrics"
 	"sensors-temp/internal/sensor"
 	"sensors-temp/internal/store"
+	"sensors-temp/internal/timeutil"
 	"sync"
 	"time"
 )
@@ -63,12 +64,19 @@ func (p *Poller) Poll(retainHours int, observe func([]metrics.MetricPoint)) {
 		temps = make(map[string]float64, len(readings))
 		for name, reading := range readings {
 			temps[name] = reading.Value
-			points = append(points, metrics.MetricPoint{Sensor: name, Value: reading.Value, Unit: "C", At: reading.At})
+			points = append(points, metrics.MetricPoint{Sensor: name, Value: reading.Value, Unit: "C", At: reading.At, BootAt: reading.BootAt})
 		}
 	} else {
+		var bootStart, bootAt time.Duration
+		if observe != nil {
+			bootStart = timeutil.BootTime()
+		}
 		temps = p.reader.Read()
+		if observe != nil {
+			bootAt = timeutil.ObservationBootTime(bootStart)
+		}
 		for name, temp := range temps {
-			points = append(points, metrics.MetricPoint{Sensor: name, Value: temp, Unit: "C"})
+			points = append(points, metrics.MetricPoint{Sensor: name, Value: temp, Unit: "C", BootAt: bootAt})
 		}
 	}
 

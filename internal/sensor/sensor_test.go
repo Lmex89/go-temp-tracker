@@ -38,7 +38,7 @@ func TestReadTimedIncludesAcquisitionTimes(t *testing.T) {
 			before := time.Now()
 			readings := NewLinuxThermalSensorAt(root).ReadTimed()
 			after := time.Now()
-			if got := readings[name]; got.Value != 65 || got.At.Before(before) || got.At.After(after) || got.At.IsZero() {
+			if got := readings[name]; got.Value != 65 || got.At.Before(before) || got.At.After(after) || got.At.IsZero() || got.BootAt <= 0 {
 				t.Fatalf("reading = %+v", got)
 			}
 		})

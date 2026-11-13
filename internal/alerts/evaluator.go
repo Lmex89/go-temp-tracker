@@ -17,11 +17,12 @@ type Event struct {
 }
 
 type ruleState struct {
-	rule    Rule
-	pending time.Time
-	last    time.Time
-	active  bool
-	lost    bool
+	rule     Rule
+	pending  time.Time
+	last     time.Time
+	lastBoot time.Duration
+	active   bool
+	lost     bool
 }
 
 // Evaluator protects independent rule states shared by the polling goroutines.
@@ -57,7 +58,7 @@ func (e *Evaluator) Observe(metricType string, now time.Time, points []metrics.M
 			}
 		}
 		if !found || math.IsNaN(point.Value) || math.IsInf(point.Value, 0) {
-			s.pending, s.last = time.Time{}, time.Time{}
+			s.pending, s.last, s.lastBoot = time.Time{}, time.Time{}, 0
 			if !s.lost {
 				logging.Logger.Warn("Alert observation lost for rule %s", s.rule.ID)
 				s.lost = true
@@ -68,7 +69,21 @@ func (e *Evaluator) Observe(metricType string, now time.Time, points []metrics.M
 		if !point.At.IsZero() {
 			at = point.At
 		}
-		if !s.last.IsZero() && (at.Sub(s.last) > 10*time.Second || at.Before(s.last)) {
+		if point.BootAt < 0 {
+			s.pending, s.last, s.lastBoot = time.Time{}, time.Time{}, 0
+			if !s.lost {
+				logging.Logger.Warn("Alert observation clock unavailable for rule %s", s.rule.ID)
+				s.lost = true
+			}
+			if point.Value < s.rule.Threshold && s.active {
+				s.active = false
+				e.event("recovery", s.rule, point, at)
+			}
+			continue
+		}
+		bootGap := (point.BootAt == 0) != (s.lastBoot == 0) ||
+			(point.BootAt > 0 && s.lastBoot > 0 && (point.BootAt-s.lastBoot > 10*time.Second || point.BootAt < s.lastBoot))
+		if !s.last.IsZero() && (at.Sub(s.last) > 10*time.Second || at.Before(s.last) || bootGap) {
 			s.pending = time.Time{}
 			if !s.lost {
 				logging.Logger.Warn("Alert observation gap for rule %s", s.rule.ID)
@@ -78,6 +93,7 @@ func (e *Evaluator) Observe(metricType string, now time.Time, points []metrics.M
 			s.lost = false
 		}
 		s.last = at
+		s.lastBoot = point.BootAt
 		if point.Value < s.rule.Threshold {
 			s.pending = time.Time{}
 			if s.active {
