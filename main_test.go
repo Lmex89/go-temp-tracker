@@ -1,6 +1,12 @@
 package main
 
-import "testing"
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+)
 
 // TestGetEnvInt checks the env-var parsing contract: unset or invalid values
 // fall back to the default (like int(os.getenv(k) or d) but without raising).
@@ -22,5 +28,29 @@ func TestGetEnvInt(t *testing.T) {
 				t.Errorf("got %d, want %d", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestInvalidAlertsFailBeforeDatabase(t *testing.T) {
+	if os.Getenv("ALERT_STARTUP_TEST") == "1" {
+		os.Args = []string{"temp-tracker", "-alerts-config", "alerts.json"}
+		main()
+		return
+	}
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "static"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "alerts.json"), []byte(`{"enabled":true,"chat_id":"private","rules":[]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=^TestInvalidAlertsFailBeforeDatabase$")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "ALERT_STARTUP_TEST=1", "TELEGRAM_BOT_TOKEN=", "DB_DRIVER=sqlite")
+	if out, err := cmd.CombinedOutput(); err == nil || !strings.Contains(string(out), "Invalid alerts configuration") {
+		t.Fatalf("startup did not reject configuration: %v: %s", err, out)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "temps.db")); !os.IsNotExist(err) {
+		t.Fatalf("database created or stat failed: %v", err)
 	}
 }
