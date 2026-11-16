@@ -270,6 +270,23 @@ function build_unit_file
     if test -n "$USER_LINE"
         set -a lines "$USER_LINE"
     end
+    # Alertas: si existe alerts.json en la raiz, la unidad carga el .env privado
+    # (BREVO_API_KEY y, si aplica, TELEGRAM_BOT_TOKEN) y arranca con
+    # -alerts-config. EnvironmentFile va ANTES de las lineas Environment= para
+    # que los valores explicitos de la unidad ganen a los del .env (quirk de
+    # systemd: la ultima definicion de una variable gana).
+    # Teaching note (Python devs): en Fish no se puede guardar "systemctl
+    # --user" en una variable y ejecutarla, pero aqui solo armamos TEXTO para
+    # el archivo de unidad -- eso si es seguro.
+    set -l extra_args ""
+    if test -f "$PROJECT_DIR/alerts.json"
+        if test -f "$PROJECT_DIR/.env"
+            set -a lines "EnvironmentFile=$PROJECT_DIR/.env"
+        end
+        # Pasar el driver explicito: .env define DB_DRIVER para usos de shell
+        # y no debe cambiar el modo elegido con --sqlite/--postgres.
+        set extra_args " -db-driver $DB_DRIVER -alerts-config $PROJECT_DIR/alerts.json"
+    end
     set -a lines "Environment=CPU_POLL_INTERVAL=$INTERVAL"
     set -a lines "Environment=MEMORY_POLL_INTERVAL=$INTERVAL"
     set -a lines "Environment=SWAP_POLL_INTERVAL=$INTERVAL"
@@ -279,7 +296,7 @@ function build_unit_file
         set -a lines "Environment=DB_DRIVER=postgres"
         set -a lines "Environment=DATABASE_URL=$DATABASE_URL"
     end
-    set -a lines "ExecStart=$PROJECT_DIR/bin/temp-tracker -port $PORT -interval $INTERVAL"
+    set -a lines "ExecStart=$PROJECT_DIR/bin/temp-tracker -port $PORT -interval $INTERVAL$extra_args"
     set -a lines "Restart=on-failure"
     set -a lines "RestartSec=5"
     set -a lines ""

@@ -92,12 +92,25 @@ echo "Writing ${SERVICE_PATH}..."
     if [[ -n "${USER_LINE}" ]]; then
         echo "${USER_LINE}"
     fi
+    # Alerts wiring (mirror of the .fish version): if alerts.json exists at the
+    # project root, the unit loads the private .env (BREVO_API_KEY, optional
+    # TELEGRAM_BOT_TOKEN) and starts with -alerts-config. EnvironmentFile goes
+    # BEFORE the Environment= lines because systemd lets the last definition win.
+    # This script's unit is SQLite-based, so pin the driver explicitly: .env
+    # carries DB_DRIVER=postgres for shell use and must not flip the mode here.
+    EXTRA_ARGS=""
+    if [[ -f "${PROJECT_DIR}/alerts.json" ]]; then
+        if [[ -f "${PROJECT_DIR}/.env" ]]; then
+            echo "EnvironmentFile=${PROJECT_DIR}/.env"
+        fi
+        EXTRA_ARGS=" -db-driver sqlite -alerts-config ${PROJECT_DIR}/alerts.json"
+    fi
     echo "Environment=CPU_POLL_INTERVAL=${CPU_POLL_INTERVAL}"
     echo "Environment=MEMORY_POLL_INTERVAL=${MEMORY_POLL_INTERVAL}"
     echo "Environment=SWAP_POLL_INTERVAL=${SWAP_POLL_INTERVAL}"
     echo "Environment=DISK_POLL_INTERVAL=${DISK_POLL_INTERVAL}"
     echo "Environment=LOAD_POLL_INTERVAL=${LOAD_POLL_INTERVAL}"
-    echo "ExecStart=${PROJECT_DIR}/bin/temp-tracker -port ${PORT} -interval ${INTERVAL}"
+    echo "ExecStart=${PROJECT_DIR}/bin/temp-tracker -port ${PORT} -interval ${INTERVAL}${EXTRA_ARGS}"
     echo "Restart=on-failure"
     echo "RestartSec=5"
     echo ""

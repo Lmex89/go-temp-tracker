@@ -126,11 +126,15 @@ func LoadConfig(path, publicDir, token, apiKey string) (Config, error) {
 	if !raw.Enabled {
 		return cfg, nil
 	}
-	if !validChatID(raw.ChatID) {
-		return cfg, errors.New("valid alert chat_id is required")
-	}
-	if token == "" || !safeToken.MatchString(token) {
-		return cfg, errors.New("valid TELEGRAM_BOT_TOKEN is required")
+	// Telegram is optional: only validated when chat_id or the token is set,
+	// so email-only alerting works without a bot.
+	if raw.ChatID != "" || token != "" {
+		if !validChatID(raw.ChatID) {
+			return cfg, errors.New("valid alert chat_id is required when Telegram is configured")
+		}
+		if !safeToken.MatchString(token) {
+			return cfg, errors.New("valid TELEGRAM_BOT_TOKEN is required when Telegram is configured")
+		}
 	}
 	if !safeAPIKey.MatchString(apiKey) {
 		return cfg, errors.New("valid BREVO_API_KEY is required")

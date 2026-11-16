@@ -207,9 +207,18 @@ func main() {
 		if err != nil {
 			host = "unknown"
 		}
-		delivery := alerts.NewTelegram(alertToken, alertCfg.ChatID, host)
+		// ChatID is empty when Telegram is not configured; Brevo stays required.
+		var delivery *alerts.Telegram
+		if alertCfg.ChatID != "" {
+			delivery = alerts.NewTelegram(alertToken, alertCfg.ChatID, host)
+		}
 		email := alerts.NewBrevo(brevoKey, alertCfg.BrevoSenderEmail, alertCfg.BrevoSenderName, alertCfg.BrevoRecipientEmail, host)
-		evaluator = alerts.NewEvaluator(alertCfg.Rules, func(event alerts.Event) { delivery.Enqueue(event); email.Enqueue(event) })
+		evaluator = alerts.NewEvaluator(alertCfg.Rules, func(event alerts.Event) {
+			if delivery != nil {
+				delivery.Enqueue(event)
+			}
+			email.Enqueue(event)
+		})
 		logging.Logger.Info("Alerts enabled: target interval 5s overrides -interval and CPU_POLL_INTERVAL")
 	}
 
